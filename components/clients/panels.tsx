@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Check,
   CheckCircle2,
@@ -196,6 +196,10 @@ export function ClientsPanel() {
   const [query, setQuery] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [managingClientId, setManagingClientId] = useState<string | null>(null)
+  // 正在离场的旧层级（列表或管理面板），用于播放过渡动画
+  const [leaving, setLeaving] = useState<{ kind: "list" } | { kind: "manage"; client: Client } | null>(null)
+  const [direction, setDirection] = useState<1 | -1>(1)
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { groups, refreshing, refresh, apiRequest } = useServerData()
   /* TEMP-MOCK: 用模拟数据替换真实请求，确认后删除 */
   const clients = MOCK_CLIENTS
@@ -220,16 +224,31 @@ export function ClientsPanel() {
     }
   }
 
-  if (managingClient) {
-    return (
-      <ClientManagementPanel
-        client={managingClient}
-        onBack={() => setManagingClientId(null)}
-      />
-    )
+  /* 列表 ↔ 管理面板之间的层级过渡：旧层先让位离场，新层同向滑入 */
+  const scheduleLeaveEnd = () => {
+    if (leaveTimer.current) clearTimeout(leaveTimer.current)
+    // 与 .animate-drill-leave-* 动画时长保持一致
+    leaveTimer.current = setTimeout(() => setLeaving(null), 340)
   }
 
-  return (
+  const enterManage = (client: Client) => {
+    setLeaving({ kind: "list" })
+    setDirection(1)
+    setManagingClientId(client.id)
+    scheduleLeaveEnd()
+  }
+
+  const leaveManage = () => {
+    if (!managingClient) return
+    setLeaving({ kind: "manage", client: managingClient })
+    setDirection(-1)
+    setManagingClientId(null)
+    scheduleLeaveEnd()
+  }
+
+  const managePanel = (client: Client) => <ClientManagementPanel client={client} onBack={leaveManage} />
+
+  const listPanel = (
     <PanelShell
       title="客户端"
       desc={`当前管理 ${clients.length} 台设备 · ${groups.length} 个分组`}
@@ -266,7 +285,7 @@ export function ClientsPanel() {
                 key={c.id}
                 client={c}
                 deleting={deletingId === c.id}
-                onManage={(client) => setManagingClientId(client.id)}
+                onManage={enterManage}
                 onDelete={deleteClient}
               />
             ))}
@@ -279,6 +298,23 @@ export function ClientsPanel() {
         )}
       </div>
     </PanelShell>
+  )
+
+  const enterClass = direction === 1 ? "animate-drill-enter-forward" : "animate-drill-enter-back"
+  const leaveClass = direction === 1 ? "animate-drill-leave-forward" : "animate-drill-leave-back"
+
+  return (
+    <div className="relative h-full w-full">
+      {/* 离场层：不接受交互，动画结束后卸载 */}
+      {leaving && (
+        <div key={`leave-${leaving.kind}`} className={cn("pointer-events-none absolute inset-0", leaveClass)} aria-hidden>
+          {leaving.kind === "manage" ? managePanel(leaving.client) : listPanel}
+        </div>
+      )}
+      <div key={managingClient ? `manage-${managingClient.id}` : "list"} className={cn("h-full w-full", leaving && enterClass)}>
+        {managingClient ? managePanel(managingClient) : listPanel}
+      </div>
+    </div>
   )
 }
 
@@ -453,7 +489,7 @@ export function AddGroupPanel() {
       setMessage("分组已创建")
       await refresh()
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "创建分组失败")
+      setMessage(caught instanceof Error ? caught.message : "创建分组���败")
     } finally {
       setSaving(false)
     }
@@ -641,7 +677,7 @@ export function ClientUpdatePanel() {
   return (
     <PanelShell
       title="客户端更新"
-      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务端发布清单"}
+      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务端发布清���"}
       action={
         <button type="button" onClick={() => void queue("all")} disabled={!updates || submitting || available === 0} className="flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50">
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}全部更新

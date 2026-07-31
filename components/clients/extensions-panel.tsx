@@ -430,7 +430,7 @@ function CommandRun({ os, clientId }: DetailProps) {
       <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
-        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命令</PrimaryButton>
+        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命���</PrimaryButton>
       </div>
     </div>
   )
@@ -643,7 +643,7 @@ type ServiceResult = {
 const serviceActions: { id: ServiceAction; label: string }[] = [
   { id: "query", label: "查询" },
   { id: "start", label: "启动" },
-  { id: "stop", label: "停止" },
+  { id: "stop", label: "停���" },
   { id: "restart", label: "重启" },
 ]
 
@@ -1470,7 +1470,7 @@ function ServiceManage({ os, clientId }: DetailProps) {
 /* ---------- 子功能：计划任务（Linux Cron） ---------- */
 const cronJobs = [
   { schedule: "0 3 * * *", cmd: "/usr/local/bin/backup.sh", note: "每日 03:00 备份" },
-  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "每 10 分钟健康检查" },
+  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "每 10 分钟���康检查" },
   { schedule: "0 0 * * 0", cmd: "apt-get update && apt-get -y upgrade", note: "每周日更新系统" },
 ]
 
@@ -1728,6 +1728,72 @@ function ClientToolHub({
   )
 }
 
+/* 批量操作网格：作用范围条 + 实心图标大卡片（与单机的分区列表刻意区分） */
+function BatchToolGrid({ os, tools, onOpen }: { os: OS; tools: Tool[]; onOpen: (id: string) => void }) {
+  const { clients } = useServerData()
+  const osLabel = os === "windows" ? "Windows" : "Linux"
+  const targets = clients.filter((c) => (os === "windows" ? c.os === "Windows" : c.os === "Linux"))
+  const online = targets.filter((c) => c.status === "online").length
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      {/* 作用范围：批量模式独有的目标提示 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-primary/25 bg-primary/8 px-4 py-3">
+        <span className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <Users className="h-4 w-4" />
+          作用范围
+        </span>
+        <span className="text-sm text-foreground">全部 {osLabel} 客户端</span>
+        {targets.length > 0 && (
+          <>
+            <span className="hidden h-4 w-px bg-primary/25 sm:block" />
+            <span className="font-mono text-xs text-muted-foreground">
+              {targets.length} 台目标 · {online} 台在线
+            </span>
+          </>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground/80">操作将同时下发到所有匹配设备</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto pr-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {tools.map((t) => {
+            const Icon = t.icon
+            return (
+              <button
+                key={t.id}
+                onClick={() => onOpen(t.id)}
+                className="group relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-surface/60 p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_14px_32px_-10px_oklch(0_0_0_/_55%)]"
+              >
+                {/* 顶部色条：悬停时铺满整条，强调“批量下发” */}
+                <span
+                  className="absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 transition-transform duration-300 group-hover:scale-x-100"
+                  style={{ backgroundColor: t.tint }}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <span
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-105"
+                    style={{ backgroundColor: t.tint, boxShadow: `0 10px 24px -12px ${t.tint}` }}
+                  >
+                    <Icon className="h-6 w-6 text-white" />
+                  </span>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background/40 text-muted-foreground transition-all duration-300 group-hover:border-primary/50 group-hover:text-primary">
+                    <ChevronRight className="h-4 w-4" />
+                  </span>
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <p className="text-sm font-semibold">{t.title}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</p>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => void }) {
   const clientOS: OS = client?.os === "Linux" ? "linux" : "windows"
   const [os, setOS] = useState<OS>(clientOS)
@@ -1749,7 +1815,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
   }
 
   const openTool = (id: string) => {
-    setEnterAnim("animate-panel-enter")
+    setEnterAnim("animate-drill-enter-forward")
     setActiveId(id)
   }
 
@@ -1758,7 +1824,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
       onExit?.()
       return
     }
-    setEnterAnim("animate-panel-enter")
+    setEnterAnim("animate-drill-enter-back")
     setActiveId(null)
   }
 
@@ -1823,32 +1889,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
         ) : client ? (
           <ClientToolHub client={client} tools={tools} onOpen={openTool} />
         ) : (
-          <div className="h-full overflow-auto pr-1">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {tools.map((t) => {
-                const Icon = t.icon
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => openTool(t.id)}
-                    className="group flex items-center gap-4 rounded-2xl border border-border bg-surface/60 p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_12px_28px_-8px_oklch(0_0_0_/_45%)]"
-                  >
-                    <span
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-105"
-                      style={{ backgroundColor: t.tint }}
-                    >
-                      <Icon className="h-6 w-6 text-white" />
-                    </span>
-                    <div className="min-w-0 flex-1 leading-tight">
-                      <p className="text-sm font-semibold">{t.title}</p>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">{t.desc}</p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 group-hover:translate-x-1 group-hover:text-primary" />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+          <BatchToolGrid os={os} tools={tools} onOpen={openTool} />
         )}
       </div>
     </div>
