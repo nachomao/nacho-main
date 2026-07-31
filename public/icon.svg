@@ -1,0 +1,19 @@
+<svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="44" height="44" rx="10" fill="#161618" />
+  <defs>
+    <linearGradient id="blockG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="oklch(1 0 0)" />
+      <stop offset="100%" stop-color="oklch(0.85 0 0)" />
+    </linearGradient>
+    <linearGradient id="blockDim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="oklch(0.7 0 0)" />
+      <stop offset="100%" stop-color="oklch(0.5 0 0)" />
+    </linearGradient>
+  </defs>
+  <polygon points="17,9 26,20.7 17,20.7" fill="url(#blockDim)" />
+  <polygon points="18,23.3 27,23.3 27,35" fill="url(#blockDim)" />
+  <rect x="8" y="7" width="8" height="30" rx="3" fill="url(#blockG)" />
+  <rect x="28" y="7" width="8" height="30" rx="3" fill="url(#blockG)" />
+  <rect x="8" y="7" width="8" height="5" rx="3" fill="white" fill-opacity="0.15" />
+  <rect x="28" y="7" width="8" height="5" rx="3" fill="white" fill-opacity="0.15" />
+</svg>

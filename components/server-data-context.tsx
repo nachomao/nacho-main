@@ -1,0 +1,166 @@
+"use client"
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
+import { useOnboarding } from "@/components/onboarding/onboarding-context"
+import type { Client } from "@/components/clients/client-data"
+import { defaultServerBaseUrl, normalizeServerBaseUrl } from "@/lib/server-connection"
+
+export type Overview = {
+  clients: {
+    total: number
+    online: number
+    warning: number
+    offline: number
+    realtimeConnections: number
+  }
+  tasks: { total: number; enabled: number }
+  plugins: { installed: number }
+  commands: { pending: number }
+  resources: { cpu: number; memory: number; disk: number }
+  health: { unread: number; critical: number; error: number; packages: number }
+  updatedAt: number
+}
+
+export type LogEntry = {
+  id: string
+  ts: number
+  level: "error" | "warn" | "info" | "debug"
+  source: string
+  message: string
+  detail: string | null
+}
+
+type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; message?: string; error?: string }
+
+type ServerDataContextValue = {
+  overview: Overview | null
+  clients: Client[]
+  groups: string[]
+  logs: LogEntry[]
+  loading: boolean
+  refreshing: boolean
+  error: string | null
+  refresh: () => Promise<void>
+  apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
+}
+
+const ServerDataContext = createContext<ServerDataContextValue | null>(null)
+
+export function ServerDataProvider({ children }: { children: ReactNode }) {
+  const { serverSource } = useOnboarding()
+  const [overview, setOverview] = useState<Overview | null>(null)
+  const [clients, setClients] = useState<Client[]>([])
+  const [groups, setGroups] = useState<string[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const requestSequence = useRef(0)
+  const connectedOnce = useRef(false)
+
+  const connection = useMemo(() => {
+    if (!serverSource) return null
+    if (serverSource?.mode === "cloud") {
+      return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
+    }
+    const configuredKey = process.env.NEXT_PUBLIC_NACHO_PANEL_API_KEY
+    return {
+      baseUrl: defaultServerBaseUrl(),
+      key: configuredKey || "change-me-panel-api-key",
+    }
+  }, [serverSource])
+
+  const apiRequest = useCallback(
+    async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (!connection) throw new Error("尚未配置服务端连接")
+      let response: Response
+      try {
+        response = await fetch(`${connection.baseUrl}/api/panel${path}`, {
+          ...init,
+          signal: init?.signal ?? AbortSignal.timeout(8_000),
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${connection.key}`,
+            ...(init?.body ? { "Content-Type": "application/json" } : {}),
+            ...init?.headers,
+          },
+        })
+      } catch {
+        throw new Error("连接服务端失败，请检查服务端地址和网络")
+      }
+      const body = (await response.json().catch(() => null)) as ApiEnvelope<T> | null
+      if (!response.ok || !body?.ok) {
+        const message = body && !body.ok ? body.message || body.error : undefined
+        throw new Error(message || `服务端请求失败（HTTP ${response.status}）`)
+      }
+      return body.data
+    },
+    [connection],
+  )
+
+  const refresh = useCallback(async () => {
+    if (!connection) {
+      setError("尚未配置服务端连接")
+      setLoading(false)
+      return
+    }
+    const sequence = ++requestSequence.current
+    if (!connectedOnce.current) {
+      setLoading(true)
+      setError(null)
+    }
+    setRefreshing(true)
+    try {
+      const [nextOverview, nextClients, nextGroups, nextLogs] = await Promise.all([
+        apiRequest<Overview>("/overview"),
+        apiRequest<Client[]>("/clients"),
+        apiRequest<string[]>("/groups"),
+        apiRequest<LogEntry[]>("/logs?limit=30"),
+      ])
+      if (sequence !== requestSequence.current) return
+      setOverview(nextOverview)
+      setClients(nextClients)
+      setGroups(nextGroups)
+      setLogs(nextLogs)
+      connectedOnce.current = true
+      setError(null)
+    } catch (caught) {
+      if (sequence !== requestSequence.current) return
+      setError(caught instanceof Error ? caught.message : "服务端连接失败")
+    } finally {
+      if (sequence === requestSequence.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
+    }
+  }, [apiRequest, connection])
+
+  useEffect(() => {
+    void refresh()
+    if (!connection) return
+    const timer = window.setInterval(() => void refresh(), 10_000)
+    return () => window.clearInterval(timer)
+  }, [connection, refresh])
+
+  const value = useMemo(
+    () => ({ overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest }),
+    [overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest],
+  )
+
+  return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>
+}
+
+export function useServerData() {
+  const context = useContext(ServerDataContext)
+  if (!context) throw new Error("useServerData 必须在 ServerDataProvider 内使用")
+  return context
+}
