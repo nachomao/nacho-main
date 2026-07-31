@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Check,
   CheckCircle2,
@@ -196,10 +196,6 @@ export function ClientsPanel() {
   const [query, setQuery] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [managingClientId, setManagingClientId] = useState<string | null>(null)
-  // 正在离场的旧层级（列表或管理面板），用于播放过渡动画
-  const [leaving, setLeaving] = useState<{ kind: "list" } | { kind: "manage"; client: Client } | null>(null)
-  const [direction, setDirection] = useState<1 | -1>(1)
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { groups, refreshing, refresh, apiRequest } = useServerData()
   /* TEMP-MOCK: 用模拟数据替换真实请求，确认后删除 */
   const clients = MOCK_CLIENTS
@@ -224,31 +220,16 @@ export function ClientsPanel() {
     }
   }
 
-  /* 列表 ↔ 管理面板之间的层级过渡：旧层先让位离场，新层同向滑入 */
-  const scheduleLeaveEnd = () => {
-    if (leaveTimer.current) clearTimeout(leaveTimer.current)
-    // 与 .animate-drill-leave-* 动画时长保持一致
-    leaveTimer.current = setTimeout(() => setLeaving(null), 340)
+  if (managingClient) {
+    return (
+      <ClientManagementPanel
+        client={managingClient}
+        onBack={() => setManagingClientId(null)}
+      />
+    )
   }
 
-  const enterManage = (client: Client) => {
-    setLeaving({ kind: "list" })
-    setDirection(1)
-    setManagingClientId(client.id)
-    scheduleLeaveEnd()
-  }
-
-  const leaveManage = () => {
-    if (!managingClient) return
-    setLeaving({ kind: "manage", client: managingClient })
-    setDirection(-1)
-    setManagingClientId(null)
-    scheduleLeaveEnd()
-  }
-
-  const managePanel = (client: Client) => <ClientManagementPanel client={client} onBack={leaveManage} />
-
-  const listPanel = (
+  return (
     <PanelShell
       title="客户端"
       desc={`当前管理 ${clients.length} 台设备 · ${groups.length} 个分组`}
@@ -285,7 +266,7 @@ export function ClientsPanel() {
                 key={c.id}
                 client={c}
                 deleting={deletingId === c.id}
-                onManage={enterManage}
+                onManage={(client) => setManagingClientId(client.id)}
                 onDelete={deleteClient}
               />
             ))}
@@ -298,23 +279,6 @@ export function ClientsPanel() {
         )}
       </div>
     </PanelShell>
-  )
-
-  const enterClass = direction === 1 ? "animate-drill-enter-forward" : "animate-drill-enter-back"
-  const leaveClass = direction === 1 ? "animate-drill-leave-forward" : "animate-drill-leave-back"
-
-  return (
-    <div className="relative h-full w-full">
-      {/* 离场层：不接受交互，动画结束后卸载 */}
-      {leaving && (
-        <div key={`leave-${leaving.kind}`} className={cn("pointer-events-none absolute inset-0", leaveClass)} aria-hidden>
-          {leaving.kind === "manage" ? managePanel(leaving.client) : listPanel}
-        </div>
-      )}
-      <div key={managingClient ? `manage-${managingClient.id}` : "list"} className={cn("h-full w-full", leaving && enterClass)}>
-        {managingClient ? managePanel(managingClient) : listPanel}
-      </div>
-    </div>
   )
 }
 
@@ -441,7 +405,7 @@ function WindowsInstall({ base }: { base: string }) {
           <h3 className="text-sm font-semibold">一键部署模式</h3>
         </div>
 
-        <Field label="部署链接（与控制服务端共用端口，可分发给自动化系统）" icon={<Link2 className="h-3.5 w-3.5" />}>
+        <Field label="部署链接（与控制服务端共用端口，可分���给自动化系统）" icon={<Link2 className="h-3.5 w-3.5" />}>
           <div className="flex items-center gap-2">
             <input readOnly value={scriptUrl} className={cn(inputCls, "flex-1 font-mono")} />
             <CopyButton text={scriptUrl} label="复制链接" />

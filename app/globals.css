@@ -408,68 +408,6 @@
   animation: panel-slide-in-left 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 层级下钻/返回：新页面从前进方向滑入，旧页面同向让位并轻微缩小后退，
-   形成 iOS 式的“进入下一层 / 退回上一层”连贯过渡。 */
-@keyframes drill-enter-forward {
-  0% {
-    transform: translateX(26px) scale(0.98);
-    opacity: 0;
-  }
-  100% {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes drill-leave-forward {
-  0% {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(-26px) scale(0.97);
-    opacity: 0;
-  }
-}
-
-@keyframes drill-enter-back {
-  0% {
-    transform: translateX(-26px) scale(0.98);
-    opacity: 0;
-  }
-  100% {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes drill-leave-back {
-  0% {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(26px) scale(0.97);
-    opacity: 0;
-  }
-}
-
-.animate-drill-enter-forward {
-  animation: drill-enter-forward 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.animate-drill-leave-forward {
-  animation: drill-leave-forward 0.34s cubic-bezier(0.4, 0, 1, 1) both;
-}
-
-.animate-drill-enter-back {
-  animation: drill-enter-back 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.animate-drill-leave-back {
-  animation: drill-leave-back 0.34s cubic-bezier(0.4, 0, 1, 1) both;
-}
-
 /* 头像选中时的弹入：从缩小 + 模糊到位，带轻微回弹 */
 @keyframes avatar-pop {
   0% {

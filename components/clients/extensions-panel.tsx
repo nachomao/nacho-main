@@ -430,7 +430,7 @@ function CommandRun({ os, clientId }: DetailProps) {
       <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
-        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命���</PrimaryButton>
+        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命�����</PrimaryButton>
       </div>
     </div>
   )
@@ -1470,7 +1470,7 @@ function ServiceManage({ os, clientId }: DetailProps) {
 /* ---------- 子功能：计划任务（Linux Cron） ---------- */
 const cronJobs = [
   { schedule: "0 3 * * *", cmd: "/usr/local/bin/backup.sh", note: "每日 03:00 备份" },
-  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "每 10 分钟���康检查" },
+  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "�� 10 分钟���康检查" },
   { schedule: "0 0 * * 0", cmd: "apt-get update && apt-get -y upgrade", note: "每周日更新系统" },
 ]
 
@@ -1552,7 +1552,7 @@ const linuxTools: Tool[] = [
   { id: "file-deploy", title: "文件下发", desc: "分发文件到指定目录", icon: FileUp, tint: "oklch(0.5 0.15 200)", Detail: FileDeploy },
   { id: "command", title: "命令执行", desc: "远程运行 Shell 命令", icon: SquareTerminal, tint: "oklch(0.72 0.16 60)", Detail: CommandRun },
   { id: "message", title: "消息推送", desc: "向客户端发送广播通知", icon: MessageSquare, tint: "oklch(0.82 0.19 145)", Detail: MessagePush },
-  { id: "users", title: "用户管理", desc: "管理系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
+  { id: "users", title: "用户管理", desc: "管��系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
   { id: "service", title: "服务管理", desc: "管理 systemd 服务状态", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
   { id: "cron", title: "计划任务", desc: "编辑 Crontab 定时任务", icon: CalendarClock, tint: "oklch(0.82 0.19 145)", Detail: CronManage },
 ]
@@ -1815,7 +1815,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
   }
 
   const openTool = (id: string) => {
-    setEnterAnim("animate-drill-enter-forward")
+    setEnterAnim("animate-panel-enter")
     setActiveId(id)
   }
 
@@ -1824,7 +1824,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
       onExit?.()
       return
     }
-    setEnterAnim("animate-drill-enter-back")
+    setEnterAnim("animate-panel-enter")
     setActiveId(null)
   }
 
