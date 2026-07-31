@@ -430,7 +430,7 @@ function CommandRun({ os, clientId }: DetailProps) {
       <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
-        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命�����</PrimaryButton>
+        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命�������</PrimaryButton>
       </div>
     </div>
   )
@@ -1552,7 +1552,7 @@ const linuxTools: Tool[] = [
   { id: "file-deploy", title: "文件下发", desc: "分发文件到指定目录", icon: FileUp, tint: "oklch(0.5 0.15 200)", Detail: FileDeploy },
   { id: "command", title: "命令执行", desc: "远程运行 Shell 命令", icon: SquareTerminal, tint: "oklch(0.72 0.16 60)", Detail: CommandRun },
   { id: "message", title: "消息推送", desc: "向客户端发送广播通知", icon: MessageSquare, tint: "oklch(0.82 0.19 145)", Detail: MessagePush },
-  { id: "users", title: "用户管理", desc: "管��系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
+  { id: "users", title: "用户管理", desc: "管����系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
   { id: "service", title: "服务管理", desc: "管理 systemd 服务状态", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
   { id: "cron", title: "计划任务", desc: "编辑 Crontab 定时任务", icon: CalendarClock, tint: "oklch(0.82 0.19 145)", Detail: CronManage },
 ]
@@ -1703,11 +1703,11 @@ function ClientToolHub({
                   <button
                     key={t.id}
                     onClick={() => onOpen(t.id)}
-                    className="group flex items-center gap-3 overflow-hidden rounded-xl border border-border/70 bg-surface/40 py-2.5 pr-3 text-left transition-all duration-300 hover:border-primary/40 hover:bg-surface"
+                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-border/70 bg-surface/40 py-2.5 pr-3 text-left hover:border-primary/40 hover:bg-surface"
                   >
-                    <span className="h-11 w-1 shrink-0 rounded-r-full transition-all duration-300 group-hover:h-12" style={{ backgroundColor: t.tint }} />
+                    <span className="h-11 w-1 shrink-0 rounded-r-full" style={{ backgroundColor: t.tint }} />
                     <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform duration-300 group-hover:scale-105"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
                       style={{ backgroundColor: tintSoft(t.tint, 18), color: t.tint }}
                     >
                       <Icon className="h-[18px] w-[18px]" />
@@ -1716,7 +1716,7 @@ function ClientToolHub({
                       <span className="block text-sm font-semibold">{t.title}</span>
                       <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{t.desc}</span>
                     </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform duration-300 group-hover:translate-x-1 group-hover:text-primary" />
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" />
                   </button>
                 )
               })}
