@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { ClientCard } from "@/components/clients/client-card"
 import type { Client } from "@/components/clients/client-data"
 import { ClientManagementPanel } from "@/components/clients/extensions-panel"
+import { resolveOsBrand } from "@/components/clients/os-logos"
 
 const windowsClient: Client = {
   id: "client-1",
@@ -44,7 +45,7 @@ test("单机管理页展示 Windows 客户端的全部管理项", () => {
   )
 
   assert.match(html, /客户端管理/)
-  assert.match(html, /测试计算姬 · TEST-HOST · 11 项管理功能/)
+  assert.match(html, /单机模式 · 测试计算姬 · 11 项管理功能/)
   assert.match(html, /aria-label="返回客户端列表"/)
 
   for (const label of [
@@ -63,3 +64,45 @@ test("单机管理页展示 Windows 客户端的全部管理项", () => {
     assert.match(html, new RegExp(`>${label}<`))
   }
 })
+
+test("按上报的具体系统名解析对应发行版标识", () => {
+  // Windows：显式版本号与内部版本号都应判定为 Windows 11
+  assert.equal(resolveOsBrand("Windows", "Windows 11 专业版 24H2").label, "Windows 11 专业版 24H2")
+  assert.equal(resolveOsBrand("Windows", "Microsoft Windows 10.0.22631").path, resolveOsBrand("Windows", "Windows 11").path)
+  // Windows 10 应使用旧版四窗格旗标，与 Windows 11 的方块标识不同
+  assert.notEqual(resolveOsBrand("Windows", "Windows 10 企业版").path, resolveOsBrand("Windows", "Windows 11").path)
+
+  // Linux 发行版按关键字匹配，且各自 logo 互不相同
+  const distros: [string, string][] = [
+    ["Ubuntu 24.04 LTS", "Ubuntu"],
+    ["debian", "Debian"],
+    ["CentOS Stream 9", "CentOS"],
+    ["kali", "Kali Linux"],
+    ["fedora", "Fedora"],
+    ["arch", "Arch Linux"],
+  ]
+  const paths = new Set<string>()
+  for (const [osName, expected] of distros) {
+    const brand = resolveOsBrand("Linux", osName)
+    assert.equal(brand.label, osName)
+    assert.equal(resolveOsBrand("Linux", expected).label, expected)
+    paths.add(brand.path)
+  }
+  assert.equal(paths.size, distros.length)
+
+  // 未上报或无法识别时回落到通用标识
+  assert.equal(resolveOsBrand("Linux", null).label, "Linux")
+  assert.equal(resolveOsBrand("Linux", "some-unknown-distro").path, resolveOsBrand("Linux", "").path)
+})
+
+test("客户端卡片渲染发行版标识而非通用图标", () => {
+  const ubuntuHtml = renderToStaticMarkup(
+    createElement(ClientCard, { client: { ...windowsClient, os: "Linux", osName: "Ubuntu 24.04 LTS" } }),
+  )
+  assert.match(ubuntuHtml, /Ubuntu 24\.04 LTS/)
+  assert.match(ubuntuHtml, new RegExp(escapeRegExp(resolveOsBrand("Linux", "ubuntu").path.slice(0, 40))))
+})
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import {
+  Activity,
   AppWindow,
   ArrowLeft,
   CalendarClock,
@@ -35,6 +36,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select } from "@/components/ui/select"
 import type { Client } from "./client-data"
 import { statusMeta } from "./client-data"
+import { OsLogo, resolveOsBrand } from "./os-logos"
 import { useServerData } from "@/components/server-data-context"
 import {
   isAbsoluteWindowsExecutablePath,
@@ -428,7 +430,7 @@ function CommandRun({ os, clientId }: DetailProps) {
       <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
-        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命令</PrimaryButton>
+        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命���������</PrimaryButton>
       </div>
     </div>
   )
@@ -641,7 +643,7 @@ type ServiceResult = {
 const serviceActions: { id: ServiceAction; label: string }[] = [
   { id: "query", label: "查询" },
   { id: "start", label: "启动" },
-  { id: "stop", label: "停止" },
+  { id: "stop", label: "停���" },
   { id: "restart", label: "重启" },
 ]
 
@@ -816,8 +818,8 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
               <div><p className="text-muted-foreground">终止进程树</p><p className="mt-1 font-mono text-foreground">{parsedResult ? (parsedResult.killProcessTree ? "是" : "否") : "-"}</p></div>
               {parsedResult && (
                 <>
-                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
-                  <div className="sm:col-span-2"><p className="text-muted-foreground">实际路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.actualPath ?? "-"}</p></div>
+                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期���径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
+                  <div className="sm:col-span-2"><p className="text-muted-foreground">���际路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.actualPath ?? "-"}</p></div>
                   <div><p className="text-muted-foreground">初始状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.initialStatus}</p></div>
                   <div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.finalStatus}</p></div>
                   <div><p className="text-muted-foreground">耗时</p><p className="mt-1 font-mono text-foreground">{parsedResult.durationMs} ms</p></div>
@@ -944,7 +946,7 @@ function WindowsSystemRestart({ clientId: fixedClientId }: DetailProps) {
             value={clientId}
             onChange={setClientId}
             disabled={Boolean(fixedClientId)}
-            placeholder="选择在线客户端"
+            placeholder="选择���线客户端"
             options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
           />
         </Field>
@@ -1468,7 +1470,7 @@ function ServiceManage({ os, clientId }: DetailProps) {
 /* ---------- 子功能：计划任务（Linux Cron） ---------- */
 const cronJobs = [
   { schedule: "0 3 * * *", cmd: "/usr/local/bin/backup.sh", note: "每日 03:00 备份" },
-  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "每 10 分钟健康检查" },
+  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "�� 10 分钟���康检查" },
   { schedule: "0 0 * * 0", cmd: "apt-get update && apt-get -y upgrade", note: "每周日更新系统" },
 ]
 
@@ -1550,7 +1552,7 @@ const linuxTools: Tool[] = [
   { id: "file-deploy", title: "文件下发", desc: "分发文件到指定目录", icon: FileUp, tint: "oklch(0.5 0.15 200)", Detail: FileDeploy },
   { id: "command", title: "命令执行", desc: "远程运行 Shell 命令", icon: SquareTerminal, tint: "oklch(0.72 0.16 60)", Detail: CommandRun },
   { id: "message", title: "消息推送", desc: "向客户端发送广播通知", icon: MessageSquare, tint: "oklch(0.82 0.19 145)", Detail: MessagePush },
-  { id: "users", title: "用户管理", desc: "管理系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
+  { id: "users", title: "用户管理", desc: "管����系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
   { id: "service", title: "服务管理", desc: "管理 systemd 服务状态", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
   { id: "cron", title: "计划任务", desc: "编辑 Crontab 定时任务", icon: CalendarClock, tint: "oklch(0.82 0.19 145)", Detail: CronManage },
 ]
@@ -1559,6 +1561,245 @@ const osTabs: { id: OS; label: string; icon: LucideIcon }[] = [
   { id: "windows", label: "Windows", icon: AppWindow },
   { id: "linux", label: "Linux", icon: Terminal },
 ]
+
+/* ---------- 单机管理中心（与批量操作的三列大卡片刻意区分） ---------- */
+
+/* 功能按用途分区，单机模式下以分区列表呈现 */
+const clientToolSections: { label: string; hint: string; ids: string[] }[] = [
+  { label: "运行与进程", hint: "服务、进程与重启", ids: ["service", "terminate-process", "restart-system", "command", "cron"] },
+  { label: "文件与部署", hint: "装包与下发", ids: ["batch-install", "file-deploy"] },
+  { label: "系统与账户", hint: "账户、注册表与诊断", ids: ["users", "registry", "collect-logs", "message", "webpage"] },
+]
+
+function tintSoft(tint: string, amount: number) {
+  return `color-mix(in oklab, ${tint} ${amount}%, transparent)`
+}
+
+function formatUptime(seconds: number) {
+  if (seconds <= 0) return "—"
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  if (d > 0) return `${d} 天 ${h} 小时`
+  const m = Math.floor((seconds % 3600) / 60)
+  return h > 0 ? `${h} 小时 ${m} 分` : `${m} 分`
+}
+
+function MetricBar({ label, value }: { label: string; value: number }) {
+  const level = value >= 85 ? "bg-negative" : value >= 65 ? "bg-[#dce02d]" : "bg-primary"
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between text-[11px]">
+        <span className="font-medium text-muted-foreground">{label}</span>
+        <span className="font-mono text-xs text-foreground">{Math.round(value)}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-background/60">
+        <div className={cn("h-full rounded-full transition-[width] duration-500", level)} style={{ width: `${Math.min(100, Math.max(2, value))}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/* 左侧设备档案：单机管理独有的身份区，批量操作没有 */
+function DeviceProfile({ client }: { client: Client }) {
+  const s = statusMeta[client.status]
+  const brand = resolveOsBrand(client.os, client.osName)
+  const rows: { label: string; value: string; mono?: boolean }[] = [
+    { label: "主机名", value: client.hostname, mono: true },
+    { label: "IP 地址", value: client.ip, mono: true },
+    { label: "分组", value: client.group || "未分组" },
+    { label: "版本", value: client.version, mono: true },
+  ]
+
+  return (
+    <aside className="flex shrink-0 flex-col gap-4 self-start rounded-2xl border border-border bg-surface/40 p-4 lg:w-64 xl:w-72">
+      <div className="flex items-center gap-3">
+        <span
+          className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", s.ring)}
+          style={{ backgroundColor: brand.color }}
+          title={brand.label}
+        >
+          <OsLogo brand={brand} className="h-6 w-6 text-white" />
+        </span>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-sm font-semibold">{client.name}</p>
+          <span className={cn("mt-1 flex items-center gap-1.5 text-xs font-medium", s.text)}>
+            <span className={cn("h-2 w-2 rounded-full", s.dot)} />
+            <span className="truncate">
+              {s.label} · {brand.label}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <dl className="flex flex-col gap-2 border-t border-border pt-3 text-xs">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-center justify-between gap-3">
+            <dt className="text-muted-foreground">{r.label}</dt>
+            <dd className={cn("min-w-0 truncate text-foreground", r.mono && "font-mono")}>{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {client.metrics ? (
+        <div className="flex flex-col gap-3 border-t border-border pt-3">
+          <MetricBar label="CPU" value={client.metrics.cpu} />
+          <MetricBar label="内存" value={client.metrics.memory} />
+          <MetricBar label="磁盘" value={client.metrics.disk} />
+          <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Activity className="h-3.5 w-3.5" />
+            运行 {formatUptime(client.metrics.uptime)}
+          </p>
+        </div>
+      ) : (
+        <p className="border-t border-border pt-3 text-[11px] text-muted-foreground">暂无实时指标数据</p>
+      )}
+
+      {client.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-t border-border pt-3">
+          {client.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+/* 单机功能列表：分区标题 + 左侧色条的紧凑行，与批量操作的实心图标大卡片区分 */
+function ClientToolHub({
+  client,
+  tools,
+  onOpen,
+}: {
+  client: Client
+  tools: Tool[]
+  onOpen: (id: string) => void
+}) {
+  const byId = new Map(tools.map((t) => [t.id, t]))
+  const used = new Set<string>()
+  const sections = clientToolSections
+    .map((sec) => {
+      const items = sec.ids.map((id) => byId.get(id)).filter((t): t is Tool => Boolean(t))
+      items.forEach((t) => used.add(t.id))
+      return { ...sec, items }
+    })
+    .filter((sec) => sec.items.length > 0)
+  const rest = tools.filter((t) => !used.has(t.id))
+  if (rest.length > 0) sections.push({ label: "其他功能", hint: "扩展命令", items: rest, ids: [] })
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-5 overflow-auto pr-1 lg:flex-row">
+      <DeviceProfile client={client} />
+
+      <div className="flex min-w-0 flex-1 flex-col gap-5">
+        {sections.map((sec) => (
+          <section key={sec.label} className="flex flex-col gap-2.5">
+            <div className="flex items-center gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{sec.label}</h3>
+              <span className="hidden text-[11px] text-muted-foreground/70 sm:inline">{sec.hint}</span>
+              <span className="h-px flex-1 bg-border" />
+              <span className="font-mono text-[11px] text-muted-foreground/70">{sec.items.length}</span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {sec.items.map((t) => {
+                const Icon = t.icon
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => onOpen(t.id)}
+                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-border/70 bg-surface/40 py-2.5 pr-3 text-left hover:border-primary/40 hover:bg-surface"
+                  >
+                    <span className="h-11 w-1 shrink-0 rounded-r-full" style={{ backgroundColor: t.tint }} />
+                    <span
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                      style={{ backgroundColor: tintSoft(t.tint, 18), color: t.tint }}
+                    >
+                      <Icon className="h-[18px] w-[18px]" />
+                    </span>
+                    <span className="min-w-0 flex-1 leading-tight">
+                      <span className="block text-sm font-semibold">{t.title}</span>
+                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{t.desc}</span>
+                    </span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" />
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* 批量操作网格：作用范围条 + 实心图标大卡片（与单机的分区列表刻意区分） */
+function BatchToolGrid({ os, tools, onOpen }: { os: OS; tools: Tool[]; onOpen: (id: string) => void }) {
+  const { clients } = useServerData()
+  const osLabel = os === "windows" ? "Windows" : "Linux"
+  const targets = clients.filter((c) => (os === "windows" ? c.os === "Windows" : c.os === "Linux"))
+  const online = targets.filter((c) => c.status === "online").length
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      {/* 作用范围：批量模式独有的目标提示 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-primary/25 bg-primary/8 px-4 py-3">
+        <span className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <Users className="h-4 w-4" />
+          作用范围
+        </span>
+        <span className="text-sm text-foreground">全部 {osLabel} 客户端</span>
+        {targets.length > 0 && (
+          <>
+            <span className="hidden h-4 w-px bg-primary/25 sm:block" />
+            <span className="font-mono text-xs text-muted-foreground">
+              {targets.length} 台目标 · {online} 台在线
+            </span>
+          </>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground/80">操作将同时下发到所有匹配设备</span>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto pr-1">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {tools.map((t) => {
+            const Icon = t.icon
+            return (
+              <button
+                key={t.id}
+                onClick={() => onOpen(t.id)}
+                className="group relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-surface/60 p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_14px_32px_-10px_oklch(0_0_0_/_55%)]"
+              >
+                {/* 顶部色条：悬停时铺满整条，强调“批量下发” */}
+                <span
+                  className="absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 transition-transform duration-300 group-hover:scale-x-100"
+                  style={{ backgroundColor: t.tint }}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <span
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-105"
+                    style={{ backgroundColor: t.tint, boxShadow: `0 10px 24px -12px ${t.tint}` }}
+                  >
+                    <Icon className="h-6 w-6 text-white" />
+                  </span>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background/40 text-muted-foreground transition-all duration-300 group-hover:border-primary/50 group-hover:text-primary">
+                    <ChevronRight className="h-4 w-4" />
+                  </span>
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <p className="text-sm font-semibold">{t.title}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.desc}</p>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => void }) {
   const clientOS: OS = client?.os === "Linux" ? "linux" : "windows"
@@ -1601,9 +1842,10 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
       ? `${active.desc} · ${client.name}`
       : active.desc
     : client
-      ? `${client.name} · ${client.hostname} · ${tools.length} 项管理功能`
+      ? `单机模式 · ${client.name} · ${tools.length} 项管理功能`
       : `${os === "windows" ? "Windows" : "Linux"} · ${tools.length} 项批量功能`
   const clientStatus = client ? statusMeta[client.status] : null
+  const clientBrand = client ? resolveOsBrand(client.os, client.osName) : null
 
   return (
     <div className="card-glow flex h-full w-full flex-col overflow-hidden rounded-3xl bg-card p-6">
@@ -1634,14 +1876,17 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
           </div>
         </div>
 
-        {client ? (
+        {client && clientBrand ? (
           <div className="flex items-center gap-3 rounded-full border border-border bg-surface/60 px-3.5 py-2 text-xs">
             <span className={cn("flex items-center gap-1.5 font-medium", clientStatus?.text)}>
               <span className={cn("h-2 w-2 rounded-full", clientStatus?.dot)} />
               {clientStatus?.label}
             </span>
             <span className="h-4 w-px bg-border" />
-            <span className="font-medium text-muted-foreground">{client.os}</span>
+            <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
+              <OsLogo brand={clientBrand} className="h-3.5 w-3.5" colored />
+              <span className="max-w-48 truncate">{clientBrand.label}</span>
+            </span>
           </div>
         ) : (
           <SegmentedControl variant="pill" value={os} onChange={switchOS} options={osTabs} />
@@ -1652,33 +1897,10 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
       <div key={`${client?.id ?? "batch"}-${os}-${active ? active.id : "hub"}`} className={cn("mt-5 min-h-0 flex-1", enterAnim)}>
         {active ? (
           <active.Detail os={os} clientId={client?.id} />
+        ) : client ? (
+          <ClientToolHub client={client} tools={tools} onOpen={openTool} />
         ) : (
-          <div className="h-full overflow-auto pr-1">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {tools.map((t) => {
-                const Icon = t.icon
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => openTool(t.id)}
-                    className="group flex items-center gap-4 rounded-2xl border border-border bg-surface/60 p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_12px_28px_-8px_oklch(0_0_0_/_45%)]"
-                  >
-                    <span
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-105"
-                      style={{ backgroundColor: t.tint }}
-                    >
-                      <Icon className="h-6 w-6 text-white" />
-                    </span>
-                    <div className="min-w-0 flex-1 leading-tight">
-                      <p className="text-sm font-semibold">{t.title}</p>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">{t.desc}</p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 group-hover:translate-x-1 group-hover:text-primary" />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+          <BatchToolGrid os={os} tools={tools} onOpen={openTool} />
         )}
       </div>
     </div>

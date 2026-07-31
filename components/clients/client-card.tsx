@@ -1,15 +1,10 @@
 "use client"
 
-import { Apple, Loader2, Network, Server, Settings2, Terminal, Trash2 } from "lucide-react"
+import { Loader2, Network, Settings2, Trash2 } from "lucide-react"
 import type { Client } from "./client-data"
 import { statusMeta } from "./client-data"
+import { OsLogo, resolveOsBrand } from "./os-logos"
 import { cn } from "@/lib/utils"
-
-const osMeta: Record<Client["os"], { icon: typeof Apple; color: string }> = {
-  Windows: { icon: Terminal, color: "oklch(0.5 0.15 200)" },
-  macOS: { icon: Apple, color: "oklch(0.7 0.02 250)" },
-  Linux: { icon: Server, color: "oklch(0.72 0.16 60)" },
-}
 
 export function ClientCard({
   client,
@@ -23,8 +18,7 @@ export function ClientCard({
   onDelete?: (client: Client) => void
 }) {
   const s = statusMeta[client.status]
-  const os = osMeta[client.os]
-  const OsIcon = os.icon
+  const brand = resolveOsBrand(client.os, client.osName)
 
   return (
     <div className="group flex flex-col rounded-2xl border border-border bg-surface/60 p-4 transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_12px_28px_-8px_oklch(0_0_0_/_45%)]">
@@ -35,9 +29,10 @@ export function ClientCard({
               "flex h-11 w-11 items-center justify-center rounded-xl transition-transform duration-300 group-hover:scale-105",
               s.ring,
             )}
-            style={{ backgroundColor: os.color }}
+            style={{ backgroundColor: brand.color }}
+            title={brand.label}
           >
-            <OsIcon className="h-5 w-5 text-white" />
+            <OsLogo brand={brand} className="h-5 w-5 text-white" />
           </span>
           <div className="leading-tight">
             <p className="text-sm font-semibold">{client.name}</p>
@@ -62,8 +57,8 @@ export function ClientCard({
           <Network className="h-3.5 w-3.5" />
           <span className="font-mono">{client.ip}</span>
         </div>
-        <span className="rounded-md bg-background/40 px-2 py-1 text-xs font-medium text-muted-foreground">
-          {client.os}
+        <span className="max-w-40 truncate rounded-md bg-background/40 px-2 py-1 text-xs font-medium text-muted-foreground">
+          {brand.label}
         </span>
       </div>
 
