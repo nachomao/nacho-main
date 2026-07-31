@@ -96,12 +96,20 @@ export function resolveOsBrand(os: Client["os"], osName?: string | null): OsBran
   return { ...brands.linux, label: name || brands.linux.label }
 }
 
-/** 渲染系统品牌 logo，颜色继承父级 currentColor */
-export function OsLogo({ brand, className }: { brand: OsBrand; className?: string }) {
+/** 渲染系统品牌 logo；默认继承父级 currentColor，colored 时使用品牌主色 */
+export function OsLogo({
+  brand,
+  className,
+  colored = false,
+}: {
+  brand: OsBrand
+  className?: string
+  colored?: boolean
+}) {
   return (
     <svg
       viewBox={brand.viewBox}
-      fill="currentColor"
+      fill={colored ? brand.color : "currentColor"}
       aria-hidden="true"
       focusable="false"
       className={className}
