@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils"
 import { ClientCard } from "./client-card"
 import type { Client } from "./client-data"
+import { ClientManagementPanel } from "./extensions-panel"
 import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { defaultServerBaseUrl } from "@/lib/server-connection"
@@ -144,7 +145,9 @@ function CommandBlock({
 export function ClientsPanel() {
   const [query, setQuery] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [managingClientId, setManagingClientId] = useState<string | null>(null)
   const { clients, groups, loading, refreshing, error, refresh, apiRequest } = useServerData()
+  const managingClient = clients.find((client) => client.id === managingClientId) ?? null
   const filtered = clients.filter(
     (c) =>
       c.name.includes(query) ||
@@ -161,6 +164,15 @@ export function ClientsPanel() {
     } finally {
       setDeletingId(null)
     }
+  }
+
+  if (managingClient) {
+    return (
+      <ClientManagementPanel
+        client={managingClient}
+        onBack={() => setManagingClientId(null)}
+      />
+    )
   }
 
   return (
@@ -196,7 +208,13 @@ export function ClientsPanel() {
         ) : filtered.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {filtered.map((c) => (
-              <ClientCard key={c.id} client={c} deleting={deletingId === c.id} onDelete={deleteClient} />
+              <ClientCard
+                key={c.id}
+                client={c}
+                deleting={deletingId === c.id}
+                onManage={(client) => setManagingClientId(client.id)}
+                onDelete={deleteClient}
+              />
             ))}
           </div>
         ) : (

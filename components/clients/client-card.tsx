@@ -1,6 +1,6 @@
 "use client"
 
-import { Apple, Loader2, Network, Server, Terminal, Trash2 } from "lucide-react"
+import { Apple, Loader2, Network, Server, Settings2, Terminal, Trash2 } from "lucide-react"
 import type { Client } from "./client-data"
 import { statusMeta } from "./client-data"
 import { cn } from "@/lib/utils"
@@ -14,10 +14,12 @@ const osMeta: Record<Client["os"], { icon: typeof Apple; color: string }> = {
 export function ClientCard({
   client,
   deleting = false,
+  onManage,
   onDelete,
 }: {
   client: Client
   deleting?: boolean
+  onManage?: (client: Client) => void
   onDelete?: (client: Client) => void
 }) {
   const s = statusMeta[client.status]
@@ -49,7 +51,7 @@ export function ClientCard({
           aria-label={`删除客户端 ${client.name}`}
           disabled={deleting}
           onClick={() => onDelete?.(client)}
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-negative/50 hover:bg-negative/10 hover:text-negative disabled:pointer-events-none disabled:opacity-50"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-negative/50 hover:bg-negative/10 hover:text-negative disabled:pointer-events-none disabled:opacity-50"
         >
           {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
         </button>
@@ -70,15 +72,27 @@ export function ClientCard({
           <span className={cn("h-2 w-2 rounded-full", s.dot)} />
           {s.label}
         </span>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {client.tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary"
-            >
-              {tag}
-            </span>
-          ))}
+        <div className="flex min-w-0 items-center justify-end gap-1.5">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            {client.tags.map((tag) => (
+              <span
+                key={tag}
+                className="max-w-24 truncate rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+          <button
+            type="button"
+            title="管理客户端"
+            aria-label={`管理客户端 ${client.name}`}
+            onClick={() => onManage?.(client)}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-primary/35 bg-primary/10 px-3 text-xs font-semibold text-primary transition-colors hover:border-primary/60 hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            管理
+          </button>
         </div>
       </div>
     </div>

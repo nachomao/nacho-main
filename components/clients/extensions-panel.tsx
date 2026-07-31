@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select } from "@/components/ui/select"
 import type { Client } from "./client-data"
+import { statusMeta } from "./client-data"
 import { useServerData } from "@/components/server-data-context"
 import {
   isAbsoluteWindowsExecutablePath,
@@ -60,6 +61,13 @@ import {
   type CollectLogsCommand,
   type LogSource,
 } from "@/lib/collect-logs"
+
+type OS = "windows" | "linux"
+
+type DetailProps = {
+  os: OS
+  clientId?: string
+}
 
 /* ---------- 通用样式 / 小组件 ---------- */
 
@@ -136,10 +144,11 @@ function PrimaryButton({
   )
 }
 
-/* 目标客户端多选器：多个子功能共用，支持一键全选与按分组批量选择 */
-function TargetPicker({ os }: { os: OS }) {
+/* 目标客户端选择器：批量页支持多选，单机管理页固定为卡片对应客户端。 */
+function TargetPicker({ os, clientId }: DetailProps) {
   const { clients } = useServerData()
   const list = clients.filter((c) => c.status === "online" && matchOS(c, os))
+  const fixedClient = clientId ? clients.find((client) => client.id === clientId) ?? null : null
   const [selected, setSelected] = useState<string[]>(list[0] ? [list[0].id] : [])
   const listKey = list.map((client) => client.id).join("|")
 
@@ -181,6 +190,32 @@ function TargetPicker({ os }: { os: OS }) {
       groupState(name) === "all"
         ? prev.filter((id) => !ids.includes(id)) // 整组已选 → 取消
         : Array.from(new Set([...prev, ...ids])), // 否则整组选中
+    )
+  }
+
+  if (clientId) {
+    const status = fixedClient ? statusMeta[fixedClient.status] : null
+    return (
+      <Field label="目标客户端" icon={<Users className="h-3.5 w-3.5" />}>
+        {fixedClient ? (
+          <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/8 px-4 py-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">{fixedClient.name}</p>
+              <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                {fixedClient.hostname} · {fixedClient.ip}
+              </p>
+            </div>
+            <span className={cn("flex shrink-0 items-center gap-1.5 text-xs font-medium", status?.text)}>
+              <span className={cn("h-2 w-2 rounded-full", status?.dot)} />
+              {status?.label}
+            </span>
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-border bg-surface/40 px-4 py-3 text-xs text-muted-foreground">
+            目标客户端已不在当前列表中
+          </p>
+        )}
+      </Field>
     )
   }
 
@@ -275,7 +310,7 @@ const winPackages: { name: string; ver: string; size: string }[] = []
 
 const linuxPackages: { name: string; ver: string; size: string }[] = []
 
-function BatchInstall({ os }: { os: OS }) {
+function BatchInstall({ os, clientId }: DetailProps) {
   const list = os === "windows" ? winPackages : linuxPackages
   const [picked, setPicked] = useState<string[]>([])
   const toggle = (n: string) =>
@@ -320,7 +355,7 @@ function BatchInstall({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<DownloadCloud className="h-4 w-4" />}>开始批量安装</PrimaryButton>
@@ -330,7 +365,7 @@ function BatchInstall({ os }: { os: OS }) {
 }
 
 /* ---------- 子功能：文件下发 ---------- */
-function FileDeploy({ os }: { os: OS }) {
+function FileDeploy({ os, clientId }: DetailProps) {
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
       <Field label="上传文件" icon={<FileUp className="h-3.5 w-3.5" />}>
@@ -351,7 +386,7 @@ function FileDeploy({ os }: { os: OS }) {
         />
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<Send className="h-4 w-4" />}>下发文件</PrimaryButton>
@@ -361,7 +396,7 @@ function FileDeploy({ os }: { os: OS }) {
 }
 
 /* ---------- 子功能：命令执行 ---------- */
-function CommandRun({ os }: { os: OS }) {
+function CommandRun({ os, clientId }: DetailProps) {
   const isWin = os === "windows"
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
@@ -390,7 +425,7 @@ function CommandRun({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命令</PrimaryButton>
@@ -400,7 +435,7 @@ function CommandRun({ os }: { os: OS }) {
 }
 
 /* ---------- 子功能：消息推送 ---------- */
-function MessagePush({ os }: { os: OS }) {
+function MessagePush({ os, clientId }: DetailProps) {
   const levels = ["普通", "重要", "紧急"]
   const [level, setLevel] = useState("普通")
 
@@ -437,7 +472,7 @@ function MessagePush({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<Send className="h-4 w-4" />}>推送消息</PrimaryButton>
@@ -452,7 +487,7 @@ const winUsers: { name: string; role: string; active: boolean }[] = []
 
 const linuxUsers: { name: string; role: string; active: boolean }[] = []
 
-function UserManage({ os }: { os: OS }) {
+function UserManage({ os }: DetailProps) {
   const list = os === "windows" ? winUsers : linuxUsers
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
@@ -507,7 +542,7 @@ function UserManage({ os }: { os: OS }) {
 // 常用地址由服务端配置提供，面板不再内置模拟数据
 const urlPresets: string[] = []
 
-function OpenWebpage({ os }: { os: OS }) {
+function OpenWebpage({ os, clientId }: DetailProps) {
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
       <Field label="网页地址" icon={<Globe className="h-3.5 w-3.5" />}>
@@ -528,7 +563,7 @@ function OpenWebpage({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<Globe className="h-4 w-4" />}>在客户端打开</PrimaryButton>
@@ -628,10 +663,10 @@ type TerminateProcessCommand = {
   result: string | null
 }
 
-function WindowsProcessTerminate() {
+function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
   const windowsClients = clients.filter((client) => client.os === "Windows")
-  const [clientId, setClientId] = useState(windowsClients[0]?.id ?? "")
+  const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [processId, setProcessId] = useState("")
   const [expectedPath, setExpectedPath] = useState("")
   const [killProcessTree, setKillProcessTree] = useState(true)
@@ -642,9 +677,13 @@ function WindowsProcessTerminate() {
   const windowsClientKey = windowsClients.map((client) => client.id).join("|")
 
   useEffect(() => {
+    if (fixedClientId) {
+      if (clientId !== fixedClientId) setClientId(fixedClientId)
+      return
+    }
     if (windowsClients.some((client) => client.id === clientId)) return
     setClientId(windowsClients[0]?.id ?? "")
-  }, [clientId, windowsClientKey])
+  }, [clientId, fixedClientId, windowsClientKey])
 
   useEffect(() => {
     if (!command || terminalCommandStatuses.includes(command.status)) return
@@ -711,6 +750,7 @@ function WindowsProcessTerminate() {
           <Select
             value={clientId}
             onChange={setClientId}
+            disabled={Boolean(fixedClientId)}
             placeholder="选择客户端"
             options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
           />
@@ -805,10 +845,12 @@ function WindowsProcessTerminate() {
   )
 }
 
-function WindowsSystemRestart() {
+function WindowsSystemRestart({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
-  const windowsClients = clients.filter((client) => client.os === "Windows" && client.status === "online")
-  const [clientId, setClientId] = useState(windowsClients[0]?.id ?? "")
+  const windowsClients = clients.filter(
+    (client) => client.os === "Windows" && (fixedClientId ? client.id === fixedClientId : client.status === "online"),
+  )
+  const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [delaySeconds, setDelaySeconds] = useState(30)
   const [reason, setReason] = useState("")
   const [confirming, setConfirming] = useState(false)
@@ -818,10 +860,14 @@ function WindowsSystemRestart() {
   const clientKey = windowsClients.map((client) => client.id).join("|")
 
   useEffect(() => {
+    if (fixedClientId) {
+      if (clientId !== fixedClientId) setClientId(fixedClientId)
+      return
+    }
     if (windowsClients.some((client) => client.id === clientId)) return
     setClientId(windowsClients[0]?.id ?? "")
     setConfirming(false)
-  }, [clientId, clientKey])
+  }, [clientId, clientKey, fixedClientId])
 
   useEffect(() => {
     if (!confirming) return
@@ -893,12 +939,13 @@ function WindowsSystemRestart() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="在线 Windows 客户端" icon={<AppWindow className="h-3.5 w-3.5" />}>
+        <Field label={fixedClientId ? "目标 Windows 客户端" : "在线 Windows 客户端"} icon={<AppWindow className="h-3.5 w-3.5" />}>
           <Select
             value={clientId}
             onChange={setClientId}
+            disabled={Boolean(fixedClientId)}
             placeholder="选择在线客户端"
-            options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · online` }))}
+            options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
           />
         </Field>
         <Field label="延迟（秒）" icon={<CalendarClock className="h-3.5 w-3.5" />}>
@@ -1011,11 +1058,13 @@ function LogMessage({ message }: { message: string }) {
   )
 }
 
-function WindowsLogCollection() {
+function WindowsLogCollection({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
-  const windowsClients = clients.filter((client) => client.os === "Windows" && client.status === "online")
+  const windowsClients = clients.filter(
+    (client) => client.os === "Windows" && (fixedClientId ? client.id === fixedClientId : client.status === "online"),
+  )
   const now = Date.now()
-  const [clientId, setClientId] = useState(windowsClients[0]?.id ?? "")
+  const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [sources, setSources] = useState<LogSource[]>([...logSources])
   const [sinceInput, setSinceInput] = useState(() => dateToUtcInput(new Date(now - 61 * 60 * 1000)))
   const [untilInput, setUntilInput] = useState(() => dateToUtcInput(new Date(now - 60 * 1000)))
@@ -1026,9 +1075,13 @@ function WindowsLogCollection() {
   const clientKey = windowsClients.map((client) => client.id).join("|")
 
   useEffect(() => {
+    if (fixedClientId) {
+      if (clientId !== fixedClientId) setClientId(fixedClientId)
+      return
+    }
     if (windowsClients.some((client) => client.id === clientId)) return
     setClientId(windowsClients[0]?.id ?? "")
-  }, [clientId, clientKey])
+  }, [clientId, clientKey, fixedClientId])
 
   useEffect(() => {
     if (!command || terminalCommandStatuses.includes(command.status)) return
@@ -1091,12 +1144,13 @@ function WindowsLogCollection() {
         </p>
       </div>
 
-      <Field label="在线 Windows 客户端" icon={<AppWindow className="h-3.5 w-3.5" />}>
+      <Field label={fixedClientId ? "目标 Windows 客户端" : "在线 Windows 客户端"} icon={<AppWindow className="h-3.5 w-3.5" />}>
         <Select
           value={clientId}
           onChange={setClientId}
+          disabled={Boolean(fixedClientId)}
           placeholder="选择在线客户端"
-          options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · online` }))}
+          options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
         />
       </Field>
 
@@ -1197,10 +1251,10 @@ function WindowsLogCollection() {
   )
 }
 
-function WindowsServiceManage() {
+function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
   const windowsClients = clients.filter((client) => client.os === "Windows")
-  const [clientId, setClientId] = useState(windowsClients[0]?.id ?? "")
+  const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [serviceName, setServiceName] = useState("")
   const [action, setAction] = useState<ServiceAction>("query")
   const [timeoutSeconds, setTimeoutSeconds] = useState(30)
@@ -1210,9 +1264,13 @@ function WindowsServiceManage() {
   const windowsClientKey = windowsClients.map((client) => client.id).join("|")
 
   useEffect(() => {
+    if (fixedClientId) {
+      if (clientId !== fixedClientId) setClientId(fixedClientId)
+      return
+    }
     if (windowsClients.some((client) => client.id === clientId)) return
     setClientId(windowsClients[0]?.id ?? "")
-  }, [clientId, windowsClientKey])
+  }, [clientId, fixedClientId, windowsClientKey])
 
   useEffect(() => {
     if (!command || terminalCommandStatuses.includes(command.status)) return
@@ -1271,6 +1329,7 @@ function WindowsServiceManage() {
           <Select
             value={clientId}
             onChange={setClientId}
+            disabled={Boolean(fixedClientId)}
             placeholder="选择客户端"
             options={windowsClients.map((client) => ({
               value: client.id,
@@ -1367,8 +1426,8 @@ const services = [
   { name: "mysql.service", desc: "MySQL Community Server", running: false },
 ]
 
-function ServiceManage({ os }: { os: OS }) {
-  if (os === "windows") return <WindowsServiceManage />
+function ServiceManage({ os, clientId }: DetailProps) {
+  if (os === "windows") return <WindowsServiceManage os={os} clientId={clientId} />
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
       <Field label="systemd 服务列表" icon={<Server className="h-3.5 w-3.5" />}>
@@ -1401,7 +1460,7 @@ function ServiceManage({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
     </div>
   )
 }
@@ -1413,7 +1472,7 @@ const cronJobs = [
   { schedule: "0 0 * * 0", cmd: "apt-get update && apt-get -y upgrade", note: "每周日更新系统" },
 ]
 
-function CronManage({ os }: { os: OS }) {
+function CronManage({ os, clientId }: DetailProps) {
   return (
     <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
       <Field label="Crontab 定时任务" icon={<CalendarClock className="h-3.5 w-3.5" />}>
@@ -1440,7 +1499,7 @@ function CronManage({ os }: { os: OS }) {
         </div>
       </Field>
 
-      <TargetPicker os={os} />
+      <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
         <PrimaryButton icon={<Plus className="h-4 w-4" />}>新建定时任务</PrimaryButton>
@@ -1450,8 +1509,6 @@ function CronManage({ os }: { os: OS }) {
 }
 
 /* ---------- 系统类型 & 工具清单 ---------- */
-type OS = "windows" | "linux"
-
 /* 依据客户端信息粗略判断所属系统（无字段时按平均分配以便演示） */
 function matchOS(c: Client, os: OS): boolean {
   const raw = `${(c as Record<string, unknown>).os ?? ""} ${(c as Record<string, unknown>).system ?? ""} ${
@@ -1471,7 +1528,7 @@ type Tool = {
   desc: string
   icon: LucideIcon
   tint: string
-  Detail: (props: { os: OS }) => React.ReactElement
+  Detail: (props: DetailProps) => React.ReactElement
 }
 
 const windowsTools: Tool[] = [
@@ -1503,8 +1560,9 @@ const osTabs: { id: OS; label: string; icon: LucideIcon }[] = [
   { id: "linux", label: "Linux", icon: Terminal },
 ]
 
-export function ExtensionsPanel() {
-  const [os, setOS] = useState<OS>("windows")
+function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => void }) {
+  const clientOS: OS = client?.os === "Linux" ? "linux" : "windows"
+  const [os, setOS] = useState<OS>(clientOS)
   const [activeId, setActiveId] = useState<string | null>(null)
   // 当前内容区的进场动画：OS 切换时按药丸方向水平平移，钻取工具时竖直进场
   const [enterAnim, setEnterAnim] = useState("animate-panel-enter")
@@ -1527,10 +1585,25 @@ export function ExtensionsPanel() {
     setActiveId(id)
   }
 
-  const backToHub = () => {
+  const back = () => {
+    if (!activeId && client) {
+      onExit?.()
+      return
+    }
     setEnterAnim("animate-panel-enter")
     setActiveId(null)
   }
+
+  const showBack = Boolean(active || client)
+  const title = active ? active.title : client ? "客户端管理" : "批量操作"
+  const description = active
+    ? client
+      ? `${active.desc} · ${client.name}`
+      : active.desc
+    : client
+      ? `${client.name} · ${client.hostname} · ${tools.length} 项管理功能`
+      : `${os === "windows" ? "Windows" : "Linux"} · ${tools.length} 项批量功能`
+  const clientStatus = client ? statusMeta[client.status] : null
 
   return (
     <div className="card-glow flex h-full w-full flex-col overflow-hidden rounded-3xl bg-card p-6">
@@ -1538,12 +1611,13 @@ export function ExtensionsPanel() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start">
           <button
-            onClick={backToHub}
-            aria-label="返回批量操作菜单"
-            tabIndex={active ? 0 : -1}
+            type="button"
+            onClick={back}
+            aria-label={active ? `返回${client ? "客户端管理" : "批量操作"}菜单` : "返回客户端列表"}
+            tabIndex={showBack ? 0 : -1}
             className={cn(
               "mt-0.5 flex h-9 shrink-0 items-center justify-center overflow-hidden rounded-full border transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-x-0.5 hover:bg-surface hover:text-foreground",
-              active
+              showBack
                 ? "mr-3 w-9 border-border text-muted-foreground opacity-100"
                 : "mr-0 w-0 border-transparent text-transparent opacity-0",
             )}
@@ -1552,28 +1626,32 @@ export function ExtensionsPanel() {
           </button>
           <div className="transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
             <h2 className="text-lg font-semibold">
-              <MorphText text={active ? active.title : "批量操作"} />
+              <MorphText text={title} />
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              <MorphText
-                text={
-                  active
-                    ? active.desc
-                    : `${os === "windows" ? "Windows" : "Linux"} · ${tools.length} 项批量功能`
-                }
-              />
+              <MorphText text={description} />
             </p>
           </div>
         </div>
 
-        {/* 系统切换器 */}
-        <SegmentedControl variant="pill" value={os} onChange={switchOS} options={osTabs} />
+        {client ? (
+          <div className="flex items-center gap-3 rounded-full border border-border bg-surface/60 px-3.5 py-2 text-xs">
+            <span className={cn("flex items-center gap-1.5 font-medium", clientStatus?.text)}>
+              <span className={cn("h-2 w-2 rounded-full", clientStatus?.dot)} />
+              {clientStatus?.label}
+            </span>
+            <span className="h-4 w-px bg-border" />
+            <span className="font-medium text-muted-foreground">{client.os}</span>
+          </div>
+        ) : (
+          <SegmentedControl variant="pill" value={os} onChange={switchOS} options={osTabs} />
+        )}
       </div>
 
       {/* 内容区 */}
-      <div key={`${os}-${active ? active.id : "hub"}`} className={cn("mt-5 min-h-0 flex-1", enterAnim)}>
+      <div key={`${client?.id ?? "batch"}-${os}-${active ? active.id : "hub"}`} className={cn("mt-5 min-h-0 flex-1", enterAnim)}>
         {active ? (
-          <active.Detail os={os} />
+          <active.Detail os={os} clientId={client?.id} />
         ) : (
           <div className="h-full overflow-auto pr-1">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1605,4 +1683,36 @@ export function ExtensionsPanel() {
       </div>
     </div>
   )
+}
+
+export function ExtensionsPanel() {
+  return <ManagementPanel />
+}
+
+export function ClientManagementPanel({ client, onBack }: { client: Client; onBack: () => void }) {
+  if (client.os === "macOS") {
+    return (
+      <div className="card-glow flex h-full w-full flex-col overflow-hidden rounded-3xl bg-card p-6">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="返回客户端列表"
+            className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <h2 className="text-lg font-semibold">客户端管理</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{client.name} · {client.hostname}</p>
+          </div>
+        </div>
+        <div className="mt-5 flex flex-1 items-center justify-center rounded-2xl border border-dashed border-border bg-surface/30 px-6 text-center text-sm text-muted-foreground">
+          当前管理命令仅覆盖 Windows 与 Linux 客户端。
+        </div>
+      </div>
+    )
+  }
+
+  return <ManagementPanel client={client} onExit={onBack} />
 }
