@@ -141,12 +141,66 @@ function CommandBlock({
   )
 }
 
+/* TEMP-MOCK: 仅用于预览设备卡片样式，确认后删除 ↓ */
+const MOCK_CLIENTS: Client[] = [
+  {
+    id: "mock-1",
+    name: "猫羽雫的计算姬",
+    hostname: "nachoneko-desktop",
+    ip: "127.0.0.1",
+    os: "Windows",
+    status: "online",
+    tags: ["主力机"],
+    group: "默认分组",
+    version: "1.2.0",
+    lastSeen: Date.now(),
+    registeredAt: Date.now(),
+    metrics: { cpu: 32, memory: 61, disk: 48, uptime: 86400 },
+    connected: true,
+  },
+  {
+    id: "mock-2",
+    name: "机房节点 A",
+    hostname: "node-a.internal",
+    ip: "10.0.12.31",
+    os: "Linux",
+    status: "warning",
+    tags: ["生产", "高负载"],
+    group: "机房",
+    version: "1.1.8",
+    lastSeen: Date.now(),
+    registeredAt: Date.now(),
+    metrics: { cpu: 88, memory: 74, disk: 91, uptime: 720000 },
+    connected: true,
+  },
+  {
+    id: "mock-3",
+    name: "设计部 MacBook",
+    hostname: "design-mbp",
+    ip: "192.168.1.104",
+    os: "macOS",
+    status: "offline",
+    tags: ["办公"],
+    group: "办公区",
+    version: "1.2.0",
+    lastSeen: Date.now() - 600000,
+    registeredAt: Date.now(),
+    metrics: null,
+    connected: false,
+  },
+]
+/* TEMP-MOCK ↑ */
+
 /* ---------- 面板一：客户端列表 ---------- */
 export function ClientsPanel() {
   const [query, setQuery] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [managingClientId, setManagingClientId] = useState<string | null>(null)
-  const { clients, groups, loading, refreshing, error, refresh, apiRequest } = useServerData()
+  const { groups, refreshing, refresh, apiRequest } = useServerData()
+  /* TEMP-MOCK: 用模拟数据替换真实请求，确认后删除 */
+  const clients = MOCK_CLIENTS
+  const loading = false
+  const error: string | null = null
   const managingClient = clients.find((client) => client.id === managingClientId) ?? null
   const filtered = clients.filter(
     (c) =>
