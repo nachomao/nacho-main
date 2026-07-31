@@ -17,7 +17,6 @@ import {
   KeyRound,
   Loader2,
   MessageSquare,
-  MonitorSmartphone,
   Package,
   Play,
   Plus,
@@ -37,6 +36,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control"
 import { Select } from "@/components/ui/select"
 import type { Client } from "./client-data"
 import { statusMeta } from "./client-data"
+import { OsLogo, resolveOsBrand } from "./os-logos"
 import { useServerData } from "@/components/server-data-context"
 import {
   isAbsoluteWindowsExecutablePath,
@@ -430,7 +430,7 @@ function CommandRun({ os, clientId }: DetailProps) {
       <TargetPicker os={os} clientId={clientId} />
 
       <div className="mt-auto flex justify-end gap-3 border-t border-border pt-4">
-        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命�������</PrimaryButton>
+        <PrimaryButton icon={<Play className="h-4 w-4" />}>执行命���������</PrimaryButton>
       </div>
     </div>
   )
@@ -818,7 +818,7 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
               <div><p className="text-muted-foreground">终止进程树</p><p className="mt-1 font-mono text-foreground">{parsedResult ? (parsedResult.killProcessTree ? "是" : "否") : "-"}</p></div>
               {parsedResult && (
                 <>
-                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
+                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期���径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
                   <div className="sm:col-span-2"><p className="text-muted-foreground">实际路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.actualPath ?? "-"}</p></div>
                   <div><p className="text-muted-foreground">初始状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.initialStatus}</p></div>
                   <div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.finalStatus}</p></div>
@@ -946,7 +946,7 @@ function WindowsSystemRestart({ clientId: fixedClientId }: DetailProps) {
             value={clientId}
             onChange={setClientId}
             disabled={Boolean(fixedClientId)}
-            placeholder="选择在线客户端"
+            placeholder="选择���线客户端"
             options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
           />
         </Field>
@@ -1602,6 +1602,7 @@ function MetricBar({ label, value }: { label: string; value: number }) {
 /* 左侧设备档案：单机管理独有的身份区，批量操作没有 */
 function DeviceProfile({ client }: { client: Client }) {
   const s = statusMeta[client.status]
+  const brand = resolveOsBrand(client.os, client.osName)
   const rows: { label: string; value: string; mono?: boolean }[] = [
     { label: "主机名", value: client.hostname, mono: true },
     { label: "IP 地址", value: client.ip, mono: true },
@@ -1612,14 +1613,20 @@ function DeviceProfile({ client }: { client: Client }) {
   return (
     <aside className="flex shrink-0 flex-col gap-4 self-start rounded-2xl border border-border bg-surface/40 p-4 lg:w-64 xl:w-72">
       <div className="flex items-center gap-3">
-        <span className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/15", s.ring)}>
-          <MonitorSmartphone className="h-6 w-6 text-primary" />
+        <span
+          className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", s.ring)}
+          style={{ backgroundColor: brand.color }}
+          title={brand.label}
+        >
+          <OsLogo brand={brand} className="h-6 w-6 text-white" />
         </span>
         <div className="min-w-0 leading-tight">
           <p className="truncate text-sm font-semibold">{client.name}</p>
           <span className={cn("mt-1 flex items-center gap-1.5 text-xs font-medium", s.text)}>
             <span className={cn("h-2 w-2 rounded-full", s.dot)} />
-            {s.label} · {client.os}
+            <span className="truncate">
+              {s.label} · {brand.label}
+            </span>
           </span>
         </div>
       </div>

@@ -6,6 +6,8 @@ export type Client = {
   hostname: string
   ip: string
   os: "Windows" | "macOS" | "Linux"
+  /** agent 上报的具体系统名，如 "Windows 11 专业版" / "ubuntu"，用于匹配发行版 logo */
+  osName?: string | null
   status: ClientStatus
   tags: string[]
   group: string
