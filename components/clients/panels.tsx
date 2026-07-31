@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   Check,
   CheckCircle2,
@@ -196,6 +196,10 @@ export function ClientsPanel() {
   const [query, setQuery] = useState("")
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [managingClientId, setManagingClientId] = useState<string | null>(null)
+  /* 离场层与方向，与顶部标签切换（clients-view）使用同一套卡片平移动画 */
+  const [exiting, setExiting] = useState<{ kind: "list" } | { kind: "manage"; client: Client } | null>(null)
+  const [direction, setDirection] = useState<1 | -1>(1)
+  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { groups, refreshing, refresh, apiRequest } = useServerData()
   /* TEMP-MOCK: 用模拟数据替换真实请求，确认后删除 */
   const clients = MOCK_CLIENTS
@@ -220,16 +224,29 @@ export function ClientsPanel() {
     }
   }
 
-  if (managingClient) {
-    return (
-      <ClientManagementPanel
-        client={managingClient}
-        onBack={() => setManagingClientId(null)}
-      />
-    )
+  /* 进入管理面板：列表卡片上移离场，管理卡片从下方贴上来 */
+  const enterManage = (client: Client) => {
+    setDirection(1)
+    setExiting({ kind: "list" })
+    setManagingClientId(client.id)
+    if (exitTimer.current) clearTimeout(exitTimer.current)
+    // 与 animate-panel-exit 动画时长保持一致
+    exitTimer.current = setTimeout(() => setExiting(null), 500)
   }
 
-  return (
+  /* 返回列表：管理卡片下移离场，列表卡片从上方贴下来 */
+  const exitManage = () => {
+    if (!managingClient) return
+    setDirection(-1)
+    setExiting({ kind: "manage", client: managingClient })
+    setManagingClientId(null)
+    if (exitTimer.current) clearTimeout(exitTimer.current)
+    exitTimer.current = setTimeout(() => setExiting(null), 500)
+  }
+
+  const managePanel = (client: Client) => <ClientManagementPanel client={client} onBack={exitManage} />
+
+  const listPanel = (
     <PanelShell
       title="客户端"
       desc={`当前管理 ${clients.length} 台设备 · ${groups.length} 个分组`}
@@ -266,7 +283,7 @@ export function ClientsPanel() {
                 key={c.id}
                 client={c}
                 deleting={deletingId === c.id}
-                onManage={(client) => setManagingClientId(client.id)}
+                onManage={enterManage}
                 onDelete={deleteClient}
               />
             ))}
@@ -279,6 +296,25 @@ export function ClientsPanel() {
         )}
       </div>
     </PanelShell>
+  )
+
+  const enterClass = direction === 1 ? "animate-panel-enter" : "animate-panel-enter-down"
+  const exitClass = direction === 1 ? "animate-panel-exit" : "animate-panel-exit-down"
+
+  return (
+    <div className="relative h-full w-full overflow-hidden">
+      {exiting && (
+        <div key={`exit-${exiting.kind}`} className={cn("pointer-events-none absolute inset-0", exitClass)} aria-hidden>
+          {exiting.kind === "manage" ? managePanel(exiting.client) : listPanel}
+        </div>
+      )}
+      <div
+        key={managingClient ? `manage-${managingClient.id}` : "list"}
+        className={cn("absolute inset-0", exiting && enterClass)}
+      >
+        {managingClient ? managePanel(managingClient) : listPanel}
+      </div>
+    </div>
   )
 }
 
@@ -641,7 +677,7 @@ export function ClientUpdatePanel() {
   return (
     <PanelShell
       title="客户端更新"
-      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务端发布清���"}
+      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务���发布清���"}
       action={
         <button type="button" onClick={() => void queue("all")} disabled={!updates || submitting || available === 0} className="flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50">
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}全部更新
