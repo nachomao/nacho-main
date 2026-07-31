@@ -141,59 +141,6 @@ function CommandBlock({
   )
 }
 
-/* TEMP-MOCK: 仅用于预览设备卡片样式，确认后删除 ↓ */
-const MOCK_CLIENTS: Client[] = [
-  {
-    id: "mock-1",
-    name: "猫羽雫的计算姬",
-    hostname: "nachoneko-desktop",
-    ip: "127.0.0.1",
-    os: "Windows",
-    osName: "Windows 11 专业版 24H2",
-    status: "online",
-    tags: ["主力机"],
-    group: "默认分组",
-    version: "1.2.0",
-    lastSeen: Date.now(),
-    registeredAt: Date.now(),
-    metrics: { cpu: 32, memory: 61, disk: 48, uptime: 86400 },
-    connected: true,
-  },
-  {
-    id: "mock-2",
-    name: "机房节点 A",
-    hostname: "node-a.internal",
-    ip: "10.0.12.31",
-    os: "Linux",
-    osName: "Ubuntu 24.04 LTS",
-    status: "warning",
-    tags: ["生产", "高负载"],
-    group: "机房",
-    version: "1.1.8",
-    lastSeen: Date.now(),
-    registeredAt: Date.now(),
-    metrics: { cpu: 88, memory: 74, disk: 91, uptime: 720000 },
-    connected: true,
-  },
-  {
-    id: "mock-3",
-    name: "设计部 MacBook",
-    hostname: "design-mbp",
-    ip: "192.168.1.104",
-    os: "macOS",
-    osName: "macOS Sequoia 15.5",
-    status: "offline",
-    tags: ["办公"],
-    group: "办公区",
-    version: "1.2.0",
-    lastSeen: Date.now() - 600000,
-    registeredAt: Date.now(),
-    metrics: null,
-    connected: false,
-  },
-]
-/* TEMP-MOCK ↑ */
-
 /* ---------- 面板一：客户端列表 ---------- */
 export function ClientsPanel() {
   const [query, setQuery] = useState("")
@@ -203,10 +150,7 @@ export function ClientsPanel() {
   const [exiting, setExiting] = useState<{ kind: "list" } | { kind: "manage"; client: Client } | null>(null)
   const [direction, setDirection] = useState<1 | -1>(1)
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { groups, refreshing, refresh, apiRequest } = useServerData()
-  /* TEMP-MOCK: 用模拟数据替换真实请求，确认后删除 */
-  const clients = MOCK_CLIENTS
-  const loading = false
+  const { clients, groups, loading, refreshing, refresh, apiRequest } = useServerData()
   const error: string | null = null
   const managingClient = clients.find((client) => client.id === managingClientId) ?? null
   const filtered = clients.filter(
