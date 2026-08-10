@@ -37,6 +37,7 @@ import type { Client } from "./client-data"
 import { statusMeta } from "./client-data"
 import { OsLogo, resolveOsBrand } from "./os-logos"
 import { useServerData } from "@/components/server-data-context"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import {
   isAbsoluteWindowsExecutablePath,
   isValidProcessId,
@@ -416,6 +417,7 @@ function TargetPicker({
 /* ---------- 子功能：批量安装 ---------- */
 function BatchInstall({ os, clientId }: DetailProps) {
   const { clients, apiRequest, uploadRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [packages, setPackages] = useState<ManagedPackage[]>([])
   const [picked, setPicked] = useState<string[]>([])
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>(clientId ? [clientId] : [])
@@ -545,7 +547,12 @@ function BatchInstall({ os, clientId }: DetailProps) {
   }
 
   const removePackage = async (artifact: ManagedPackage) => {
-    if (!window.confirm(`确认从软件仓库删除“${artifact.displayName}”吗？活动部署会阻止删除。`)) return
+    if (!(await confirm({
+      title: `从软件仓库删除“${artifact.displayName}”？`,
+      description: "存在活动部署时服务端会阻止删除。",
+      confirmLabel: "删除",
+      tone: "danger",
+    }))) return
     setError(null)
     try {
       await apiRequest(`/managed-artifacts/${encodeURIComponent(artifact.id)}`, { method: "DELETE" })
@@ -560,7 +567,13 @@ function BatchInstall({ os, clientId }: DetailProps) {
     const commandCount = picked.length * selectedClientIds.length
     const names = packages.filter((item) => picked.includes(item.id)).map((item) => item.displayName).join("、")
     const targetNames = clients.filter((client) => selectedClientIds.includes(client.id)).map((client) => client.name).join("、")
-    if (!window.confirm(`确认批量安装：${picked.length} 个包 × ${selectedClientIds.length} 台客户端 = ${commandCount} 条命令\n安装包：${names}\n目标：${targetNames}\n安装过程不会主动重启系统。`)) return
+    if (!(await confirm({
+      title: `创建 ${commandCount} 条批量安装命令？`,
+      description: "安装过程不会主动重启系统。",
+      body: `安装包：${names}\n目标客户端：${targetNames}\n命令数量：${picked.length} 个包 × ${selectedClientIds.length} 台 = ${commandCount} 条\n单条超时：${timeoutSeconds} 秒`,
+      confirmLabel: "开始安装",
+      tone: "warning",
+    }))) return
     setSubmitting(true)
     setError(null)
     try {
@@ -691,6 +704,7 @@ function BatchInstall({ os, clientId }: DetailProps) {
 /* ---------- 子功能：文件下发 ---------- */
 function FileDeploy({ os, clientId }: DetailProps) {
   const { clients, apiRequest, uploadRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [file, setFile] = useState<File | null>(null)
   const [displayName, setDisplayName] = useState("")
   const [destinationPath, setDestinationPath] = useState("C:\\Deploy\\")
@@ -777,7 +791,13 @@ function FileDeploy({ os, clientId }: DetailProps) {
     }
     const targetNames = clients.filter((client) => selectedClientIds.includes(client.id)).map((client) => client.name).join("、")
     const policyText = conflictPolicy === "replace" ? "\n目标已存在时，旧文件会进入受保护备份并允许回滚。" : "\n目标已存在时命令会失败，不覆盖旧文件。"
-    if (!window.confirm("确认下发文件“" + file.name + "”到 " + selectedClientIds.length + " 台客户端？\n目标：" + targetNames + "\n路径：" + destinationPath + policyText)) return
+    if (!(await confirm({
+      title: `下发文件“${file.name}”到 ${selectedClientIds.length} 台客户端？`,
+      description: policyText.trim(),
+      body: `目标客户端：${targetNames}\n目标路径：${destinationPath}`,
+      confirmLabel: "开始下发",
+      tone: "warning",
+    }))) return
     setSubmitting(true)
     setUploadProgress(0)
     setError(null)
@@ -804,7 +824,14 @@ function FileDeploy({ os, clientId }: DetailProps) {
   }
 
   const rollback = async (item: FileDeploymentBatch["items"][number]) => {
-    if (!item.command || rollingBack || !window.confirm("确认回滚 " + (item.client?.name ?? item.clientId) + " 上由命令 " + item.commandId + " 替换的文件？当前文件哈希变化时 Agent 会拒绝回滚。")) return
+    if (!item.command || rollingBack) return
+    if (!(await confirm({
+      title: `回滚 ${item.client?.name ?? item.clientId} 上被替换的文件？`,
+      description: "当前文件哈希发生变化时，Agent 会拒绝回滚。",
+      body: `来源命令：${item.commandId}`,
+      confirmLabel: "回滚",
+      tone: "warning",
+    }))) return
     setRollingBack(item.commandId)
     setError(null)
     try {
@@ -900,6 +927,7 @@ function FileDeploy({ os, clientId }: DetailProps) {
 /* ---------- 子功能：命令执行 ---------- */
 function CommandRun({ os, clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [shell, setShell] = useState<ShellKind>("powershell")
   const [script, setScript] = useState("Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion")
   const [timeoutSeconds, setTimeoutSeconds] = useState(300)
@@ -957,7 +985,13 @@ function CommandRun({ os, clientId: fixedClientId }: DetailProps) {
 
   async function submit() {
     if (!valid || submitting) return
-    if (!window.confirm(`Shell：${shell}\n目标：${targetNames.join("、")}\n超时：${timeoutSeconds} 秒\n\n确认下发命令？`)) return
+    if (!(await confirm({
+      title: `向 ${targetNames.length} 台客户端下发命令？`,
+      description: "脚本会在目标机器上以 Agent 服务身份执行。",
+      body: `Shell：${shell}\n目标客户端：${targetNames.join("、")}\n超时：${timeoutSeconds} 秒`,
+      confirmLabel: "下发命令",
+      tone: "warning",
+    }))) return
     setSubmitting(true)
     setError(null)
     setCommands([])
@@ -1044,6 +1078,7 @@ function CommandRun({ os, clientId: fixedClientId }: DetailProps) {
 /* ---------- 子功能：消息推送 ---------- */
 function MessagePush({ os, clientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [title, setTitle] = useState("")
   const [message, setMessage] = useState("")
   const [severity, setSeverity] = useState<MessageSeverity>("info")
@@ -1083,7 +1118,11 @@ function MessagePush({ os, clientId }: DetailProps) {
   const submit = async () => {
     if (!valid || submitting || active) return
     const targets = clients.filter((client) => selectedIds.includes(client.id))
-    if (!window.confirm(messageConfirmation(title, message, severity, timeoutSeconds, targets.map((client) => client.name)))) return
+    if (!(await confirm({
+      title: `向 ${targets.length} 台客户端推送弹窗通知？`,
+      body: messageConfirmation(title, message, severity, timeoutSeconds, targets.map((client) => client.name)),
+      confirmLabel: "推送",
+    }))) return
     setSubmitting(true); setError(null)
     try {
       const response = await apiRequest<{ commands: MessageCommand[] }>("/commands/batch", { method: "POST", body: JSON.stringify({ clientIds: selectedIds, type: "show-message", payload: { title, message, severity, timeoutSeconds } }) })
@@ -1149,6 +1188,7 @@ function MessagePush({ os, clientId }: DetailProps) {
 /* ---------- 子功能：用户管理 ---------- */
 function UserManage({ os, clientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm, promptText } = useConfirm()
   const [selectedIds, setSelectedIds] = useState<string[]>(clientId ? [clientId] : [])
   const [accounts, setAccounts] = useState<LocalUserAccount[]>([])
   const [command, setCommand] = useState<LocalUserCommand | null>(null)
@@ -1256,12 +1296,27 @@ function UserManage({ os, clientId }: DetailProps) {
       return
     }
     if (action === "delete") {
-      const confirmation = window.prompt(`删除本地账户后不可撤销。请输入完整账户名确认：${account.userName}`) ?? ""
+      const confirmation = await promptText({
+        title: `删除本地账户“${account.userName}”？`,
+        description: "删除后不可撤销。请输入完整账户名以确认。",
+        body: `客户端：${selectedClient.name}`,
+        label: "账户名",
+        placeholder: account.userName,
+        requireValue: account.userName,
+        confirmLabel: "删除账户",
+        tone: "danger",
+      })
+      if (confirmation === null) return
       if (!isDeleteConfirmationValid(account.userName, confirmation)) {
         setError("删除确认与完整账户名不匹配")
         return
       }
-    } else if (!window.confirm(localUserConfirmation(action, selectedClient.name, account.userName, requiresGroup ? normalizedGroup : null))) return
+    } else if (!(await confirm({
+      title: `确认对“${account.userName}”执行该操作？`,
+      body: localUserConfirmation(action, selectedClient.name, account.userName, requiresGroup ? normalizedGroup : null),
+      confirmLabel: "执行",
+      tone: "warning",
+    }))) return
     setSubmitting(true)
     setError(null)
     try {
@@ -1350,6 +1405,7 @@ const urlPresets: string[] = []
 
 function OpenWebpage({ os, clientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [url, setUrl] = useState("")
   const [selectedIds, setSelectedIds] = useState<string[]>(clientId ? [clientId] : [])
   const [commands, setCommands] = useState<OpenUrlCommand[]>([])
@@ -1389,7 +1445,11 @@ function OpenWebpage({ os, clientId }: DetailProps) {
   const submit = async () => {
     if (!valid || submitting || active) return
     const targetNames = clients.filter((client) => selectedIds.includes(client.id)).map((client) => client.name)
-    if (!window.confirm(openUrlConfirmation(url, targetNames))) return
+    if (!(await confirm({
+      title: `在 ${targetNames.length} 台客户端浏览器打开该地址？`,
+      body: openUrlConfirmation(url, targetNames),
+      confirmLabel: "打开",
+    }))) return
     setSubmitting(true)
     setError(null)
     try {
@@ -1445,6 +1505,7 @@ function OpenWebpage({ os, clientId }: DetailProps) {
 /* ---------- 子功能：注册表（Windows） ---------- */
 function Registry({ os, clientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const [selectedIds, setSelectedIds] = useState<string[]>(clientId ? [clientId] : [])
   const [hive, setHive] = useState<RegistryHive>("HKLM")
   const [view, setView] = useState<RegistryView>("registry64")
@@ -1576,7 +1637,13 @@ function Registry({ os, clientId }: DetailProps) {
     try {
       const parsed = parseRegistryEditorValue(valueKind, editorValue)
       const payload = registryPayload("set", hive, view, subKey, valueName, valueKind, parsed)
-      if (!window.confirm(`确认设置注册表值\n客户端：${selectedClient.name}\n路径：${hive}\\${subKey}\n视图：${view}\n值名：${valueName || "（默认）"}\n类型：${valueKind}`)) return
+      if (!(await confirm({
+        title: "设置注册表值？",
+        description: "写操作会记录逆向动作，可在下方回滚。",
+        body: `客户端：${selectedClient.name}\n路径：${hive}\\${subKey}\n视图：${view}\n值名：${valueName || "（默认）"}\n类型：${valueKind}`,
+        confirmLabel: "写入",
+        tone: "warning",
+      }))) return
       await sendPayload(payload)
     } catch (caught) { setError(caught instanceof Error ? caught.message : "注册表值格式无效") }
   }
@@ -1585,7 +1652,13 @@ function Registry({ os, clientId }: DetailProps) {
     if (!selectedClient || busy) return
     try {
       const payload = registryPayload("delete", hive, view, subKey, valueName)
-      if (!window.confirm(`仅删除注册表值，不删除键。\n客户端：${selectedClient.name}\n路径：${hive}\\${subKey}\n值名：${valueName || "（默认）"}`)) return
+      if (!(await confirm({
+        title: "删除该注册表值？",
+        description: "仅删除值本身，不会删除所在键。",
+        body: `客户端：${selectedClient.name}\n路径：${hive}\\${subKey}\n值名：${valueName || "（默认）"}`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))) return
       await sendPayload(payload)
     } catch (caught) { setError(caught instanceof Error ? caught.message : "删除参数无效") }
   }
@@ -1594,7 +1667,12 @@ function Registry({ os, clientId }: DetailProps) {
     if (!lastMutation || busy) return
     const inverse = inverseRegistryPayload(lastMutation)
     if (!inverse) { setError("最近写操作没有可执行的逆向回滚"); return }
-    if (!window.confirm(`确认回滚上次注册表写操作\n逆向动作：${inverse.action}\n路径：${inverse.hive}\\${inverse.subKey}\n值名：${inverse.valueName || "（默认）"}`)) return
+    if (!(await confirm({
+      title: "回滚上次注册表写操作？",
+      body: `逆向动作：${inverse.action}\n路径：${inverse.hive}\\${inverse.subKey}\n值名：${inverse.valueName || "（默认）"}`,
+      confirmLabel: "回滚",
+      tone: "warning",
+    }))) return
     await sendPayload(inverse)
   }
 
@@ -1697,6 +1775,7 @@ type TerminateProcessCommand = {
 
 function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const windowsClients = clients.filter((client) => client.os === "Windows")
   const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [processId, setProcessId] = useState("")
@@ -1757,9 +1836,13 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
       if (freshClient.os !== "Windows") throw new Error("只能向 Windows 客户端下发进程终止命令")
       if (freshClient.status !== "online") throw new Error(`客户端 ${freshClient.name} 当前离线，命令尚未下发`)
       const numericProcessId = Number(processId)
-      if (!window.confirm(
-        `目标客户端：${freshClient.name}\nPID：${numericProcessId}\n预期路径：${normalizedPath}\n终止进程树：${killProcessTree ? "是" : "否"}\n超时：${timeoutSeconds} 秒`,
-      )) return
+      if (!(await confirm({
+        title: `终止 ${freshClient.name} 上的进程 ${numericProcessId}？`,
+        description: "Agent 会校验预期路径后再终止，路径不匹配时命令失败。",
+        body: `目标客户端：${freshClient.name}\nPID：${numericProcessId}\n预期路径：${normalizedPath}\n终止进程树：${killProcessTree ? "是" : "否"}\n超时：${timeoutSeconds} 秒`,
+        confirmLabel: "终止进程",
+        tone: "danger",
+      }))) return
       const created = await apiRequest<TerminateProcessCommand>(`/clients/${encodeURIComponent(freshClient.id)}/commands`, {
         method: "POST",
         body: JSON.stringify({
@@ -2285,6 +2368,7 @@ function WindowsLogCollection({ clientId: fixedClientId }: DetailProps) {
 
 function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
   const { clients, apiRequest } = useServerData()
+  const { confirm } = useConfirm()
   const windowsClients = clients.filter((client) => client.os === "Windows")
   const [clientId, setClientId] = useState(fixedClientId ?? windowsClients[0]?.id ?? "")
   const [serviceName, setServiceName] = useState("")
@@ -2334,7 +2418,12 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
       setError(`客户端 ${selectedClient.name} 当前离线，命令尚未下发`)
       return
     }
-    if (!window.confirm(`目标客户端：${selectedClient.name}\n服务名称：${normalizedName}\n操作：${action}\n超时：${timeoutSeconds} 秒`)) return
+    if (!(await confirm({
+      title: `对服务“${normalizedName}”执行 ${action}？`,
+      body: `目标客户端：${selectedClient.name}\n服务名称：${normalizedName}\n操作：${action}\n超时：${timeoutSeconds} 秒`,
+      confirmLabel: "执行",
+      tone: action === "stop" || action === "restart" ? "warning" : "default",
+    }))) return
     setSubmitting(true)
     setError(null)
     setCommand(null)

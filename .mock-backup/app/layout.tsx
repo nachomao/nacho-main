@@ -5,7 +5,6 @@ import './globals.css'
 import { AppShell } from '@/components/app-shell'
 import { LocalSettingsProvider } from '@/components/local-settings-provider'
 import { ThemeProvider } from '@/components/theme-provider'
-import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
 import { readLocalSettings } from '@/lib/local-settings-store'
 
 const legacyThemeInitScript = `(function(){try{var t=localStorage.getItem("nacho-theme");if(t&&t!=="blue")document.documentElement.setAttribute("data-theme",t)}catch(e){}})()`
@@ -56,9 +55,7 @@ export default async function RootLayout({
         )}
         <LocalSettingsProvider initialSnapshot={localSettings}>
           <ThemeProvider>
-            <ConfirmDialogProvider>
-              <AppShell>{children}</AppShell>
-            </ConfirmDialogProvider>
+            <AppShell>{children}</AppShell>
           </ThemeProvider>
         </LocalSettingsProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}

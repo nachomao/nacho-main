@@ -25,7 +25,6 @@ import { ClientManagementPanel } from "./extensions-panel"
 import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { defaultServerBaseUrl } from "@/lib/server-connection"
-import { useConfirm } from "@/components/ui/confirm-dialog"
 
 /* 通用面板外壳：标题 + 描述 + 内容 */
 function PanelShell({
@@ -152,7 +151,6 @@ export function ClientsPanel() {
   const [direction, setDirection] = useState<1 | -1>(1)
   const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { clients, groups, loading, refreshing, refresh, apiRequest } = useServerData()
-  const { confirm } = useConfirm()
   const error: string | null = null
   const managingClient = clients.find((client) => client.id === managingClientId) ?? null
   const filtered = clients.filter(
@@ -163,14 +161,7 @@ export function ClientsPanel() {
   )
 
   async function deleteClient(client: Client) {
-    const accepted = await confirm({
-      title: `删除客户端“${client.name}”？`,
-      description: "该客户端的历史命令记录会一并删除，操作不可撤销。",
-      body: `主机名：${client.hostname}\nIP 地址：${client.ip}`,
-      confirmLabel: "删除",
-      tone: "danger",
-    })
-    if (!accepted) return
+    if (!window.confirm(`确定删除客户端“${client.name}”吗？相关命令记录也会一并删除。`)) return
     setDeletingId(client.id)
     try {
       await apiRequest(`/clients/${encodeURIComponent(client.id)}`, { method: "DELETE" })
@@ -583,7 +574,6 @@ function UpdateBadge({ client, onUpdate }: { client: UpdateClient; onUpdate: () 
 
 export function ClientUpdatePanel() {
   const { apiRequest, refresh } = useServerData()
-  const { confirm } = useConfirm()
   const [updates, setUpdates] = useState<AgentUpdates | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -611,14 +601,8 @@ export function ClientUpdatePanel() {
     const online = candidates.filter((item) => item.status !== "offline").length
     const offline = candidates.length - online
     const expectedSkipped = updates.clients.length - candidates.length
-    const accepted = await confirm({
-      title: scope === "all" ? "为全部可升级客户端创建升级命令？" : "为所选客户端创建升级命令？",
-      description: "升级期间 Agent 会短暂重连，命令支持断线重试与回滚。",
-      body: `目标版本：v${updates.release.version}\n制品大小：${humanBytes(updates.release.sizeBytes)}\n立即执行：${online} 台在线\n离线排队：${offline} 台\n预计跳过：${expectedSkipped} 台`,
-      confirmLabel: "创建升级命令",
-      tone: "warning",
-    })
-    if (!accepted) return
+    const message = `目标版本 v${updates.release.version}\n制品大小 ${humanBytes(updates.release.sizeBytes)}\n在线 ${online} 台，离线排队 ${offline} 台，预计跳过 ${expectedSkipped} 台。\n\n确认创建升级命令？`
+    if (!window.confirm(message)) return
     setSubmitting(true)
     try {
       const result = await apiRequest<QueueResult>("/agent-updates", {

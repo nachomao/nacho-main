@@ -158,16 +158,8 @@ export function ScriptsView() {
   }
 
   // 保存设置：写入版本历史并填写本次迭代说明
-  const handleSaveSettings = async () => {
-    const note = await promptText({
-      title: "保存参数设置",
-      description: "本次修改会写入版本历史，便于回溯。",
-      body: `版本号：${params.version}\n运行模式：${params.runMode}`,
-      label: "本次迭代说明",
-      defaultValue: "更新参数配置",
-      placeholder: "简要描述这次改动",
-      confirmLabel: "保存",
-    })
+  const handleSaveSettings = () => {
+    const note = window.prompt("本次迭代说明：", "更新参数配置")
     if (note === null) return
     setHistory((h) => [
       {
