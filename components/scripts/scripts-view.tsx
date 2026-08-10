@@ -19,6 +19,7 @@ import {
   Unlock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 
 /* 通用面板外壳：与客户端面板保持一致（card-glow + 圆角 + 标题/描述 + 右侧动作） */
 function PanelShell({
@@ -124,6 +125,7 @@ Write-Host "安装完成。" -ForegroundColor Green
 type HistoryEntry = { id: number; version: string; note: string; time: string }
 
 export function ScriptsView() {
+  const { promptText } = useConfirm()
   const [params, setParams] = useState<Params>(defaultParams)
   const [history, setHistory] = useState<HistoryEntry[]>([])
 
@@ -158,8 +160,16 @@ export function ScriptsView() {
   }
 
   // 保存设置：写入版本历史并填写本次迭代说明
-  const handleSaveSettings = () => {
-    const note = window.prompt("本次迭代说明：", "更新参数配置")
+  const handleSaveSettings = async () => {
+    const note = await promptText({
+      title: "保存参数设置",
+      description: "本次修改会写入版本历史，便于回溯。",
+      body: `版本号：${params.version}\n运行模式：${params.runMode}`,
+      label: "本次迭代说明",
+      defaultValue: "更新参数配置",
+      placeholder: "简要描述这次改动",
+      confirmLabel: "保存",
+    })
     if (note === null) return
     setHistory((h) => [
       {

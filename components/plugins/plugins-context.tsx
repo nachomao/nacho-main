@@ -12,6 +12,8 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react"
+import { useServerData } from "@/components/server-data-context"
+import { usePanelResource } from "@/components/use-panel-resource"
 
 /* ---------------- 类型 ---------------- */
 
@@ -49,14 +51,6 @@ export const iconMap: Record<string, LucideIcon> = {
 
 export const categories = ["全部", "系统防护", "监控", "网络", "工具"] as const
 
-/* ---------------- 演示数据 ---------------- */
-
-let seq = 100
-const nextId = () => `pg-${++seq}`
-
-// 插件列表统一由服务端 API 获取，面板不再内置模拟数据
-const demoPlugins: Plugin[] = []
-
 /* ---------------- 工具：创建空白参数行 ---------------- */
 let paramSeq = 0
 export const newParam = (): PluginParam => ({ id: `np-${++paramSeq}-${Date.now()}`, label: "", value: "" })
@@ -65,6 +59,17 @@ export const newParam = (): PluginParam => ({ id: `np-${++paramSeq}-${Date.now()
 
 type PluginsCtx = {
   plugins: Plugin[]
+  /** 服务端加载态：首次拉取 /api/panel/plugins 期间为 true */
+  loading: boolean
+  /** 加载失败信息，null 表示正常 */
+  error: string | null
+  /** 写操作失败信息，与加载失败分开展示 */
+  actionError: string | null
+  dismissActionError: () => void
+  /** 重新拉取插件列表 */
+  reload: () => Promise<void>
+  /** 正在提交的插件 id，用于禁用重复点击 */
+  busyIds: string[]
   // 顶栏功能：导入
   importOpen: boolean
   openImport: () => void
@@ -83,12 +88,12 @@ type PluginsCtx = {
   selected: string[]
   toggleSelect: (id: string) => void
   clearSelection: () => void
-  batchInstall: () => void
-  // CRUD
-  addPlugin: (p: Omit<Plugin, "id">) => void
-  updatePlugin: (p: Plugin) => void
-  deletePlugin: (id: string) => void
-  setStatus: (id: string, status: PluginStatus) => void
+  batchInstall: () => Promise<void>
+  // CRUD：全部走服务端 /api/panel/plugins，成功后以服务端返回记录更新本地列表
+  addPlugin: (p: Omit<Plugin, "id">) => Promise<void>
+  updatePlugin: (p: Plugin) => Promise<void>
+  deletePlugin: (id: string) => Promise<void>
+  setStatus: (id: string, status: PluginStatus) => Promise<void>
   // 下载服务器
   downloadServer: string
   setDownloadServer: (v: string) => void
@@ -97,7 +102,10 @@ type PluginsCtx = {
 const Ctx = createContext<PluginsCtx | null>(null)
 
 export function PluginsProvider({ children }: { children: React.ReactNode }) {
-  const [plugins, setPlugins] = useState<Plugin[]>(demoPlugins)
+  const { apiRequest } = useServerData()
+  const { data: plugins, setData: setPlugins, loading, error, reload } = usePanelResource<Plugin[]>("/plugins", [])
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [busyIds, setBusyIds] = useState<string[]>([])
   const [importOpen, setImportOpen] = useState(false)
   const [downloadOpen, setDownloadOpen] = useState(false)
   const [editing, setEditing] = useState<Plugin | null>(null)
@@ -124,28 +132,115 @@ export function PluginsProvider({ children }: { children: React.ReactNode }) {
 
   const clearSelection = () => setSelected([])
 
-  const batchInstall = () => {
-    setPlugins((list) => list.map((p) => (selected.includes(p.id) ? { ...p, status: "installed" } : p)))
-    setSelected([])
-    setSelectMode(false)
+  /* 服务端 pluginSchema 要求 restartRestore 与 params 必填，这里补齐默认值 */
+  const pluginPayload = (p: Omit<Plugin, "id">) => ({
+    name: p.name,
+    version: p.version,
+    author: p.author,
+    category: p.category,
+    description: p.description,
+    size: p.size,
+    icon: p.icon,
+    status: p.status,
+    restartRestore: p.restartRestore ?? false,
+    params: p.params,
+  })
+
+  /* 统一包装写操作：标记忙碌、清理旧错误、失败时保留列表不变 */
+  const mutate = async (key: string, run: () => Promise<void>, failMessage: string) => {
+    if (busyIds.includes(key)) return
+    setBusyIds((b) => [...b, key])
+    setActionError(null)
+    try {
+      await run()
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : failMessage)
+    } finally {
+      setBusyIds((b) => b.filter((x) => x !== key))
+    }
   }
 
-  const addPlugin = (p: Omit<Plugin, "id">) => setPlugins((list) => [{ ...p, id: nextId() }, ...list])
+  /* 批量安装：逐个提交状态，全部成功后才退出选择模式 */
+  const batchInstall = () =>
+    mutate(
+      "batch",
+      async () => {
+        const updated = await Promise.all(
+          selected.map((id) =>
+            apiRequest<Plugin>(`/plugins/${id}/status`, {
+              method: "POST",
+              body: JSON.stringify({ status: "installed" }),
+            }),
+          ),
+        )
+        const byId = new Map(updated.map((p) => [p.id, p]))
+        setPlugins((list) => list.map((p) => byId.get(p.id) ?? p))
+        setSelected([])
+        setSelectMode(false)
+      },
+      "批量安装失败",
+    )
 
-  const updatePlugin = (p: Plugin) => setPlugins((list) => list.map((x) => (x.id === p.id ? p : x)))
+  const addPlugin = (p: Omit<Plugin, "id">) =>
+    mutate(
+      "create",
+      async () => {
+        const created = await apiRequest<Plugin>("/plugins", {
+          method: "POST",
+          body: JSON.stringify(pluginPayload(p)),
+        })
+        setPlugins((list) => [created, ...list])
+      },
+      "新增插件失败",
+    )
 
-  const deletePlugin = (id: string) => {
-    setPlugins((list) => list.filter((p) => p.id !== id))
-    setSelected((s) => s.filter((x) => x !== id))
-  }
+  const updatePlugin = (p: Plugin) =>
+    mutate(
+      p.id,
+      async () => {
+        const saved = await apiRequest<Plugin>(`/plugins/${p.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(pluginPayload(p)),
+        })
+        setPlugins((list) => list.map((x) => (x.id === saved.id ? saved : x)))
+      },
+      "保存插件失败",
+    )
+
+  const deletePlugin = (id: string) =>
+    mutate(
+      id,
+      async () => {
+        await apiRequest(`/plugins/${id}`, { method: "DELETE" })
+        setPlugins((list) => list.filter((p) => p.id !== id))
+        setSelected((s) => s.filter((x) => x !== id))
+      },
+      "删除插件失败",
+    )
 
   const setStatus = (id: string, status: PluginStatus) =>
-    setPlugins((list) => list.map((p) => (p.id === id ? { ...p, status } : p)))
+    mutate(
+      id,
+      async () => {
+        const saved = await apiRequest<Plugin>(`/plugins/${id}/status`, {
+          method: "POST",
+          body: JSON.stringify({ status }),
+        })
+        setPlugins((list) => list.map((p) => (p.id === saved.id ? saved : p)))
+      },
+      "切换插件状态失败",
+    )
 
   return (
     <Ctx.Provider
       value={{
         plugins,
+        loading,
+        error,
+        actionError,
+        dismissActionError: () => setActionError(null),
+        reload,
+        busyIds,
         importOpen,
         openImport,
         closeImport,

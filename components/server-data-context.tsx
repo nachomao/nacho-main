@@ -69,6 +69,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const connectedOnce = useRef(false)
 
   const connection = useMemo(() => {
+    // 未完成引导时不构造连接，由上层展示引导/错误态，避免伪造可用连接
     if (!serverSource) return null
     if (serverSource?.mode === "cloud") {
       return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }

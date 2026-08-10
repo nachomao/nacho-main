@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   ChevronDown,
@@ -12,6 +12,7 @@ import {
   MonitorCheck,
   Package,
   RefreshCw,
+  RotateCw,
   Search,
   Server,
   ShieldAlert,
@@ -19,6 +20,8 @@ import {
   Siren,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { logSources } from "@/lib/collect-logs"
+import { useServerData } from "@/components/server-data-context"
 
 /* 通用面板外壳：与脚本/任务面板保持一致 */
 function PanelShell({
@@ -125,12 +128,41 @@ type CollectClient = {
   online: boolean
 }
 
-/* ---------- 业务数据：统一由服务端 API 获取，面板不再内置模拟数据 ---------- */
-const initialFindings: Finding[] = []
+/* 服务端 /health/findings 的行结构：category 为自由字符串，time 由 ts 派生 */
+type ServerFinding = {
+  id: string
+  host: string
+  severity: Severity
+  category: string
+  title: string
+  detail?: string | null
+  ts: number
+  read: boolean | number
+}
 
-const initialPackages: LogPackage[] = []
+type ServerPackage = {
+  id: string
+  host: string
+  category: string
+  sizeMB: number
+  ts: number
+  findings: number
+  status: LogPackage["status"]
+}
 
-const collectClients: CollectClient[] = []
+/* 相对时间：服务端只给时间戳，展示层统一转成「刚刚 / N 分钟前」 */
+function relTime(ts: number) {
+  const diff = Date.now() - ts
+  if (diff < 60_000) return "刚刚"
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  return `${Math.floor(diff / 86_400_000)} 天前`
+}
+
+/* 服务端 category 是自由文本，落到面板固定类别上，未知值归入「系统日志」 */
+function toCategory(value: string): Category {
+  return (categories as readonly string[]).includes(value) ? (value as Category) : "系统日志"
+}
 
 /* 统计卡片 */
 function StatCard({
@@ -162,8 +194,65 @@ function StatCard({
 }
 
 export function HealthView() {
-  const [findings, setFindings] = useState<Finding[]>(initialFindings)
-  const [packages, setPackages] = useState<LogPackage[]>(initialPackages)
+  const { apiRequest, clients } = useServerData()
+  const [findings, setFindings] = useState<Finding[]>([])
+  const [packages, setPackages] = useState<LogPackage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [reanalyzing, setReanalyzing] = useState<string[]>([])
+
+  /* 采集目标来自真实客户端列表：日志采集仅支持 Windows Agent */
+  const collectClients: CollectClient[] = useMemo(
+    () =>
+      clients
+        .filter((c) => c.os === "Windows")
+        .map((c) => ({ id: c.id, name: c.name, ip: c.ip, os: c.osName || c.os, online: c.status === "online" })),
+    [clients],
+  )
+
+  /* 从服务端拉取发现项与日志包 */
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [findingRows, packageRows] = await Promise.all([
+        apiRequest<ServerFinding[]>("/health/findings"),
+        apiRequest<ServerPackage[]>("/health/packages"),
+      ])
+      setFindings(
+        findingRows.map((f) => ({
+          id: f.id,
+          host: f.host,
+          severity: f.severity,
+          category: toCategory(f.category),
+          title: f.title,
+          detail: f.detail ?? "",
+          time: relTime(f.ts),
+          read: Boolean(f.read),
+        })),
+      )
+      setPackages(
+        packageRows.map((p) => ({
+          id: p.id,
+          host: p.host,
+          category: toCategory(p.category),
+          sizeMB: p.sizeMB,
+          time: relTime(p.ts),
+          findings: p.findings,
+          status: p.status,
+        })),
+      )
+      setError(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "加载健康数据失败")
+    } finally {
+      setLoading(false)
+    }
+  }, [apiRequest])
+
+  useEffect(() => {
+    void load()
+  }, [load])
 
   /* 筛选：级别 + 类别 */
   const [levelFilter, setLevelFilter] = useState<"all" | Severity>("all")
@@ -209,51 +298,92 @@ export function HealthView() {
   const toggleAllOnline = () =>
     setSelected((s) => (allOnlineSelected ? s.filter((id) => !onlineIds.includes(id)) : Array.from(new Set([...s, ...onlineIds]))))
 
-  const markRead = (id: string) => setFindings((list) => list.map((f) => (f.id === id ? { ...f, read: true } : f)))
-  const markAllRead = () => setFindings((list) => list.map((f) => ({ ...f, read: true })))
-
-  /* 主动采集：对选中的在线客户端模拟采集并生成日志包 + 发现项 */
-  const handleCollect = () => {
-    if (selectedOnline.length === 0 || collecting) return
-    setCollecting(true)
-    const target = collectClients.find((c) => c.id === selectedOnline[0])!
-    const pkgId = `p-${Date.now()}`
-    // 先插入一个「分析中」的日志包
-    setPackages((p) => [
-      { id: pkgId, host: target.name, category: "系统日志", sizeMB: Number((Math.random() * 20 + 5).toFixed(1)), time: "刚刚", findings: 0, status: "analyzing" },
-      ...p,
-    ])
-    setFlashId(pkgId)
-    setTimeout(() => {
-      // 分析完成：更新状态并生成一条发现项
-      const findId = `f-${Date.now()}`
-      setPackages((p) => p.map((x) => (x.id === pkgId ? { ...x, status: "analyzed", findings: 1 } : x)))
-      setFindings((list) => [
-        {
-          id: findId,
-          host: target.name,
-          severity: "info",
-          category: "系统日志",
-          title: `${target.name} 主动采集分析完成`,
-          detail: "本次采集未发现严重异常，已生成基线快照，可用于后续比对。",
-          time: "刚刚",
-          read: false,
-        },
-        ...list,
-      ])
-      setCollecting(false)
-      setTimeout(() => setFlashId(null), 1200)
-    }, 1500)
+  /* 标记已读：本地先行反馈，失败则回滚并提示（读状态持久化在服务端） */
+  const markRead = async (id: string) => {
+    setFindings((list) => list.map((f) => (f.id === id ? { ...f, read: true } : f)))
+    try {
+      await apiRequest(`/health/findings/${id}/read`, { method: "POST" })
+    } catch (caught) {
+      setFindings((list) => list.map((f) => (f.id === id ? { ...f, read: false } : f)))
+      setActionError(caught instanceof Error ? caught.message : "标记已读失败")
+    }
   }
 
-  /* 重新分析日志包 */
-  const reanalyze = (id: string) => {
-    setPackages((p) => p.map((x) => (x.id === id ? { ...x, status: "analyzing" } : x)))
-    setTimeout(() => {
-      setPackages((p) => p.map((x) => (x.id === id ? { ...x, status: "analyzed", time: "刚刚" } : x)))
+  const markAllRead = async () => {
+    const before = findings
+    setFindings((list) => list.map((f) => ({ ...f, read: true })))
+    try {
+      await apiRequest("/health/findings/read-all", { method: "POST" })
+    } catch (caught) {
+      setFindings(before)
+      setActionError(caught instanceof Error ? caught.message : "全部标记已读失败")
+    }
+  }
+
+  /* 采集窗口：最近 24 小时，与单机日志采集面板使用同一套受限来源与条数上限 */
+  const collectPayload = () => {
+    const until = new Date()
+    const since = new Date(until.getTime() - 24 * 60 * 60 * 1000)
+    return {
+      sources: [...logSources],
+      sinceUtc: since.toISOString(),
+      untilUtc: until.toISOString(),
+      maxEntries: 500,
+    }
+  }
+
+  /* 主动采集：向选中的在线客户端下发真实 collect-logs 命令 */
+  const handleCollect = async () => {
+    if (selectedOnline.length === 0 || collecting) return
+    setCollecting(true)
+    setActionError(null)
+    try {
+      await Promise.all(
+        selectedOnline.map((id) =>
+          apiRequest(`/clients/${encodeURIComponent(id)}/commands`, {
+            method: "POST",
+            body: JSON.stringify({ type: "collect-logs", payload: collectPayload() }),
+          }),
+        ),
+      )
+      // 命令已入队，结果由 Agent 回传后写入服务端；重新拉取以反映最新状态
+      await load()
+      setSelected([])
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "下发日志采集命令失败")
+    } finally {
+      setCollecting(false)
+    }
+  }
+
+  /* 重新采集：对该日志包所属主机重新下发一次 collect-logs */
+  const reanalyze = async (id: string) => {
+    if (reanalyzing.includes(id)) return
+    const pkg = packages.find((p) => p.id === id)
+    const target = pkg && collectClients.find((c) => c.name === pkg.host || c.id === pkg.host)
+    if (!target) {
+      setActionError(`未找到日志包所属的在线客户端：${pkg?.host ?? id}`)
+      return
+    }
+    if (!target.online) {
+      setActionError(`客户端 ${target.name} 当前离线，采集命令尚未下发`)
+      return
+    }
+    setReanalyzing((r) => [...r, id])
+    setActionError(null)
+    try {
+      await apiRequest(`/clients/${encodeURIComponent(target.id)}/commands`, {
+        method: "POST",
+        body: JSON.stringify({ type: "collect-logs", payload: collectPayload() }),
+      })
+      await load()
       setFlashId(id)
-      setTimeout(() => setFlashId(null), 1200)
-    }, 1400)
+      setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 1200)
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "重新采集失败")
+    } finally {
+      setReanalyzing((r) => r.filter((x) => x !== id))
+    }
   }
 
   const levelChips: { id: "all" | Severity; label: string }[] = [
@@ -263,6 +393,29 @@ export function HealthView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
+      {/* 加载失败：整页数据不可用时提供重试入口 */}
+      {error && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-negative/30 bg-negative/10 px-4 py-3 text-xs leading-relaxed text-negative">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">{error}</span>
+          <button type="button" onClick={() => void load()} className="flex shrink-0 items-center gap-1 font-medium underline">
+            <RotateCw className="h-3 w-3" />
+            重试
+          </button>
+        </div>
+      )}
+
+      {/* 写操作失败：不影响已加载的数据 */}
+      {actionError && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs leading-relaxed text-warning">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">{actionError}</span>
+          <button type="button" onClick={() => setActionError(null)} className="shrink-0 font-medium underline">
+            知道了
+          </button>
+        </div>
+      )}
+
       {/* 统计卡片 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard icon={<CircleAlert className="h-6 w-6" />} label="未读异常" value={stats.unread} tone="primary" />
@@ -282,7 +435,7 @@ export function HealthView() {
               stats.unread > 0 ? (
                 <button
                   type="button"
-                  onClick={markAllRead}
+                  onClick={() => void markAllRead()}
                   className="flex h-9 items-center gap-1.5 rounded-full border border-border bg-surface/60 px-4 text-xs font-medium text-foreground transition-colors hover:bg-surface"
                 >
                   <ShieldCheck className="h-3.5 w-3.5" />
@@ -355,7 +508,12 @@ export function HealthView() {
 
             {/* 发现项列表 */}
             <div className="mt-4 flex flex-col gap-2.5">
-              {filteredFindings.length > 0 ? (
+              {loading ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                  <p className="text-sm">正在从服务端加载发现项…</p>
+                </div>
+              ) : filteredFindings.length > 0 ? (
                 filteredFindings.map((f) => {
                   const meta = severityMeta[f.severity]
                   const SevIcon = meta.icon
@@ -373,7 +531,7 @@ export function HealthView() {
                         type="button"
                         onClick={() => {
                           setExpanded(open ? null : f.id)
-                          if (!f.read) markRead(f.id)
+                          if (!f.read) void markRead(f.id)
                         }}
                         className="flex w-full items-start gap-3 px-4 py-3.5 text-left"
                       >
@@ -452,9 +610,15 @@ export function HealthView() {
             </div>
 
             <div className="mt-4 flex flex-col gap-2.5">
-              {filteredPackages.length > 0 ? (
+              {loading ? (
+                <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                  <p className="text-sm">正在从服务端加载日志包…</p>
+                </div>
+              ) : filteredPackages.length > 0 ? (
                 filteredPackages.map((p) => {
-                  const analyzing = p.status === "analyzing"
+                  // analyzing 取服务端状态，或本地正在下发重新采集命令
+                  const analyzing = p.status === "analyzing" || reanalyzing.includes(p.id)
                   return (
                     <div
                       key={p.id}
@@ -502,9 +666,9 @@ export function HealthView() {
                         </button>
                         <button
                           type="button"
-                          title="重新分析"
+                          title="重新采集并分析"
                           disabled={analyzing}
-                          onClick={() => reanalyze(p.id)}
+                          onClick={() => void reanalyze(p.id)}
                           className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           <RefreshCw className={cn("h-4 w-4", analyzing && "animate-spin")} />
@@ -621,13 +785,14 @@ export function HealthView() {
           <div className="mt-4 flex items-start gap-2.5 rounded-2xl border border-primary/30 bg-primary/8 px-4 py-3 text-xs leading-relaxed text-foreground">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <span>
-              将对 <b className="text-primary">{selectedOnline.length}</b> 台在线客户端主动采集日志并自动分析，离线客户端将被跳过。
+              将向 <b className="text-primary">{selectedOnline.length}</b> 台在线客户端下发日志采集命令（最近 24 小时，最多 500 条），
+              离线客户端将被跳过；结果由 Agent 回传后写入服务端。
             </span>
           </div>
 
           <button
             type="button"
-            onClick={handleCollect}
+            onClick={() => void handleCollect()}
             disabled={selectedOnline.length === 0 || collecting}
             className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.01] active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
           >

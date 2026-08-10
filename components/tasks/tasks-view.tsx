@@ -3,12 +3,15 @@
 import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import {
+  AlertTriangle,
   CalendarClock,
   CalendarDays,
   CalendarPlus,
   Clock,
+  RotateCw,
   FileTerminal,
   ListChecks,
+  Loader2,
   LogIn,
   Monitor,
   MonitorCheck,
@@ -27,6 +30,9 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SegmentedControl } from "@/components/ui/segmented-control"
+import { useServerData } from "@/components/server-data-context"
+import { usePanelResource } from "@/components/use-panel-resource"
+import type { Client as PanelClient } from "@/components/clients/client-data"
 import { useTasks, type OSType } from "./tasks-context"
 
 /* ---------- 通用面板外壳：与脚本安装 / 客户端面板保持一致 ---------- */
@@ -84,7 +90,7 @@ const inputCls =
   "h-11 w-full rounded-xl border border-border bg-surface/60 px-4 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/60 focus:bg-surface"
 
 /* ---------- 目标客户端（按操作系统区分） ---------- */
-type Client = {
+type TaskClient = {
   id: string
   name: string
   ip: string
@@ -92,10 +98,21 @@ type Client = {
   online: boolean
 }
 
-// 目标客户端由服务端 API 提供，面板不再内置模拟数据
-const clientsByOS: Record<OSType, Client[]> = {
-  windows: [],
-  linux: [],
+/* 把服务端 /clients 的真实客户端按任务的目标系统分类。
+   macOS 客户端归入 linux 组：两者都走 POSIX 的 shell/cron 任务链路。 */
+function groupClientsByOS(clients: PanelClient[]): Record<OSType, TaskClient[]> {
+  const grouped: Record<OSType, TaskClient[]> = { windows: [], linux: [] }
+  for (const c of clients) {
+    const bucket: OSType = c.os === "Windows" ? "windows" : "linux"
+    grouped[bucket].push({
+      id: c.id,
+      name: c.name,
+      ip: c.ip,
+      os: c.osName || c.os,
+      online: c.status !== "offline",
+    })
+  }
+  return grouped
 }
 
 /* ---------- 操作系统展示元数据 ---------- */
@@ -197,9 +214,6 @@ function blankTask(os: OSType): ScheduledTask {
     enabled: true,
   }
 }
-
-// 计划任务由服务端 API 提供，面板不再内置模拟数据
-const demoTasks: ScheduledTask[] = []
 
 /* ---------- 编辑弹窗外壳：沿用插件 / 安装对话框的模糊缩放揭示动效 ---------- */
 function DialogShell({
@@ -314,11 +328,15 @@ function TaskFormDialog({
   open,
   mode,
   initial,
+  clientsByOS,
+  submitting,
   onClose,
   onSubmit,
 }: {
   open: boolean
   mode: "create" | "edit"
+  clientsByOS: Record<OSType, TaskClient[]>
+  submitting: boolean
   initial: ScheduledTask
   onClose: () => void
   onSubmit: (t: ScheduledTask) => void
@@ -383,13 +401,19 @@ function TaskFormDialog({
           <button
             className={cn(
               "flex h-11 items-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95",
-              !valid && "cursor-not-allowed opacity-40 hover:scale-100",
+              (!valid || submitting) && "cursor-not-allowed opacity-40 hover:scale-100",
             )}
             onClick={submit}
-            disabled={!valid}
+            disabled={!valid || submitting}
           >
-            {isCreate ? <Plus className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-            {isCreate ? "创建任务" : "保存修改"}
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isCreate ? (
+              <Plus className="h-4 w-4" />
+            ) : (
+              <Pencil className="h-4 w-4" />
+            )}
+            {submitting ? "提交中…" : isCreate ? "创建任务" : "保存修改"}
           </button>
         </>
       }
@@ -577,16 +601,24 @@ function TaskFormDialog({
 
 export function TasksView() {
   const ctx = useTasks()
+  const { apiRequest, clients } = useServerData()
 
-  /* 已有任务 */
-  const [tasks, setTasks] = useState<ScheduledTask[]>(demoTasks)
+  /* 已有任务：来自服务端 /api/panel/tasks */
+  const { data: tasks, setData: setTasks, loading, error, reload } = usePanelResource<ScheduledTask[]>("/tasks", [])
   const [removing, setRemoving] = useState<string[]>([])
   const [flashId, setFlashId] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  // 正在执行行内操作的任务 id，用于禁用重复点击
+  const [busyIds, setBusyIds] = useState<string[]>([])
+
+  /* 目标客户端来自真实客户端列表，不再使用演示常量 */
+  const clientsByOS = useMemo(() => groupClientsByOS(clients), [clients])
 
   /* 编辑弹窗：为 null 时关闭，否则为正在编辑的任务 */
   const [editing, setEditing] = useState<ScheduledTask | null>(null)
   // 关闭编辑时保留最后一次任务，供退场动画期间继续渲染内容（无任务时用空白草稿兜底）
-  const [lastEdited, setLastEdited] = useState<ScheduledTask>(() => demoTasks[0] ?? blankTask("windows"))
+  const [lastEdited, setLastEdited] = useState<ScheduledTask>(() => blankTask("windows"))
 
   /* 操作系统筛选 */
   const [osFilter, setOsFilter] = useState<"all" | OSType>("all")
@@ -602,21 +634,64 @@ export function TasksView() {
     linux: tasks.filter((t) => t.os === "linux").length,
   }
 
-  /* 新建任务：由顶栏「新建任务」下拉触发 */
-  const handleCreate = (draft: ScheduledTask) => {
-    const id = `t-${Date.now()}`
-    setTasks((t) => [{ ...draft, id }, ...t])
+  /* 提交给服务端的任务载荷：id/时间戳由服务端生成，这里只发协议约定的字段 */
+  const taskPayload = (t: ScheduledTask) => ({
+    name: t.name,
+    os: t.os,
+    action: t.action,
+    program: t.program,
+    args: t.args,
+    triggerId: t.triggerId,
+    time: t.time,
+    interval: t.interval,
+    cron: t.cron,
+    clientIds: t.clientIds,
+    enabled: t.enabled,
+  })
+
+  const flash = (id: string) => {
     setFlashId(id)
     setTimeout(() => setFlashId(null), 1200)
-    ctx?.closeCreate()
   }
 
-  /* 保存编辑弹窗中的修改 */
-  const saveEdit = (updated: ScheduledTask) => {
-    setTasks((list) => list.map((x) => (x.id === updated.id ? updated : x)))
-    setFlashId(updated.id)
-    setTimeout(() => setFlashId(null), 1200)
-    setEditing(null)
+  /* 新建任务：POST /tasks，成功后用服务端返回的记录（含真实 id）入列 */
+  const handleCreate = async (draft: ScheduledTask) => {
+    if (submitting) return
+    setSubmitting(true)
+    setActionError(null)
+    try {
+      const created = await apiRequest<ScheduledTask>("/tasks", {
+        method: "POST",
+        body: JSON.stringify(taskPayload(draft)),
+      })
+      setTasks((list) => [created, ...list])
+      flash(created.id)
+      ctx?.closeCreate()
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "创建任务失败")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  /* 保存编辑：PATCH /tasks/:id */
+  const saveEdit = async (updated: ScheduledTask) => {
+    if (submitting) return
+    setSubmitting(true)
+    setActionError(null)
+    try {
+      const saved = await apiRequest<ScheduledTask>(`/tasks/${updated.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(taskPayload(updated)),
+      })
+      setTasks((list) => list.map((x) => (x.id === saved.id ? saved : x)))
+      flash(saved.id)
+      setEditing(null)
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "保存任务失败")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const startEdit = (t: ScheduledTask) => {
@@ -624,17 +699,58 @@ export function TasksView() {
     setEditing(t)
   }
 
-  const handleDelete = (id: string) => {
-    if (editing?.id === id) setEditing(null)
-    setRemoving((r) => [...r, id])
-    setTimeout(() => {
-      setTasks((t) => t.filter((x) => x.id !== id))
-      setRemoving((r) => r.filter((x) => x !== id))
-    }, 360)
+  /* 删除：先等服务端确认，再播放移除动画，避免失败后条目已消失 */
+  const handleDelete = async (id: string) => {
+    if (busyIds.includes(id)) return
+    setBusyIds((b) => [...b, id])
+    setActionError(null)
+    try {
+      await apiRequest(`/tasks/${id}`, { method: "DELETE" })
+      if (editing?.id === id) setEditing(null)
+      setRemoving((r) => [...r, id])
+      setTimeout(() => {
+        setTasks((t) => t.filter((x) => x.id !== id))
+        setRemoving((r) => r.filter((x) => x !== id))
+      }, 360)
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "删除任务失败")
+    } finally {
+      setBusyIds((b) => b.filter((x) => x !== id))
+    }
   }
 
-  const toggleEnabled = (id: string) =>
-    setTasks((t) => t.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
+  /* 启停：POST /tasks/:id/enabled，以服务端返回的记录为准 */
+  const toggleEnabled = async (task: ScheduledTask) => {
+    if (busyIds.includes(task.id)) return
+    setBusyIds((b) => [...b, task.id])
+    setActionError(null)
+    try {
+      const saved = await apiRequest<ScheduledTask>(`/tasks/${task.id}/enabled`, {
+        method: "POST",
+        body: JSON.stringify({ enabled: !task.enabled }),
+      })
+      setTasks((list) => list.map((x) => (x.id === saved.id ? saved : x)))
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "切换任务状态失败")
+    } finally {
+      setBusyIds((b) => b.filter((x) => x !== task.id))
+    }
+  }
+
+  /* 立即运行：POST /tasks/:id/dispatch，走真实命令下发链路 */
+  const runNow = async (id: string) => {
+    if (busyIds.includes(id)) return
+    setBusyIds((b) => [...b, id])
+    setActionError(null)
+    try {
+      await apiRequest(`/tasks/${id}/dispatch`, { method: "POST" })
+      flash(id)
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "下发任务失败")
+    } finally {
+      setBusyIds((b) => b.filter((x) => x !== id))
+    }
+  }
 
   const filterChips: { id: "all" | OSType; label: string; count: number }[] = [
     { id: "all", label: "全部", count: counts.all },
@@ -657,12 +773,41 @@ export function TasksView() {
           />
         }
       >
-        {filtered.length > 0 ? (
+        {actionError && (
+          <div className="mb-3 flex items-start gap-2.5 rounded-2xl border border-negative/30 bg-negative/10 px-4 py-3 text-xs leading-relaxed text-negative">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1">{actionError}</span>
+            <button type="button" onClick={() => setActionError(null)} className="shrink-0 font-medium underline">
+              知道了
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+            <Loader2 className="h-6 w-6 animate-spin" />
+            <p className="text-sm">正在从服务端加载计划任务…</p>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <AlertTriangle className="h-8 w-8 text-negative" />
+            <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
+            <button
+              type="button"
+              onClick={() => void reload()}
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3.5 text-xs font-medium transition-colors hover:bg-surface"
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+              重试
+            </button>
+          </div>
+        ) : filtered.length > 0 ? (
           <div className="flex flex-col gap-2.5">
             {filtered.map((t) => {
               const isRemoving = removing.includes(t.id)
               const isFlash = flashId === t.id
               const isEditing = editing?.id === t.id
+              const isBusy = busyIds.includes(t.id)
               return (
                 <div
                   key={t.id}
@@ -738,10 +883,11 @@ export function TasksView() {
                   <div className="mt-3 flex items-center justify-end gap-2 border-t border-border/60 pt-3">
                     <button
                       type="button"
-                      onClick={() => toggleEnabled(t.id)}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface"
+                      onClick={() => void toggleEnabled(t)}
+                      disabled={isBusy}
+                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
                     >
-                      <Power className="h-3.5 w-3.5" />
+                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
                       {t.enabled ? "禁用" : "启用"}
                     </button>
                     <button
@@ -759,15 +905,18 @@ export function TasksView() {
                     </button>
                     <button
                       type="button"
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface"
+                      onClick={() => void runNow(t.id)}
+                      disabled={isBusy}
+                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
                     >
                       <Play className="h-3.5 w-3.5" />
                       运行
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(t.id)}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-negative transition-colors hover:bg-negative/10"
+                      onClick={() => void handleDelete(t.id)}
+                      disabled={isBusy}
+                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-negative transition-colors hover:bg-negative/10 disabled:pointer-events-none disabled:opacity-50"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       删除
@@ -793,6 +942,8 @@ export function TasksView() {
         open={!!createOS}
         mode="create"
         initial={createInitial}
+        clientsByOS={clientsByOS}
+        submitting={submitting}
         onClose={() => ctx?.closeCreate()}
         onSubmit={handleCreate}
       />
@@ -802,6 +953,8 @@ export function TasksView() {
         open={!!editing}
         mode="edit"
         initial={editing ?? lastEdited}
+        clientsByOS={clientsByOS}
+        submitting={submitting}
         onClose={() => setEditing(null)}
         onSubmit={saveEdit}
       />
