@@ -2704,7 +2704,7 @@ function formatUptime(seconds: number) {
 function MetricBar({ label, value }: { label: string; value: number }) {
   /* 水位正常时保持中性：颜色只用来提示越界，三条常态蓝条既噪声大又无信息量。
      阈值色使用 warning/negative 语义令牌，不再硬编码 #dce02d。 */
-  const level = value >= 85 ? "bg-negative" : value >= 65 ? "bg-warning" : "bg-muted-foreground/40"
+  const level = value >= 85 ? "bg-negative" : value >= 65 ? "bg-warning" : "bg-primary/70"
   const alerting = value >= 65
   return (
     <div className="flex flex-col gap-1.5">
@@ -2824,8 +2824,10 @@ function ClientToolHub({
       <div className="flex min-w-0 flex-1 flex-col gap-5">
         {sections.map((sec) => (
           <section key={sec.label} className="flex flex-col gap-2.5">
-            <div className="flex items-center gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{sec.label}</h3>
+            <div className="flex items-center gap-2.5">
+              {/* 主色短竖标：为纵向长列表提供分区节奏，替代原先每张卡的左侧色条 */}
+              <span aria-hidden className="h-3.5 w-[3px] shrink-0 rounded-full bg-primary" />
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-foreground">{sec.label}</h3>
               <span className="hidden text-[11px] text-muted-foreground/70 sm:inline">{sec.hint}</span>
               <span className="h-px flex-1 bg-border" />
               <span className="font-mono text-[11px] text-muted-foreground/70">{sec.items.length}</span>
@@ -2839,13 +2841,19 @@ function ClientToolHub({
                   <button
                     key={t.id}
                     onClick={() => onOpen(t.id)}
-                    className="group flex items-center gap-3 rounded-xl border border-border/70 bg-surface/40 px-3.5 py-3 text-left transition-colors hover:border-border hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    className={cn(
+                      "group flex items-center gap-3 rounded-xl border bg-surface/40 px-3.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2",
+                      disruptive
+                        ? "border-negative/25 hover:border-negative/50 hover:bg-negative/[0.06] focus-visible:ring-negative"
+                        : "border-border/70 hover:border-primary/40 hover:bg-surface focus-visible:ring-primary",
+                    )}
                   >
-                    {/* 与侧边导航一致的裸图标：不套方框底，仅高危操作用 negative 语义色示警 */}
+                    {/* 裸图标不套方框底。11 个入口同属一类，统一用主色而非彩虹轮转；
+                        只有会中断业务的操作跳到 negative 语义色示警。 */}
                     <Icon
                       className={cn(
                         "h-[18px] w-[18px] shrink-0 transition-colors",
-                        disruptive ? "text-negative" : "text-muted-foreground group-hover:text-foreground",
+                        disruptive ? "text-negative" : "text-primary",
                       )}
                       strokeWidth={1.75}
                     />
