@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { mockSeedTaskClients, mockSeedTasks } from "@/lib/mock-panel-api"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useTasks, type OSType } from "./tasks-context"
 
@@ -92,11 +93,8 @@ type Client = {
   online: boolean
 }
 
-// 目标客户端由服务端 API 提供，面板不再内置模拟数据
-const clientsByOS: Record<OSType, Client[]> = {
-  windows: [],
-  linux: [],
-}
+// 目标客户端由服务端 API 提供；演示模式下用模拟种子填充
+const clientsByOS: Record<OSType, Client[]> = mockSeedTaskClients()
 
 /* ---------- 操作系统展示元数据 ---------- */
 export const osMeta: Record<OSType, { label: string; icon: typeof Monitor; pathHint: string; pathPlaceholder: string }> = {
@@ -198,8 +196,8 @@ function blankTask(os: OSType): ScheduledTask {
   }
 }
 
-// 计划任务由服务端 API 提供，面板不再内置模拟数据
-const demoTasks: ScheduledTask[] = []
+// 计划任务由服务端 API 提供；演示模式下用模拟种子填充
+const demoTasks: ScheduledTask[] = mockSeedTasks()
 
 /* ---------- 编辑弹窗外壳：沿用插件 / 安装对话框的模糊缩放揭示动效 ---------- */
 function DialogShell({

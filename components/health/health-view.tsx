@@ -19,6 +19,7 @@ import {
   Siren,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { mockSeedCollectClients, mockSeedFindings, mockSeedLogPackages } from "@/lib/mock-panel-api"
 
 /* 通用面板外壳：与脚本/任务面板保持一致 */
 function PanelShell({
@@ -125,12 +126,12 @@ type CollectClient = {
   online: boolean
 }
 
-/* ---------- 业务数据：统一由服务端 API 获取，面板不再内置模拟数据 ---------- */
-const initialFindings: Finding[] = []
+/* ---------- 业务数据：统一由服务端 API 获取；演示模式下用模拟种子填充 ---------- */
+const initialFindings: Finding[] = mockSeedFindings()
 
-const initialPackages: LogPackage[] = []
+const initialPackages: LogPackage[] = mockSeedLogPackages()
 
-const collectClients: CollectClient[] = []
+const collectClients: CollectClient[] = mockSeedCollectClients()
 
 /* 统计卡片 */
 function StatCard({

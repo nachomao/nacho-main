@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react"
+import { mockSeedPlugins } from "@/lib/mock-panel-api"
 
 /* ---------------- 类型 ---------------- */
 
@@ -54,8 +55,8 @@ export const categories = ["全部", "系统防护", "监控", "网络", "工具
 let seq = 100
 const nextId = () => `pg-${++seq}`
 
-// 插件列表统一由服务端 API 获取，面板不再内置模拟数据
-const demoPlugins: Plugin[] = []
+// 插件列表统一由服务端 API 获取；演示模式下用模拟种子填充
+const demoPlugins: Plugin[] = mockSeedPlugins()
 
 /* ---------------- 工具：创建空白参数行 ---------------- */
 let paramSeq = 0
