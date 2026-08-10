@@ -1368,9 +1368,7 @@ function UserManage({ os, clientId }: DetailProps) {
             className="flex flex-col gap-3 rounded-2xl border border-border bg-surface/60 px-4 py-3.5 transition-colors hover:bg-surface sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <Users className="h-5 w-5" />
-              </span>
+              <Users className="h-[18px] w-[18px] shrink-0 text-muted-foreground" strokeWidth={1.75} />
               <div className="min-w-0 leading-tight">
                 <p className="truncate font-mono text-sm font-medium">{account.userName}{account.builtIn && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 font-sans text-[10px] text-muted-foreground">内置账户</span>}</p>
                 <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{account.sid}</p>
@@ -2841,19 +2839,16 @@ function ClientToolHub({
                   <button
                     key={t.id}
                     onClick={() => onOpen(t.id)}
-                    className="group flex items-center gap-3 rounded-xl border border-border/70 bg-surface/40 p-2.5 text-left transition-colors hover:border-border hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    className="group flex items-center gap-3 rounded-xl border border-border/70 bg-surface/40 px-3.5 py-3 text-left transition-colors hover:border-border hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
-                    {/* 图标为中性描边块，仅高危操作用 negative 语义色示警 */}
-                    <span
+                    {/* 与侧边导航一致的裸图标：不套方框底，仅高危操作用 negative 语义色示警 */}
+                    <Icon
                       className={cn(
-                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                        disruptive
-                          ? "border-negative/30 bg-negative/10 text-negative"
-                          : "border-border bg-background/40 text-muted-foreground group-hover:text-foreground",
+                        "h-[18px] w-[18px] shrink-0 transition-colors",
+                        disruptive ? "text-negative" : "text-muted-foreground group-hover:text-foreground",
                       )}
-                    >
-                      <Icon className="h-[18px] w-[18px]" />
-                    </span>
+                      strokeWidth={1.75}
+                    />
                     <span className="min-w-0 flex-1 leading-tight">
                       <span className="block truncate text-sm font-medium">{t.title}</span>
                       <span className="mt-0.5 block truncate text-xs text-muted-foreground">{t.desc}</span>
