@@ -94,6 +94,13 @@ type Geometry = {
   radius: string
   /** 翻转方向：按钮在卡片右半侧时朝反向转，转轴总是背离手指 */
   dir: 1 | -1
+  /** 内容超出卡片高度时允许向下生长的上限，避免挤压又不溢出视口 */
+  maxHeight: number
+}
+
+/** 卡片下方可用的生长空间；至少保留卡片自身高度 */
+function growRoom(top: number, height: number) {
+  return Math.max(height, window.innerHeight - top - 16)
 }
 
 /* ==================== 明细解析 ====================
@@ -168,13 +175,16 @@ function measure(surface: HTMLElement, origin: HTMLElement): Geometry {
   const originX = originRect.left + originRect.width / 2 - rect.left
   const dir: 1 | -1 = originX > rect.width / 2 ? -1 : 1
 
+  const top = rect.top - shift.y
+
   return {
-    top: rect.top - shift.y,
+    top,
     left: rect.left - shift.x,
     width: rect.width,
     height: rect.height,
     radius: window.getComputedStyle(surface).borderRadius || "1rem",
     dir,
+    maxHeight: growRoom(top, rect.height),
   }
 }
 
@@ -401,8 +411,11 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         if (!surface || !frame) return
         const rect = surface.getBoundingClientRect()
         const shift = translationOf(surface)
-        frame.style.top = `${rect.top - shift.y}px`
+        const top = rect.top - shift.y
+        frame.style.top = `${top}px`
         frame.style.left = `${rect.left - shift.x}px`
+        // 卡片随滚动上移时同步放宽高度上限
+        if (dialogRef.current) dialogRef.current.style.maxHeight = `${growRoom(top, rect.height)}px`
       })
     }
     window.addEventListener("scroll", sync, { capture: true, passive: true })
@@ -474,7 +487,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       <button
         onClick={() => settle(false)}
         className={cn(
-          "rounded-xl font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground",
+          "shrink-0 whitespace-nowrap rounded-xl font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground",
           compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm",
         )}
       >
@@ -485,7 +498,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         onClick={() => settle(true)}
         disabled={!canConfirm}
         className={cn(
-          "rounded-xl font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100",
+          "shrink-0 whitespace-nowrap rounded-xl font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100",
           compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm",
           tone.confirm,
         )}
@@ -523,9 +536,11 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="confirm-dialog-title"
-                className="card-glow pointer-events-auto h-full w-full overflow-hidden bg-card ring-1 ring-border"
+                // 绝对定位并只约束最小高度：内容多时向下生长而非互相挤压
+                className="card-glow @container pointer-events-auto absolute inset-x-0 top-0 flex min-h-full flex-col overflow-hidden bg-card ring-1 ring-border"
                 style={{
                   borderRadius: geometry.radius,
+                  maxHeight: geometry.maxHeight,
                   // 首帧停在背面（完全背对镜头），随后由 WAAPI 接管
                   transform: flipAt(-180 * geometry.dir, 1),
                   backfaceVisibility: "hidden",
@@ -534,10 +549,10 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               >
                 <div
                   ref={contentRef}
-                  className="flex h-full w-full flex-col p-3.5"
+                  className="flex min-h-full w-full flex-col p-4"
                   style={{ opacity: 0, pointerEvents: "none", willChange: "opacity" }}
                 >
-                  <div className="flex items-start gap-2.5">
+                  <div className="flex items-start gap-3">
                     <span
                       className={cn(
                         "flex size-8 shrink-0 items-center justify-center rounded-xl ring-1",
@@ -547,38 +562,37 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                     >
                       <ToneIcon size={16} aria-hidden />
                     </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <h2
                         id="confirm-dialog-title"
-                        className="text-pretty text-[13px] font-semibold leading-5 text-card-foreground"
+                        className="break-words text-pretty text-sm font-semibold leading-5 text-card-foreground"
                       >
                         {options.title}
                       </h2>
                       {options.description ? (
-                        <p className="text-pretty text-[11px] leading-4 text-muted-foreground">
-                          {options.description}
-                        </p>
+                        <p className="text-pretty text-xs leading-5 text-muted-foreground">{options.description}</p>
                       ) : null}
                     </div>
                     <button
                       onClick={() => settle(false)}
                       aria-label="关闭"
-                      className="-mr-1 -mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground"
+                      className="-mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground"
                     >
                       <X size={14} aria-hidden />
                     </button>
                   </div>
 
-                  <div className="mt-2.5 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+                  <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                     {rows.length > 0 ? (
                       <dl className="flex flex-col divide-y divide-border overflow-hidden rounded-xl bg-surface/60">
                         {rows.map((row) => (
                           <div
                             key={`${row.label}-${row.value}`}
-                            className="flex items-baseline justify-between gap-3 px-2.5 py-1.5"
+                            // 卡片够宽时左右分列，过窄则上下堆叠，长值换行而非截断
+                            className="flex flex-col gap-y-0.5 px-3 py-2 @[19rem]:flex-row @[19rem]:flex-wrap @[19rem]:items-baseline @[19rem]:gap-x-3"
                           >
-                            <dt className="shrink-0 text-[11px] font-medium text-muted-foreground">{row.label}</dt>
-                            <dd className="min-w-0 truncate text-right font-mono text-[11px] leading-4 text-card-foreground">
+                            <dt className="shrink-0 text-xs font-medium text-muted-foreground">{row.label}</dt>
+                            <dd className="min-w-0 break-all font-mono text-xs leading-5 text-card-foreground @[19rem]:flex-1 @[19rem]:text-right">
                               {row.value}
                             </dd>
                           </div>
@@ -586,14 +600,14 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                       </dl>
                     ) : null}
                     {notes.map((note) => (
-                      <p key={note} className="text-pretty text-[11px] leading-4 text-muted-foreground">
+                      <p key={note} className="text-pretty text-xs leading-5 text-muted-foreground">
                         {note}
                       </p>
                     ))}
                     {promptField}
                   </div>
 
-                  <div className="mt-2.5 flex items-center justify-end gap-1.5 border-t border-border pt-2.5">
+                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
                     {actions(true)}
                   </div>
                 </div>
