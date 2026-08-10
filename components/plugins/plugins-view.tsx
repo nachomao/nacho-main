@@ -3,14 +3,17 @@
 import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import {
+  AlertTriangle,
   Check,
   DownloadCloud,
   FileArchive,
   FolderInput,
   ListChecks,
+  Loader2,
   Package,
   Plus,
   RefreshCw,
+  RotateCw,
   Server,
   Trash2,
   X,
@@ -501,12 +504,11 @@ export function PluginsView() {
 
   if (!ctx) return null
 
-  const handleDelete = (id: string) => {
+  /* 删除：动画与请求并行，失败时清除标记让卡片复原（列表未变） */
+  const handleDelete = async (id: string) => {
     setRemoving((r) => [...r, id])
-    setTimeout(() => {
-      ctx.deletePlugin(id)
-      setRemoving((r) => r.filter((x) => x !== id))
-    }, 380)
+    await ctx.deletePlugin(id)
+    setRemoving((r) => r.filter((x) => x !== id))
   }
 
   const installedCount = plugins.filter((p) => p.status === "installed").length
@@ -577,8 +579,33 @@ export function PluginsView() {
         </div>
       </div>
 
+      {/* 写操作失败提示：与加载失败分开，不清空已有列表 */}
+      {ctx.actionError && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-negative/30 bg-negative/10 px-4 py-3 text-xs leading-relaxed text-negative">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">{ctx.actionError}</span>
+          <button type="button" onClick={ctx.dismissActionError} className="shrink-0 font-medium underline">
+            知道了
+          </button>
+        </div>
+      )}
+
       {/* 插件网格 */}
-      {filtered.length > 0 ? (
+      {ctx.loading ? (
+        <div className="card-glow flex flex-col items-center justify-center gap-2 rounded-3xl bg-card py-16 text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <p className="text-sm">正在从服务端加载插件…</p>
+        </div>
+      ) : ctx.error ? (
+        <div className="card-glow flex flex-col items-center justify-center gap-3 rounded-3xl bg-card py-16 text-center">
+          <AlertTriangle className="h-8 w-8 text-negative" />
+          <p className="max-w-sm text-sm text-muted-foreground">{ctx.error}</p>
+          <button className={cn(ghostBtn, "h-9 px-4 text-xs")} onClick={() => void ctx.reload()}>
+            <RotateCw className="h-3.5 w-3.5" />
+            重试
+          </button>
+        </div>
+      ) : filtered.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((p, i) => (
             <PluginCard key={p.id} plugin={p} index={i} removing={removing.includes(p.id)} onDelete={handleDelete} />
@@ -587,7 +614,7 @@ export function PluginsView() {
       ) : (
         <div className="card-glow flex flex-col items-center justify-center gap-2 rounded-3xl bg-card py-16 text-muted-foreground">
           <Package className="h-8 w-8" />
-          <p className="text-sm">该分类下暂无插件。</p>
+          <p className="text-sm">{plugins.length === 0 ? "服务端暂无插件记录。" : "该分类下暂无插件。"}</p>
         </div>
       )}
 

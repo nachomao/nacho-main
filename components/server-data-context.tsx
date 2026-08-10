@@ -13,10 +13,6 @@ import {
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import type { Client } from "@/components/clients/client-data"
 import { defaultServerBaseUrl, normalizeServerBaseUrl } from "@/lib/server-connection"
-import { installMockPanelApi, isMockPanelEnabled, mockUploadPanelApi } from "@/lib/mock-panel-api"
-
-// 演示模式：劫持 /api/panel/* 请求交给内存模拟服务端（NEXT_PUBLIC_NACHO_MOCK=off 关闭）
-installMockPanelApi()
 
 export type Overview = {
   clients: {
@@ -73,8 +69,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const connectedOnce = useRef(false)
 
   const connection = useMemo(() => {
-    // 演示模式下即使尚未完成引导也提供一个连接，保证页面能立即渲染模拟数据
-    if (!serverSource) return isMockPanelEnabled() ? { baseUrl: defaultServerBaseUrl(), key: "mock-panel-api-key" } : null
+    // 未完成引导时不构造连接，由上层展示引导/错误态，避免伪造可用连接
+    if (!serverSource) return null
     if (serverSource?.mode === "cloud") {
       return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
     }
@@ -116,7 +112,6 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const uploadRequest = useCallback(
     <T,>(path: string, file: File, onProgress: (percent: number) => void): Promise<T> => {
       if (!connection) return Promise.reject(new Error("尚未配置服务端连接"))
-      if (isMockPanelEnabled()) return mockUploadPanelApi<T>(path, file, onProgress)
       return new Promise<T>((resolve, reject) => {
         const request = new XMLHttpRequest()
         request.open("PUT", `${connection.baseUrl}/api/panel${path}`)
