@@ -9,10 +9,9 @@ import { cn } from "@/lib/utils"
  * 统一替代 window.confirm / window.prompt 的应用内弹层。
  * tone 决定强调色：danger=不可逆操作，warning=有副作用，default=常规确认。
  *
- * 传入 origin（触发按钮）时启用「就地展开」形态：
- * 卡片模糊淡出、圆形遮罩自按钮中心扩展至四角、内容去模糊显现，
- * 三段动画彼此重叠成一条连续动作；关闭时整体反向收回按钮。
- * 未传 origin 时回退为屏幕居中弹层。
+ * 传入 origin（触发按钮）时启用「卡片翻转」形态：
+ * 触发按钮所在的卡片绕竖轴翻转，正面转出、弹层作为背面转入，
+ * 关闭时原路翻回。未传 origin 时回退为屏幕居中弹层。
  */
 
 export type ConfirmTone = "default" | "warning" | "danger"
@@ -54,40 +53,34 @@ type Pending =
 const ConfirmContext = createContext<ConfirmApi | null>(null)
 
 /* ==================== 动画编排 ====================
- * 每段动画各自带 delay 并互相重叠，浏览器一次性插值到底，
- * 不再用 setTimeout 分段推进，因此中途没有重渲染与时序抖动。
+ * 卡片翻转：真实卡片是正面，弹层是背面，两者绕同一根竖轴同步转动。
+ * 双方都开启 backface-visibility: hidden，转过 90° 时正面自然隐去、
+ * 背面接手，整个过程是一条连续的物理动作，没有分段与拼接。
  *
- *  展开 460ms      0 ─────────────────────────────► 460
- *    卡片模糊        ███████
- *    遮罩扩展            ████████████████████████████
- *    内容显现                        ████████████████
+ *   正面（卡片）   rotateY   0° ──────────────► 180°
+ *   背面（弹层）   rotateY -180° ──────────────►   0°
+ *                            ↑ 90° 处完成交接
  */
 
-const OPEN_TIMELINE = {
-  veil: { delay: 0, duration: 110 },
-  clip: { delay: 90, duration: 370 },
-  content: { delay: 230, duration: 230 },
-}
-const OPEN_TOTAL = 460
+/** 单次翻转时长；正反面共用，保证始终共面 */
+const FLIP_MS = 520
 
-const CLOSE_TIMELINE = {
-  content: { delay: 0, duration: 110 },
-  clip: { delay: 70, duration: 230 },
-  unveil: { delay: 200, duration: 130 },
-}
-const CLOSE_TOTAL = 330
+/** 确认后卡片通常随即被移除，回翻整体加速 */
+const ACCEPT_SPEED = 0.6
 
-/** 确认后卡片通常随即被移除，收回过程整体加速 */
-const ACCEPT_SPEED = 0.55
-
-/** 遮罩扩展用 easeOutQuint 起步快、收尾稳；收回用镜像的 easeInQuint */
-const EASE_EXPAND = "cubic-bezier(0.22, 1, 0.36, 1)"
-const EASE_COLLAPSE = "cubic-bezier(0.64, 0, 0.78, 0)"
+/** 翻转用对称 easeInOut，接近真实卡片被手指拨转的手感 */
+const EASE_FLIP = "cubic-bezier(0.66, 0, 0.34, 1)"
 const EASE_SOFT = "cubic-bezier(0.4, 0, 0.2, 1)"
 
-const SURFACE_BLUR = "blur(5px) saturate(0.9)"
-const SURFACE_DIM = "0.4"
-const CONTENT_BLUR = "blur(8px)"
+/** 透视距离：越小越夸张，1400px 在卡片尺寸下透视自然 */
+const PERSPECTIVE = 1400
+
+/** 翻转中途略微缩小并压暗，模拟卡片转向侧面时的受光变化 */
+const MID_SCALE = 0.94
+const MID_BRIGHTNESS = 0.72
+
+/** 背面内容在交接完成后补一段渐显，避免边缘出现硬切 */
+const CONTENT_FADE = { delay: 300, duration: 200 }
 
 /** 居中回退形态的退场时长，与 animate-dropdown-out 对齐 */
 const CENTERED_OUT_MS = 130
@@ -99,11 +92,8 @@ type Geometry = {
   width: number
   height: number
   radius: string
-  /** 按钮中心相对卡片左上角的坐标 */
-  originX: number
-  originY: number
-  /** 覆盖卡片四角所需的最小半径 */
-  maxRadius: number
+  /** 翻转方向：按钮在卡片右半侧时朝反向转，转轴总是背离手指 */
+  dir: 1 | -1
 }
 
 /* ==================== 明细解析 ====================
@@ -174,16 +164,9 @@ function measure(surface: HTMLElement, origin: HTMLElement): Geometry {
   const originRect = origin.getBoundingClientRect()
   const shift = translationOf(surface)
 
-  // 按钮与卡片被同一 transform 平移，相对坐标无需修正
+  // 按钮落在右半侧时反向翻转，视觉上像是被按钮推着转过去
   const originX = originRect.left + originRect.width / 2 - rect.left
-  const originY = originRect.top + originRect.height / 2 - rect.top
-
-  const maxRadius = Math.max(
-    Math.hypot(originX, originY),
-    Math.hypot(rect.width - originX, originY),
-    Math.hypot(originX, rect.height - originY),
-    Math.hypot(rect.width - originX, rect.height - originY),
-  )
+  const dir: 1 | -1 = originX > rect.width / 2 ? -1 : 1
 
   return {
     top: rect.top - shift.y,
@@ -191,10 +174,22 @@ function measure(surface: HTMLElement, origin: HTMLElement): Geometry {
     width: rect.width,
     height: rect.height,
     radius: window.getComputedStyle(surface).borderRadius || "1rem",
-    originX,
-    originY,
-    maxRadius: Math.ceil(maxRadius),
+    dir,
   }
+}
+
+/** 统一拼装翻转 transform，保证正反面用完全一致的透视与缩放 */
+function flipAt(angle: number, scale: number) {
+  return `perspective(${PERSPECTIVE}px) rotateY(${angle}deg) scale(${scale})`
+}
+
+/** 一次翻转的三个关键帧：起始角 → 中途（缩小压暗）→ 终止角 */
+function flipFrames(from: number, to: number): Keyframe[] {
+  return [
+    { transform: flipAt(from, 1), filter: "brightness(1)" },
+    { transform: flipAt((from + to) / 2, MID_SCALE), filter: `brightness(${MID_BRIGHTNESS})`, offset: 0.5 },
+    { transform: flipAt(to, 1), filter: "brightness(1)" },
+  ]
 }
 
 /* ==================== Provider ==================== */
@@ -288,41 +283,22 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         return
       }
 
-      // 确认后卡片一般立即消失，整体收回加速
-      const speed = accepted ? ACCEPT_SPEED : 1
-      const at = (step: { delay: number; duration: number }) => ({
-        delay: Math.round(step.delay * speed),
-        duration: Math.round(step.duration * speed),
+      // 确认后卡片一般立即消失，回翻整体加速
+      const duration = Math.round(FLIP_MS * (accepted ? ACCEPT_SPEED : 1))
+      const timing = { duration, easing: EASE_FLIP }
+
+      // 让正面重新参与渲染，才能接住回翻的后半程
+      surface.style.visibility = ""
+
+      // 背面转出、正面转回，方向与展开完全镜像
+      play(dialog, flipFrames(0, -180 * geo.dir), timing)
+      play(surface, flipFrames(180 * geo.dir, 0), timing)
+      play(content, [{ opacity: 1 }, { opacity: 0 }], {
+        duration: Math.round(duration * 0.45),
+        easing: EASE_SOFT,
       })
 
-      play(
-        content,
-        [
-          { opacity: 1, filter: "blur(0px)" },
-          { opacity: 0, filter: CONTENT_BLUR },
-        ],
-        { ...at(CLOSE_TIMELINE.content), easing: EASE_SOFT },
-      )
-
-      play(
-        dialog,
-        [
-          { clipPath: `circle(${geo.maxRadius}px at ${geo.originX}px ${geo.originY}px)` },
-          { clipPath: `circle(0px at ${geo.originX}px ${geo.originY}px)` },
-        ],
-        { ...at(CLOSE_TIMELINE.clip), easing: EASE_COLLAPSE },
-      )
-
-      play(
-        surface,
-        [
-          { opacity: SURFACE_DIM, filter: SURFACE_BLUR },
-          { opacity: "1", filter: "blur(0px)" },
-        ],
-        { ...at(CLOSE_TIMELINE.unveil), easing: EASE_SOFT },
-      )
-
-      closeTimer.current = window.setTimeout(finish, Math.round(CLOSE_TOTAL * speed))
+      closeTimer.current = window.setTimeout(finish, duration)
     },
     [finish, geometry, pending, play, stopAnimations],
   )
@@ -354,7 +330,11 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       originRef.current = origin
       // 立刻交出交互权，卡片随之解除 hover 并回落到静止位置
       surface.style.pointerEvents = "none"
-      surface.style.willChange = "filter, opacity"
+      // 关掉卡片自身的 transition，避免与翻转动画争夺 transform
+      surface.style.transition = "none"
+      // 正面转过 90° 后即隐去，不会露出镜像内容
+      surface.style.backfaceVisibility = "hidden"
+      surface.style.willChange = "transform, filter"
 
       setGeometry(measure(surface, origin))
       setPending(next)
@@ -377,45 +357,29 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
     }
 
     if (prefersReducedMotion()) {
-      dialog.style.clipPath = "none"
+      dialog.style.transform = flipAt(0, 1)
       content.style.opacity = "1"
-      content.style.filter = "blur(0px)"
-      surface.style.opacity = SURFACE_DIM
+      surface.style.visibility = "hidden"
       focusTarget()
       return
     }
 
-    play(
-      surface,
-      [
-        { opacity: "1", filter: "blur(0px)" },
-        { opacity: SURFACE_DIM, filter: SURFACE_BLUR },
-      ],
-      { ...OPEN_TIMELINE.veil, easing: EASE_SOFT },
-    )
+    const timing = { duration: FLIP_MS, easing: EASE_FLIP }
 
-    play(
-      dialog,
-      [
-        { clipPath: `circle(0px at ${geometry.originX}px ${geometry.originY}px)` },
-        { clipPath: `circle(${geometry.maxRadius}px at ${geometry.originX}px ${geometry.originY}px)` },
-      ],
-      { ...OPEN_TIMELINE.clip, easing: EASE_EXPAND },
-    )
+    // 正面：卡片本体转出视野
+    play(surface, flipFrames(0, 180 * geometry.dir), timing)
 
-    const reveal = play(
-      content,
-      [
-        { opacity: 0, filter: CONTENT_BLUR },
-        { opacity: 1, filter: "blur(0px)" },
-      ],
-      { ...OPEN_TIMELINE.content, easing: EASE_SOFT },
-    )
+    // 背面：弹层从卡片反面转入，与正面始终共面
+    const flip = play(dialog, flipFrames(-180 * geometry.dir, 0), timing)
 
-    reveal.finished
+    play(content, [{ opacity: 0 }, { opacity: 1 }], { ...CONTENT_FADE, easing: EASE_SOFT })
+
+    flip.finished
       .then(() => {
         content.style.pointerEvents = "auto"
         dialog.style.willChange = "auto"
+        // 翻转结束后正面已完全背对镜头，直接隐藏省下持续的合成开销
+        surface.style.visibility = "hidden"
         focusTarget()
       })
       .catch(() => {
@@ -562,17 +526,16 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                 className="card-glow pointer-events-auto h-full w-full overflow-hidden bg-card ring-1 ring-border"
                 style={{
                   borderRadius: geometry.radius,
-                  // 首帧保持闭合，随后由 WAAPI 接管
-                  clipPath: `circle(0px at ${geometry.originX}px ${geometry.originY}px)`,
-                  // 提升为独立合成层，遮罩重绘不再牵动底层卡片
-                  transform: "translateZ(0)",
-                  willChange: "clip-path",
+                  // 首帧停在背面（完全背对镜头），随后由 WAAPI 接管
+                  transform: flipAt(-180 * geometry.dir, 1),
+                  backfaceVisibility: "hidden",
+                  willChange: "transform, filter",
                 }}
               >
                 <div
                   ref={contentRef}
                   className="flex h-full w-full flex-col p-3.5"
-                  style={{ opacity: 0, filter: CONTENT_BLUR, pointerEvents: "none", willChange: "opacity, filter" }}
+                  style={{ opacity: 0, pointerEvents: "none", willChange: "opacity" }}
                 >
                   <div className="flex items-start gap-2.5">
                     <span
@@ -744,6 +707,8 @@ function releaseSurface(el: HTMLElement) {
   el.style.willChange = ""
   el.style.transition = ""
   el.style.transform = ""
+  el.style.visibility = ""
+  el.style.backfaceVisibility = ""
 }
 
 export function useConfirm(): ConfirmApi {
