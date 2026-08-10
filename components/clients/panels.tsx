@@ -162,13 +162,14 @@ export function ClientsPanel() {
       c.ip.includes(query),
   )
 
-  async function deleteClient(client: Client) {
+  async function deleteClient(client: Client, origin?: HTMLElement) {
     const accepted = await confirm({
-      title: `删除客户端“${client.name}”？`,
-      description: "该客户端的历史命令记录会一并删除，操作不可撤销。",
+      title: `删除“${client.name}”？`,
+      description: "历史命令记录会一并删除，不可撤销。",
       body: `主机名：${client.hostname}\nIP 地址：${client.ip}`,
       confirmLabel: "删除",
       tone: "danger",
+      origin,
     })
     if (!accepted) return
     setDeletingId(client.id)

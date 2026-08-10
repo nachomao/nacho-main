@@ -19,6 +19,7 @@ import {
   Unlock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 
 /* 通用面板外壳：与客户端面板保持一致（card-glow + 圆角 + 标题/描述 + 右侧动作） */
 function PanelShell({
@@ -124,6 +125,7 @@ Write-Host "安装完成。" -ForegroundColor Green
 type HistoryEntry = { id: number; version: string; note: string; time: string }
 
 export function ScriptsView() {
+  const { promptText } = useConfirm()
   const [params, setParams] = useState<Params>(defaultParams)
   const [history, setHistory] = useState<HistoryEntry[]>([])
 

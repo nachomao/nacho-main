@@ -15,13 +15,18 @@ export function ClientCard({
   client: Client
   deleting?: boolean
   onManage?: (client: Client) => void
-  onDelete?: (client: Client) => void
+  /** origin 为触发按钮，确认弹层据此从按钮向卡片四角展开 */
+  onDelete?: (client: Client, origin?: HTMLElement) => void
 }) {
   const s = statusMeta[client.status]
   const brand = resolveOsBrand(client.os, client.osName)
 
+  // data-confirm-surface：确认弹层在此卡片范围内就地展开
   return (
-    <div className="group flex flex-col rounded-2xl border border-border bg-surface/60 p-4 transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_12px_28px_-8px_oklch(0_0_0_/_45%)]">
+    <div
+      data-confirm-surface
+      className="group flex flex-col rounded-2xl border border-border bg-surface/60 p-4 transition-all duration-300 hover:-translate-y-1 hover:bg-surface hover:shadow-[0_12px_28px_-8px_oklch(0_0_0_/_45%)]"
+    >
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <span
@@ -45,7 +50,7 @@ export function ClientCard({
           title="删除客户端"
           aria-label={`删除客户端 ${client.name}`}
           disabled={deleting}
-          onClick={() => onDelete?.(client)}
+          onClick={(event) => onDelete?.(client, event.currentTarget)}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-negative/50 hover:bg-negative/10 hover:text-negative disabled:pointer-events-none disabled:opacity-50"
         >
           {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
