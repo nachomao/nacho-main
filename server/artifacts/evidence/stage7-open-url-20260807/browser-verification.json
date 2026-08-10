@@ -1,0 +1,24 @@
+{
+    "desktop":  {
+                    "viewport":  "1280x720",
+                    "scrollWidth":  1280,
+                    "innerWidth":  1280,
+                    "pageOverflow":  false,
+                    "consoleWarningsOrErrors":  0,
+                    "screenshot":  "panel-desktop-1280x720.png"
+                },
+    "mobile":  {
+                   "viewport":  "390x844",
+                   "scrollWidth":  390,
+                   "innerWidth":  390,
+                   "pageOverflow":  false,
+                   "consoleWarningsOrErrors":  0,
+                   "screenshot":  "panel-mobile-390x844.png"
+               },
+    "resultVisible":  {
+                          "commandId":  "cmd-bf9fe9007a88",
+                          "status":  "failed",
+                          "structuredError":  "POLICY_DISABLED",
+                          "accurateWording":  "浏览器启动请求失败"
+                      }
+}

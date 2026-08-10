@@ -1,0 +1,48 @@
+{
+    "clientId":  "cl-6f1228eb7276",
+    "newDeployment":  {
+                          "batchId":  "batch-082e8c4c66ab",
+                          "commandId":  "cmd-0af9384fc770",
+                          "status":  "success",
+                          "sha256":  "d3299a143216c6217d04a7121a9b9f2b5a30b0a3afe97a7ed82592b178038199",
+                          "hashVerified":  true
+                      },
+    "replaceDeployment":  {
+                              "batchId":  "batch-b084c269db3a",
+                              "commandId":  "cmd-95a59e1969a2",
+                              "status":  "success",
+                              "previousSha256":  "eb2610d2efd39c580135ea84ee85766e861c36ed7db3b7e8a8519223826c3f75",
+                              "finalSha256":  "207534e52d66e4a4a23e196b467f0822c1b11159974af7fb745e2b36e71b1152",
+                              "backupValid":  true
+                          },
+    "rollback":  {
+                     "commandId":  "cmd-2f5a24a14685",
+                     "status":  "success",
+                     "restoredSha256":  "eb2610d2efd39c580135ea84ee85766e861c36ed7db3b7e8a8519223826c3f75",
+                     "backupValid":  false
+                 },
+    "wrongClientDownloadHttp":  404,
+    "logsContainFixtureBody":  false,
+    "terminalArtifactBodiesDeleted":  true,
+    "batchPayloadHistoryRetained":  true,
+    "browser":  {
+                    "desktop":  {
+                                    "width":  1280,
+                                    "height":  720,
+                                    "documentScrollWidth":  1280,
+                                    "bodyScrollWidth":  1280
+                                },
+                    "mobile":  {
+                                   "width":  390,
+                                   "height":  844,
+                                   "documentScrollWidth":  390,
+                                   "bodyScrollWidth":  390
+                               },
+                    "consoleWarningOrErrorCount":  0
+                },
+    "cleanupBeforeRemoval":  {
+                                 "stagedFileCount":  0,
+                                 "backupFileCount":  0,
+                                 "journalEntryCount":  4
+                             }
+}

@@ -1,0 +1,54 @@
+Stage 6 verification — 2026-08-07
+
+Panel
+- pnpm exec tsx --test tests/*.test.ts => exit 0, 44/44 passed
+- pnpm exec tsc --noEmit => exit 0
+- NACHO_NEXT_DIST_DIR=.next-stage6-build pnpm build => exit 0; production build passed; known NFT trace warning only
+- Browser/Computer Use plugin initialization failed with a missing kernel-assets path after the desktop plugin version changed; no browser result is claimed
+- UI implementation and pure tests cover Unicode scalar counts, severity, timeout, controlled targets, summary, batch recovery, strict per-client results and duplicate prevention
+
+Server
+- Windows npm test => exit 0, 25/25 passed
+- Windows npm run build => exit 0
+- WSL Debian isolated npm ci/test/build => exit 0, 25/25 passed, build passed
+- Deployment backup: /opt/control-server-backups/stage6-20260807T044320Z-208
+- control-server.service => active; /health => HTTP 200
+
+Agent
+- dotnet test => exit 0, 190/190 passed
+- Release build => exit 0, 0 warning, 0 error
+- publish.ps1 => version 1.1.6, 76324449 bytes
+- SHA-256 => 018889b3512789b36171c171d047b81a75108caec44d0c8cbd82acbbd3c5cc36
+- update-agent cmd-e2a2848a0d4c => success
+
+Real chain
+- show-message cmd-39a47bfa66bf => success
+- Active session => 1; WTSSendMessage response => 32000; deliveryStatus => timed-out; duration => 5046 ms
+- The native message was delivered once and naturally closed at the 5-second display timeout
+- After Agent restart the same command remained one terminal success record and was not redelivered
+- Server logs contain severity/delivery summary but not title or message body
+- Agent allowMessagePush/config restored, unique message intent removed, NachoAgent Running
+
+Strict closure follow-up — 2026-08-07
+- A fresh isolated control server and the published Agent 1.1.6 were started with unique data under the workspace; the installed Agent and deployed WSL service were not modified.
+- show-message cmd-437d34fa2eec => success, Session 1, deliveryStatus confirmed, responseCode 1, timedOut false, duration 3970 ms.
+- After the isolated Agent restarted, the command record count remained 1 and no second WTS message was delivered.
+- The isolated audit log contains neither the test title nor the test body.
+- Browser verification reached /clients -> 批量操作 -> Windows -> 消息推送 and rendered the confirmed result from the real fixture API.
+- 1280x720: document/body width 1280/1280, no page-level horizontal overflow, 0 console warning/error.
+- 390x844: document/body width 390/390, no page-level horizontal overflow, 0 console warning/error.
+- Screenshots: browser-desktop-1280x720.png, browser-desktop-result-1280x720.png, browser-mobile-390x844.png, browser-mobile-result-390x844.png.
+- Browser record: browser-verification.json; confirmed chain record: confirmed-chain.json.
+- The browser viewport override was reset; the browser tab, isolated Next server, isolated Agent, isolated control server, temporary identity/database/intent/journal, and helper scripts were removed.
+- The original tmp/repo-encoding-audit was preserved.
+
+Production policy fix — 2026-08-07
+- Agent 1.1.7 adds an idempotent first-start migration for existing data directories. It preserves the original agent.json as agent.json.before-message-push-enable.bak, enables allowMessagePush, and writes message-push-policy-v1.migrated.json.
+- New installation and overwrite-deployment configuration now writes allowMessagePush=true. Once the migration marker exists, a later administrator override is preserved instead of being forced again at every startup.
+- Targeted migration/message tests: 14/14 passed. Agent full tests: 194/194 passed. Release build: 0 warning / 0 error.
+- Published nacho-agent-1.1.7-win-x64.exe: 76,332,641 bytes; SHA-256 1fdc19d16711e75deccccd1bb6e97602091c6bcf434b257dc81ac07df9a4d3e4. Manifest size and hash matched the reopened file.
+- Production artifact deployment backup: /opt/control-server-backups/stage6-policy-20260807T063545Z.
+- update-agent cmd-da8108ab6183: success, 1.1.6 -> 1.1.7, phase healthy, downloadedBytes 76,332,641, rolledBack false.
+- Production show-message cmd-bc19db4f49e5 to 猫羽雫的计算姬: success, Session 1, confirmed, responseCode 1, timedOut false, duration 3446 ms.
+- Production audit log contains neither the verification title nor body. control-server.service remained active and /health returned HTTP 200.
+- Evidence: production-policy-fix.json. Runnable local rollback: rollback-production-message-push.ps1.

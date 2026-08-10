@@ -1,0 +1,22 @@
+{
+  "stage": 4,
+  "feature": "manage-local-user",
+  "verifiedAt": "2026-08-06T03:22:00Z",
+  "clientId": "cl-2e2a5b138515",
+  "commands": [
+    { "id": "cmd-b78941793e98", "action": "list", "status": "success", "assertion": "fixture present, enabled, non-built-in" },
+    { "id": "cmd-da0b2f13bf63", "action": "disable", "status": "success", "changed": true, "assertion": "target disabled" },
+    { "id": "cmd-2e926af12960", "action": "enable", "status": "success", "changed": true, "assertion": "target enabled" },
+    { "id": "cmd-72e4850bdb5b", "action": "add-to-group", "status": "success", "changed": true, "assertion": "group present" },
+    { "id": "cmd-7d2c11569660", "action": "remove-from-group", "status": "success", "changed": true, "assertion": "group absent" },
+    { "id": "cmd-ae570bd48d3f", "action": "delete", "status": "success", "changed": true, "assertion": "target absent" },
+    { "id": "cmd-bf1744eafd70", "action": "list", "status": "success", "assertion": "fixture absent" }
+  ],
+  "auditRedaction": true,
+  "restoration": {
+    "fixtureUserAbsent": true,
+    "fixtureGroupAbsent": true,
+    "agentConfigRestored": true,
+    "agentService": "Running"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "stage": 6,
+  "feature": "show-message",
+  "verifiedAt": "2026-08-07T06:09:02.636Z",
+  "fixture": "isolated-real-chain",
+  "clientId": "cl-36c3db0bfd5f",
+  "command": {
+    "id": "cmd-437d34fa2eec",
+    "status": "success",
+    "sessionId": 1,
+    "deliveryStatus": "confirmed",
+    "responseCode": 1,
+    "timedOut": false,
+    "durationMs": 3970,
+    "recordCountAfterRestart": 1,
+    "redeliveredAfterRestart": false
+  },
+  "auditRedaction": true
+}

@@ -1,0 +1,31 @@
+Stage 5 verification — 2026-08-06
+
+Panel
+- pnpm exec tsx --test tests/*.test.ts => exit 0, 41/41 passed
+- pnpm exec tsc --noEmit => exit 0
+- NACHO_NEXT_DIST_DIR=.next-stage5-build pnpm build => exit 0; Next.js production build passed; known NFT trace warning only
+- Browser /clients -> single-client management -> registry: real command history restored; hive/view/subKey, six type editors, Base64 decoded byte count, local table scrolling, delete and rollback controls rendered
+- Browser 1280x720: document 1280/1280, no console warning/error
+- Browser 390x844: document 390/390, local value table 186/680 scrollable, no console warning/error
+
+Server
+- Windows npm test => exit 0, 23/23 passed
+- Windows npm run build => exit 0
+- WSL Debian isolated npm ci/test/build => exit 0, 23/23 passed, build passed
+- Deployment backup: /opt/control-server-backups/stage5-20260806T082443Z-4608
+- systemctl is-active control-server.service => active
+- curl http://localhost:8443/health => HTTP 200
+
+Agent
+- dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj => exit 0, 180/180 passed
+- dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release => exit 0, 0 warning, 0 error
+- publish.ps1 => version 1.1.5, 76299873 bytes
+- SHA-256 => e34164284c9fd28982cd976c7e57bd6d23409ff4d5992d371240edd12c1cc889
+- update-agent cmd-e609e048c354 => success
+- installed Agent => Running, version 1.1.5.0, matching SHA-256
+
+Real chain
+- 15 commands covered new set, get, overwrite with previous value, idempotent set, delete, inverse set rollback, Registry32/Registry64 isolation, binary decoded size, final empty lists
+- Every command => success; expected changed flags and previous/current values verified
+- Audit log check => full subKey, valueName and value bodies absent; action/hive/view/pathHash summaries present
+- Restoration => exact GUID key absent in both views, Agent allowedRegistryPaths/config restored, NachoAgent Running

@@ -1,0 +1,203 @@
+diff --git a/server/artifacts/windows/latest.json b/server/artifacts/windows/latest.json
+index 244e881..0e90fd6 100644
+--- a/server/artifacts/windows/latest.json
++++ b/server/artifacts/windows/latest.json
+@@ -1,8 +1,8 @@
+ {
+-    "version":  "1.1.1",
+-    "publishedAt":  "2026-07-24T12:11:03.5949493Z",
++    "version":  "1.1.3",
++    "publishedAt":  "2026-08-03T02:34:30.3641892Z",
+     "rid":  "win-x64",
+-    "sha256":  "b3f05f83812900ad31149d924048c12dff707e8e2e2f892d93154cb550a9de8b",
+-    "sizeBytes":  76131937,
+-    "fileName":  "nacho-agent-1.1.1-win-x64.exe"
++    "sha256":  "9e85a2b512d0a38573d8fd9bfc239394c16606b8fe28b1c48615f2c1731cdef0",
++    "sizeBytes":  76136033,
++    "fileName":  "nacho-agent-1.1.3-win-x64.exe"
+ }
+\ No newline at end of file
+diff --git a/server/client/src/Nacho.Agent/Nacho.Agent.csproj b/server/client/src/Nacho.Agent/Nacho.Agent.csproj
+index b1e9287..e86401b 100644
+--- a/server/client/src/Nacho.Agent/Nacho.Agent.csproj
++++ b/server/client/src/Nacho.Agent/Nacho.Agent.csproj
+@@ -5,7 +5,7 @@
+     <ImplicitUsings>enable</ImplicitUsings>
+     <InvariantGlobalization>true</InvariantGlobalization>
+     <AssemblyName>nacho-agent</AssemblyName>
+-    <Version>1.1.1</Version>
++    <Version>1.1.3</Version>
+   </PropertyGroup>
+   <ItemGroup>
+     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.1" />
+diff --git a/server/client/src/Nacho.Agent/OsInfo.cs b/server/client/src/Nacho.Agent/OsInfo.cs
+index 55aba9b..6591c8a 100644
+--- a/server/client/src/Nacho.Agent/OsInfo.cs
++++ b/server/client/src/Nacho.Agent/OsInfo.cs
+@@ -21,20 +21,30 @@ public static class OsInfo
+             var product = key?.GetValue("ProductName") as string;
+             var displayVersion = key?.GetValue("DisplayVersion") as string;
+             var build = Environment.OSVersion.Version.Build;
+-
+-            if (string.IsNullOrWhiteSpace(product))
+-                return build >= Windows11MinimumBuild ? "Windows 11" : "Windows";
+-
+-            // Windows 11 的 ProductName 仍为 "Windows 10 ..."，按内部版本号替换前缀
+-            if (build >= Windows11MinimumBuild && product.Contains("Windows 10", StringComparison.OrdinalIgnoreCase))
+-                product = product.Replace("Windows 10", "Windows 11", StringComparison.OrdinalIgnoreCase);
+-
+-            return string.IsNullOrWhiteSpace(displayVersion) ? product : $"{product} {displayVersion}";
++            return NormalizeDisplayName(product, displayVersion, build);
+         }
+         catch (Exception)
+         {
+             // 注册表不可读时退回到内部版本号判断，避免影响注册与心跳
+-            return Environment.OSVersion.Version.Build >= Windows11MinimumBuild ? "Windows 11" : "Windows";
++            return NormalizeDisplayName(null, null, Environment.OSVersion.Version.Build);
+         }
+     }
++
++    /// <summary>根据注册表名称与内部构建号生成稳定的展示名称。</summary>
++    internal static string NormalizeDisplayName(string? product, string? displayVersion, int build)
++    {
++        var normalizedProduct = product?.Trim();
++        var normalizedDisplayVersion = displayVersion?.Trim();
++
++        if (string.IsNullOrWhiteSpace(normalizedProduct))
++            return build >= Windows11MinimumBuild ? "Windows 11" : "Windows";
++
++        // Windows 11 的 ProductName 仍可能写作 "Windows 10 ..."，必须以内核构建号为准。
++        if (build >= Windows11MinimumBuild && normalizedProduct.Contains("Windows 10", StringComparison.OrdinalIgnoreCase))
++            normalizedProduct = normalizedProduct.Replace("Windows 10", "Windows 11", StringComparison.OrdinalIgnoreCase);
++
++        return string.IsNullOrWhiteSpace(normalizedDisplayVersion)
++            ? normalizedProduct
++            : $"{normalizedProduct} {normalizedDisplayVersion}";
++    }
+ }
+diff --git a/server/src/tests/commands.test.ts b/server/src/tests/commands.test.ts
+index 9c7455e..8e1136b 100644
+--- a/server/src/tests/commands.test.ts
++++ b/server/src/tests/commands.test.ts
+@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
+ import fs from "node:fs"
+ import path from "node:path"
+ import crypto from "node:crypto"
++import { DatabaseSync } from "node:sqlite"
+ import { after, before, test } from "node:test"
+ 
+ const databasePath = path.join(process.cwd(), "tmp-command-test.db")
+@@ -15,6 +16,25 @@ const artifactsPath = path.join(process.cwd(), "tmp-update-artifacts")
+ 
+ before(async () => {
+   fs.rmSync(databasePath, { force: true })
++  const legacyDb = new DatabaseSync(databasePath)
++  legacyDb.exec(`
++    CREATE TABLE clients (
++      id            TEXT PRIMARY KEY,
++      name          TEXT NOT NULL,
++      hostname      TEXT NOT NULL DEFAULT '',
++      ip            TEXT NOT NULL DEFAULT '',
++      os            TEXT NOT NULL DEFAULT 'Linux',
++      status        TEXT NOT NULL DEFAULT 'offline',
++      tags          TEXT NOT NULL DEFAULT '[]',
++      grp           TEXT NOT NULL DEFAULT '默认分组',
++      version       TEXT NOT NULL DEFAULT '',
++      token         TEXT NOT NULL,
++      last_seen     INTEGER NOT NULL DEFAULT 0,
++      registered_at INTEGER NOT NULL,
++      metrics       TEXT
++    );
++  `)
++  legacyDb.close()
+   process.env.DATABASE_PATH = databasePath
+   process.env.LOG_RETENTION_MAX = "1000"
+   process.env.ENROLLMENT_KEY = "integration-enroll-key"
+@@ -45,6 +65,31 @@ test("open enrollment bypasses the shared key only when configured", () => {
+   assert.equal(canEnroll("integration-enroll-key", false), true)
+ })
+ 
++test("legacy client schema migrates and heartbeat persists osName", () => {
++  const columns = db.prepare("PRAGMA table_info(clients)").all() as { name: string }[]
++  assert.ok(columns.some((column) => column.name === "os_name"))
++
++  db.exec("DELETE FROM commands; DELETE FROM clients; DELETE FROM groups; DELETE FROM logs")
++  const { client } = clients.registerClient({
++    name: "windows-agent",
++    os: "Windows",
++    osName: "Windows 10 Pro 22H2",
++    version: "1.1.1",
++  })
++  assert.equal(client.osName, "Windows 10 Pro 22H2")
++
++  const heartbeat = clients.heartbeat(
++    client.id,
++    undefined,
++    "127.0.0.1",
++    "1.1.3",
++    "Windows 11 Pro 25H2",
++  )
++  assert.equal(heartbeat?.version, "1.1.3")
++  assert.equal(heartbeat?.osName, "Windows 11 Pro 25H2")
++  assert.equal(clients.getClient(client.id)?.osName, "Windows 11 Pro 25H2")
++})
++
+ after(() => {
+   db.close()
+   fs.rmSync(databasePath, { force: true })
+diff --git a/tests/client-management.test.ts b/tests/client-management.test.ts
+index 753e480..72207fc 100644
+--- a/tests/client-management.test.ts
++++ b/tests/client-management.test.ts
+@@ -103,6 +103,19 @@ test("客户端卡片渲染发行版标识而非通用图标", () => {
+   assert.match(ubuntuHtml, new RegExp(escapeRegExp(resolveOsBrand("Linux", "ubuntu").path.slice(0, 40))))
+ })
+ 
++test("Windows 11 客户端卡片渲染具体版本与等宽四窗格标识", () => {
++  const osName = "Windows 11 Pro 25H2"
++  const win11Brand = resolveOsBrand("Windows", osName)
++  const legacyBrand = resolveOsBrand("Windows", "Windows 10 Pro 22H2")
++  const html = renderToStaticMarkup(
++    createElement(ClientCard, { client: { ...windowsClient, osName, version: "1.1.3" } }),
++  )
++
++  assert.match(html, /Windows 11 Pro 25H2/)
++  assert.match(html, new RegExp(escapeRegExp(win11Brand.path)))
++  assert.doesNotMatch(html, new RegExp(escapeRegExp(legacyBrand.path)))
++})
++
+ function escapeRegExp(value: string) {
+   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+ }
+diff --git a/server/client/tests/Nacho.Agent.Tests/OsInfoTests.cs b/server/client/tests/Nacho.Agent.Tests/OsInfoTests.cs
+new file mode 100644
+index 0000000..1508fc1
+--- /dev/null
++++ b/server/client/tests/Nacho.Agent.Tests/OsInfoTests.cs
+@@ -0,0 +1,26 @@
++namespace Nacho.Agent.Tests;
++
++public sealed class OsInfoTests
++{
++    [Theory]
++    [InlineData("Windows 10 Pro", "25H2", 26200, "Windows 11 Pro 25H2")]
++    [InlineData("Microsoft Windows 10 Enterprise", "24H2", 26100, "Microsoft Windows 11 Enterprise 24H2")]
++    [InlineData("Windows 10 Pro", "22H2", 19045, "Windows 10 Pro 22H2")]
++    [InlineData("Windows 11 Pro", null, 22631, "Windows 11 Pro")]
++    public void NormalizesWindowsDisplayName(
++        string product,
++        string? displayVersion,
++        int build,
++        string expected) =>
++        Assert.Equal(expected, OsInfo.NormalizeDisplayName(product, displayVersion, build));
++
++    [Theory]
++    [InlineData(null, null, 26200, "Windows 11")]
++    [InlineData("  ", "25H2", 19045, "Windows")]
++    public void FallsBackToBuildWhenProductNameIsMissing(
++        string? product,
++        string? displayVersion,
++        int build,
++        string expected) =>
++        Assert.Equal(expected, OsInfo.NormalizeDisplayName(product, displayVersion, build));
++}

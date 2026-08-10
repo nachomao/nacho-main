@@ -1,0 +1,30 @@
+{
+  "stage": 5,
+  "feature": "manage-registry",
+  "verifiedAt": "2026-08-06T08:27:00Z",
+  "clientId": "cl-2e2a5b138515",
+  "commands": [
+    { "id": "cmd-f2f699f0a1e8", "action": "list", "view": "registry64", "status": "success", "assertion": "initial key empty" },
+    { "id": "cmd-1dc1ae3b7b26", "action": "set", "view": "registry64", "status": "success", "changed": true, "assertion": "new string value" },
+    { "id": "cmd-6224ac8672b0", "action": "get", "view": "registry64", "status": "success", "assertion": "string value read" },
+    { "id": "cmd-7688bea7e5b2", "action": "list", "view": "registry32", "status": "success", "assertion": "32-bit view isolated" },
+    { "id": "cmd-adb20a69f323", "action": "set", "view": "registry64", "status": "success", "changed": true, "assertion": "string overwritten by dword with previous value" },
+    { "id": "cmd-84cdfa42c6ec", "action": "set", "view": "registry64", "status": "success", "changed": false, "assertion": "idempotent set" },
+    { "id": "cmd-380986942b1b", "action": "delete", "view": "registry64", "status": "success", "changed": true, "assertion": "previous value returned" },
+    { "id": "cmd-572c68b36815", "action": "set", "view": "registry64", "status": "success", "changed": true, "assertion": "inverse rollback restored previous value" },
+    { "id": "cmd-07fa8452ce66", "action": "list", "view": "registry64", "status": "success", "assertion": "rollback verified" },
+    { "id": "cmd-dd138f144755", "action": "set", "view": "registry32", "status": "success", "changed": true, "assertion": "binary value written" },
+    { "id": "cmd-3b158a8eba73", "action": "get", "view": "registry32", "status": "success", "assertion": "binary value and decoded size read" },
+    { "id": "cmd-e683870fedef", "action": "delete", "view": "registry32", "status": "success", "changed": true },
+    { "id": "cmd-9ea94600b611", "action": "delete", "view": "registry64", "status": "success", "changed": true },
+    { "id": "cmd-1ba03194697d", "action": "list", "view": "registry64", "status": "success", "assertion": "final view empty" },
+    { "id": "cmd-94e04dd0b311", "action": "list", "view": "registry32", "status": "success", "assertion": "final view empty" }
+  ],
+  "auditRedaction": true,
+  "restoration": {
+    "fixtureKeyAbsentRegistry64": true,
+    "fixtureKeyAbsentRegistry32": true,
+    "agentConfigRestored": true,
+    "agentService": "Running"
+  }
+}

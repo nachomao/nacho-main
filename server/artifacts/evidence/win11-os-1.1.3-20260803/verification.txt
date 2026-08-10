@@ -1,0 +1,165 @@
+Nacho Windows 11 OS branding verification
+Captured: 2026-08-03 Asia/Shanghai
+
+=== Baseline ===
+Command:
+  Get-CimInstance Win32_OperatingSystem; Get-CimInstance Win32_Service -Filter "Name='NachoAgent'"; Get-FileHash "C:\Program Files\Nacho\Agent\nacho-agent.exe"
+Input:
+  Installed Windows Agent and local operating system.
+Literal result:
+  OS Caption=Microsoft Windows 11 专业版; Version=10.0.26200; BuildNumber=26200
+  NachoAgent State=Running; StartMode=Auto; StartName=LocalSystem
+  Agent ProductVersion=1.1.1
+  Agent SHA256=b3f05f83812900ad31149d924048c12dff707e8e2e2f892d93154cb550a9de8b
+Exit status: 0
+
+Command:
+  wsl -d Debian -u root -- systemctl is-active/is-enabled control-server.service; curl http://localhost:8443/health; PRAGMA table_info(clients)
+Input:
+  Deployed control server and /var/lib/control-server/control.db.
+Literal result:
+  active
+  enabled
+  HTTP 200
+  {"ok":true,"service":"nacho-server",...}
+  clients.os_name absent; client version=1.1.1; osName unavailable
+Exit status: 0
+
+=== Source and automated verification ===
+Command:
+  pnpm exec tsx --test tests/client-management.test.ts
+Literal result:
+  tests 5; pass 5; fail 0
+Exit status: 0
+
+Command:
+  pnpm exec tsx --test tests/*.test.ts
+Literal result:
+  tests 24; pass 24; fail 0
+Exit status: 0
+
+Command:
+  dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj --filter FullyQualifiedName~OsInfoTests --no-restore
+Literal result:
+  通过 6; 失败 0; 跳过 0
+Exit status: 0
+
+Command:
+  dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj --no-restore
+Literal result:
+  通过 113; 失败 0; 跳过 0
+Exit status: 0
+
+Command:
+  dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release --no-restore
+Literal result:
+  已成功生成。0 个警告，0 个错误。
+Exit status: 0
+
+Command:
+  WSL isolated: npm ci --no-audit --no-fund && npm test && npm run build
+Input:
+  package*.json, tsconfig.json, server/src copied to /tmp isolation directory.
+Literal result:
+  tests 9; pass 9; fail 0
+  database migration log: 数据库已补充字段：clients.os_name
+  tsc -p tsconfig.json completed with no diagnostics
+Exit status: 0
+
+Command:
+  pnpm exec tsc --noEmit
+Input:
+  Isolated panel copy excluding the pre-existing untracked tmp/repo-encoding-audit tree.
+Literal result:
+  no stdout
+Exit status: 0
+
+Command:
+  pnpm build
+Input:
+  Isolated panel copy with a lockfile-frozen local dependency installation.
+Literal result:
+  Compiled successfully in 3.2s
+  Generating static pages (2/2)
+  Routes include /clients and all existing panel routes
+  One pre-existing NFT trace warning from lib/local-settings-store.ts; no build error
+Exit status: 0
+
+Correction record:
+  Root pnpm exec tsc --noEmit exited 1 because tsconfig's **/*.ts include scanned the user's untracked tmp/repo-encoding-audit copies, whose server dependencies are intentionally absent. The isolated project-only tsc command above exited 0. The existing tmp tree was not changed.
+  The first isolated Next build used an external node_modules junction and exited 1 because Turbopack rejects links outside the project root. Replacing it with pnpm install --frozen-lockfile inside the isolated copy produced the successful build above.
+
+=== Published artifact ===
+Command:
+  powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1
+Literal result:
+  Published nacho-agent-1.1.3-win-x64.exe
+  FileVersion=1.1.3.0
+  ProductVersion=1.1.3+7a51b91478cbca4f582e8f8c4536c488bb61028d
+  SizeBytes=76136033
+  SHA256=9e85a2b512d0a38573d8fd9bfc239394c16606b8fe28b1c48615f2c1731cdef0
+  latest.json version/file/size/hash match the artifact
+Exit status: 0
+
+=== Deployment and live upgrade ===
+Command:
+  Deploy tested src/dist/deploy and 1.1.3 artifact to /opt/control-server; restart control-server.service
+Literal result:
+  control-server.service=active/enabled
+  health HTTP 200
+  .env SHA256 before/after=d9626b4e44012e58d495d80f49d7cb4ae9528fa9b4b81d0f2683b61d99ac6a6b
+  systemd unit SHA256 before/after=8e0d7f1360f50311a1aebc2304a0f5a00f3879a5df757bca66eed7d8fee2db80
+  database integrity_check=ok; clients.os_name present
+Exit status: 0
+
+Command:
+  POST /api/panel/agent-updates
+Input:
+  {"scope":"clients","clientIds":["cl-2e2a5b138515"]}
+Literal result:
+  HTTP 201; ok=true
+  commandId=cmd-87ad79943d32
+  type=update-agent; initial status=pending
+  targetVersion=1.1.3
+  fileName=nacho-agent-1.1.3-win-x64.exe
+  sizeBytes=76136033
+  sha256=9e85a2b512d0a38573d8fd9bfc239394c16606b8fe28b1c48615f2c1731cdef0
+Exit status: 0
+
+Command:
+  Poll command/client state and verify installed Agent file.
+Literal result:
+  command status=success; phase=healthy
+  fromVersion=1.1.1; targetVersion=1.1.3
+  downloadedBytes=76136033; rolledBack=false; error=null
+  client version=1.1.3; osName=Windows 11 Pro 25H2; storedStatus=online
+  installed SHA256=9e85a2b512d0a38573d8fd9bfc239394c16606b8fe28b1c48615f2c1731cdef0
+  NachoAgent State=Running; StartMode=Auto; StartName=LocalSystem
+Exit status: 0
+
+=== Browser verification ===
+URL:
+  http://localhost:3000/clients
+Default viewport literal result:
+  title=Windows 11 Pro 25H2
+  viewBox=0 0 24 24
+  path=M3 3h8.1v8.1H3zM12.9 3H21v8.1h-8.1zM3 12.9h8.1V21H3zM12.9 12.9H21V21h-8.1z
+  documentClientWidth=748; documentScrollWidth=748; horizontalOverflow=false
+  console warnings/errors=[]
+390x844 literal result:
+  title=Windows 11 Pro 25H2
+  viewBox=0 0 24 24
+  path=M3 3h8.1v8.1H3zM12.9 3H21v8.1h-8.1zM3 12.9h8.1V21H3zM12.9 12.9H21V21h-8.1z
+  documentClientWidth=390; documentScrollWidth=390; horizontalOverflow=false
+  cardLeft=140; cardRight=334.40000915527344; cardWithinViewport=true
+  console warnings/errors=[]
+Exit status: 0
+
+=== Rollback verification ===
+Command:
+  powershell -ExecutionPolicy Bypass -File rollback.ps1 -VerifyOnly
+Literal result:
+  ready=true
+  agentSha256=b3f05f83812900ad31149d924048c12dff707e8e2e2f892d93154cb550a9de8b
+  serverBackup=/var/backups/control-server/win11-os-1.1.3-20260803
+Exit status: 0

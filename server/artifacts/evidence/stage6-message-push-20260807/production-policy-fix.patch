@@ -1,0 +1,568 @@
+﻿diff --git a/server/README.md b/server/README.md
+index 5c2d4be..88cce23 100644
+--- a/server/README.md
++++ b/server/README.md
+@@ -191,6 +191,11 @@ curl -s -X POST $BASE/api/panel/clients/<clientId>/commands \
+   -H "authorization: Bearer $PANEL_KEY" -H 'content-type: application/json' \
+   -d '{"type":"run-program","payload":{"program":"echo","args":"hi"}}'
+ 
++# Windows CMD / Windows PowerShell 批量执行；服务端去重并校验所有目标均为 Windows
++curl -s -X POST $BASE/api/panel/commands/batch \
++  -H "authorization: Bearer $PANEL_KEY" -H 'content-type: application/json' \
++  -d '{"clientIds":["<clientId>"],"type":"run-shell","payload":{"shell":"cmd","script":"ver","timeoutSeconds":30}}'
++
+ # Windows 服务控制复用同一个通用命令接口；允许列表由目标 Agent 本机配置决定
+ curl -s -X POST $BASE/api/panel/clients/<clientId>/commands \
+   -H "authorization: Bearer $PANEL_KEY" -H 'content-type: application/json' \
+@@ -211,6 +216,11 @@ curl -s -X POST $BASE/api/panel/clients/<clientId>/commands \
+   -H "authorization: Bearer $PANEL_KEY" -H 'content-type: application/json' \
+   -d '{"type":"collect-logs","payload":{"sources":["agent","system","application"],"sinceUtc":"2026-07-24T07:00:00Z","untilUtc":"2026-07-24T08:00:00Z","maxEntries":200}}'
+ 
++# Windows 本地账户查询；所有 payload 固定包含 action/userName/groupName
++curl -s -X POST $BASE/api/panel/clients/<clientId>/commands \
++  -H "authorization: Bearer $PANEL_KEY" -H 'content-type: application/json' \
++  -d '{"type":"manage-local-user","payload":{"action":"list","userName":null,"groupName":null}}'
++
+ # 3) 客户端拉取待执行指令
+ curl -s $BASE/agent/commands/pending -H "authorization: Bearer $TOKEN"
+ 
+@@ -222,6 +232,49 @@ curl -s -X POST $BASE/agent/commands/<cmdId>/report \
+ 
+ 面板前端只需把请求指向本服务端的 `/api/panel/*` 并带上面板 API Key 即可打通全链路。
+ 
++## Windows 软件仓库与批量安装
++
++- `POST /api/panel/managed-artifacts` 创建 package/file 草稿；`PUT /api/panel/managed-artifacts/:id/content` 要求 `application/octet-stream` 与 `Content-Length`，边读边计算 SHA-256，完成后原子改名为 ready。软件包上限 1 GiB，普通文件上限 512 MiB。
++- `GET /api/panel/managed-artifacts` 读取仓库；`DELETE /api/panel/managed-artifacts/:id` 在存在 pending/sent/running 命令时返回冲突。终态删除会移除正文并隐藏元数据，但保留 deleted 元数据、命令 payload 和批次历史。
++- `POST /api/panel/package-deployments` 接收无重复的 artifactIds、在线 Windows clientIds 与 60–7200 秒超时，并创建“包数 × 客户端数”的 `install-package` 命令矩阵。
++- `GET /api/panel/deployment-batches/:id` 返回逐项命令、客户端、制品和状态；`GET /api/panel/deployment-batches?kind=package&limit=1` 用于页面刷新后恢复最近批次。
++- `GET /agent/managed-artifacts/:artifactId?commandId=:commandId` 使用设备 token，并同时校验客户端、命令、deployment item、活动命令状态和 ready artifact；公开 `/agent/downloads/windows/*` 仍只服务 Agent 自升级。
++- 增量初始化创建 `managed_artifacts`、`deployment_batches`、`deployment_items`，可在旧库及重复启动上执行。
++- 安装结果和服务日志分离：完整结构化结果只在命令记录中，服务日志仅保存 resultBytes 与 exitCode，不复制参数、包正文或结果正文。
++
++## Windows 文件下发与回滚
++
++- `POST /api/panel/file-deployments` 接收一个 ready file artifact、无重复的在线 Windows `clientIds`、绝对 `destinationPath`、`fail|replace` 冲突策略和 `createDirectories`，为每台目标创建独立 `deploy-file` 命令并写入复用的 deployment batch/item。
++- `deploy-file` payload 严格包含 `artifactId`、`fileName`、`sha256`、`sizeBytes`、`destinationPath`、`conflictPolicy` 和 `createDirectories`；文件上限为 512 MiB。通用命令接口拒绝绕过专用部署入口。
++- Agent 文件下载继续使用 `/agent/managed-artifacts/:artifactId?commandId=...`，同时绑定设备 token、客户端、活动命令、deployment item 和 ready artifact；不复用公开升级下载地址。
++- `POST /api/panel/clients/:clientId/file-deployments/:commandId/rollback` 只接受属于该客户端、状态为 success 且结构化结果声明有效备份的原 `deploy-file`，然后创建严格 `{ originalCommandId }` 的 `rollback-file-deploy`；同一原命令只允许一个活动或成功回滚。
++- 批次通过 `GET /api/panel/deployment-batches?kind=file` 与 `GET /api/panel/deployment-batches/:id` 恢复。文件正文与完整命令结果不复制到服务日志，日志只记录类型、ID、目标数量、字节数、状态和结果字节数。
++
++## Windows 本地用户管理
++
++- `manage-local-user` 只通过单机通用命令入口下发给 Windows 客户端；action 为 `list|enable|disable|delete|add-to-group|remove-from-group`。payload 严格固定为 `action`、`userName`、`groupName` 三个字段：`list` 两个名称均为 `null`，启停/删除的 `groupName` 为 `null`，组操作要求两个名称。
++- 用户名采用 1–20 字符 Windows 本机账户约束，组名采用 1–256 字符本地组约束；拒绝控制字符、域分隔符、歧义名称、多余或缺失字段。服务端拒绝 Linux 目标。
++- `list` 结果包含稳定排序的 `userName`、SID、启用状态、内置账户标记和本地组；写结果包含 action、changed、目标快照和结构化 error。服务端对结果再次执行严格结构校验，并统一限制为 512 KiB UTF-8。
++- 完整账户列表、SID 和组成员关系只保存在命令 result。创建日志只记录 action、客户端和命令 ID；结果日志只记录 action、changed、exitCode 与结果字节数。
++- 面板用户管理使用在线 Windows 单选目标，刷新后从命令历史恢复最近 list；启停和组操作显示确认摘要，删除要求再次输入完整账户名，写操作成功后自动下发新的 list。
++
++## Windows 注册表管理
++
++- `manage-registry` 只通过单机通用命令入口下发给 Windows 客户端，action 为 `list|get|set|delete`；hive 限定 `HKLM|HKU`，view 限定 `registry64|registry32`，禁止 HKCU。payload 始终严格包含 `action`、`hive`、`view`、`subKey`、`valueName`、`valueKind`、`value` 七个字段，不适用字段必须为 `null`。
++- `set` 支持 `string|expandString|dword|qword|multiString|binary`。DWORD 范围为 0..4294967295，QWORD 使用十进制字符串或安全整数并限制在有符号 64 位正数范围；binary 使用规范 Base64。任一值的 JSON 序列化上限为 64 KiB，完整命令结果仍限制为 512 KiB UTF-8。
++- 服务端拒绝控制字符、空/双反斜杠、`.`/`..` 段、错误值类型、多余字段和非 Windows 目标；Agent 再次独立验证。结果 action 必须与原命令一致，success/error 与终态保持一致。
++- 结果中的 `previous` 与 `current` 保留值类型和数据，供面板生成严格的逆向 `set` 或 `delete`；删除仅删除值，不递归删除键。完整值只保存在命令 payload/result，审计日志只记录 action、hive、view、路径 SHA-256 短摘要、changed 和结果字节数。
++- 面板提供在线 Windows 单选、hive/view/subKey、真实值列表、按类型编辑器、Base64 解码字节数、写/删确认、刷新恢复和“回滚上次操作”；长路径和长值只在局部容器滚动。
++
++## Windows 消息推送
++
++- 面板通过 `POST /api/panel/commands/batch` 提交严格的 `show-message` 请求：title 为 1–128 个 Unicode 标量，message 为 1–2000 个标量，severity 为 `info|warning|error`，timeoutSeconds 为 5–300。调用方不得提交 `expiresAt`。
++- 服务端为同一批次生成完全相同的 `expiresAt=创建时间+5分钟`，每台在线 Windows 客户端各创建一条命令；非 Windows、重复 ID、未知字段、控制字符和越界标量均拒绝。
++- 结果严格包含 sessionId、deliveryStatus、responseCode、timedOut、durationMs 和结构化 error，不包含用户名。完整 title/message 只保存在命令 payload，日志仅保存 severity、投递状态、session ID、响应代码与结果字节数。
++- `confirmed|canceled|timed-out` 表示 WTS 原生对话框的投递/响应结果；它只证明 WTSSendMessage 调用及其响应，不证明用户已经阅读或理解正文。expired、无活动会话和 Win32 错误返回结构化失败。
++- 面板提供 Unicode 标量计数、级别、超时、在线 Windows 多选、确认摘要、逐客户端轮询结果和刷新恢复，不把消息草稿写入 settings。
++- Agent 1.1.7 的部署配置默认启用 `allowMessagePush`；首次升级会在 Windows 数据目录中备份原配置并执行一次性迁移，之后由迁移标记保护管理员的后续显式修改。控制服务迁移到独立 Linux 时只需保留/重新注册设备连接，消息推送策略不会因服务端位置变化而恢复为关闭。
++
+ ## 客户端已安装但面板未显示
+ 
+ Agent 首次注册成功后会立即写入 `DATABASE_PATH` 指向的 SQLite `clients` 表，面板客户端列表再通过 `GET /api/panel/clients` 读取同一份数据。
+diff --git a/server/client/README.md b/server/client/README.md
+index d2aa321..3d2aafb 100644
+--- a/server/client/README.md
++++ b/server/client/README.md
+@@ -73,6 +73,27 @@ irm http://SERVER:PORT/uninstall.ps1 | iex
+ & ([scriptblock]::Create((irm http://SERVER:PORT/uninstall.ps1))) -Purge
+ ```
+ 
++## `run-shell` 契约
++
++```json
++{
++  "type": "run-shell",
++  "payload": {
++    "shell": "cmd",
++    "script": "ver",
++    "timeoutSeconds": 30
++  }
++}
++```
++
++- `shell` 只接受 `cmd` 或 `powershell`；脚本必须含非空白内容，长度为 1 至 32,768 个 Unicode 标量，且不得包含 NUL 或换行、制表符以外的控制字符。
++- `timeoutSeconds` 为 1 至 900 的整数。超时后 Agent 终止完整进程树。
++- CMD 写入受保护工作目录中的临时 `.cmd` 后由系统 `cmd.exe` 执行；PowerShell 写入临时 `.ps1` 后由内置 Windows PowerShell 以 `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File` 执行，不拼接额外 shell 参数。
++- stdout 与 stderr 使用 UTF-8 有界采集，完整结果严格保持在 512 KiB UTF-8 内。结果包含 `shell`、`stdout`、`stderr`、`exitCode`、`durationMs`、`timedOut`、`truncated` 与 `error`。
++- `allowCmdExecution` 与 `allowPowerShellExecution` 默认均为 `false`。旧配置缺少字段时仍保持关闭；覆盖升级保留管理员已有配置。
++- 命令继续使用 journal、ACK、串行执行、WebSocket/HTTP 回退和结果重试；Agent 重启时不会重放已经开始的 `run-shell`，而是返回稳定的结构化失败。
++- 面板入口位于“客户端管理 -> 批量操作 -> Windows -> 命令执行”，可受控多选在线 Windows 客户端，并通过 `/api/panel/commands/batch` 为每台客户端创建独立命令。
++
+ ## `run-program` 契约
+ 
+ ```json
+@@ -196,6 +217,126 @@ irm http://SERVER:PORT/uninstall.ps1 | iex
+ 
+ 新安装生成的 `%ProgramData%\Nacho\agent.json` 包含 `"allowLogCollection": false`。真实验收应先验证策略关闭错误，再备份配置并临时开启策略，只选择很短时间窗和少量非敏感事件；完成后恢复原配置并核对 SHA-256。
+ 
++## `install-package` 契约
++
++```json
++{
++  "type": "install-package",
++  "payload": {
++    "artifactId": "artifact-0123456789ab",
++    "fileName": "package.msi",
++    "sha256": "64-lowercase-hex",
++    "sizeBytes": 123,
++    "installerType": "msi",
++    "arguments": ["PROPERTY=value"],
++    "successExitCodes": [0, 3010],
++    "timeoutSeconds": 1800
++  }
++}
++```
++
++- `allowPackageInstall` 默认 `false`；管理员显式开启并重启 Agent 后才接受安装命令，覆盖升级保留已有值。
++- 软件包只从受设备 token、客户端、commandId 与 artifact 四重绑定的 `/agent/managed-artifacts/:artifactId?commandId=...` 下载；不复用公开 Agent 更新地址。
++- 下载目录为 `%ProgramData%\Nacho\packages\<commandId>\`。Agent 先核对声明大小与 SHA-256，再启动安装器；结束后清理包、intent 和临时文件。
++- MSI 固定调用系统 `msiexec.exe /i <package> /qn /norestart`，仅追加经过校验的 `PROPERTY=value` 数组；成功码固定包含 0 和 3010，3010 返回 `rebootRequired: true`，但 Agent 不主动重启。
++- EXE 直接执行下载文件，参数逐项加入 `ArgumentList`，不拼接 shell 命令；成功码固定包含 0，可由仓库元数据增加其他代码。
++- 安装超时为 60–7200 秒；超时终止完整进程树。结果包含 `phase`、`downloadedBytes`、`hashVerified`、`installerType`、`exitCode`、`rebootRequired`、`durationMs`、`timedOut` 与 `error`。
++- intent 会保存下载、校验、启动和进程身份。下载/校验阶段可在 Agent 重启后重新下载；已经启动的安装器只按 PID、路径和启动时间恢复等待，进程身份丢失时返回“状态未知”，绝不重复启动。
++- 面板入口位于“客户端管理 -> 批量操作 -> Windows -> 批量安装”，软件仓库上传、批次创建、逐客户端进度和刷新恢复均读取真实服务端状态。
++
++## `deploy-file` 与 `rollback-file-deploy` 契约
++
++```json
++{
++  "type": "deploy-file",
++  "payload": {
++    "artifactId": "artifact-0123456789ab",
++    "fileName": "config.json",
++    "sha256": "64-lowercase-hex",
++    "sizeBytes": 123,
++    "destinationPath": "C:\\Deploy\\config.json",
++    "conflictPolicy": "fail",
++    "createDirectories": false
++  }
++}
++```
++
++回滚 payload 严格为 `{ "originalCommandId": "cmd-0123456789ab" }`。未知、重复、缺失或类型错误字段均返回结构化失败。
++
++- `allowedDeployRoots` 默认为空，等价于文件下发关闭；目标必须是允许根目录内部的本地盘绝对文件路径。Agent 拒绝相对路径、UNC、设备路径、通配符、ADS、目录目标、盘符根和目录逃逸，并使用相对路径边界比较防止 `C:\Root2` 命中 `C:\Root`。
++- `fileDeployBackupRetentionDays` 默认为 7。下载先进入 `%ProgramData%\Nacho\file-deployments\<commandId>\`，校验声明大小与 SHA-256 后再写入目标。
++- `fail` 在目标已存在时稳定失败；`replace` 先把旧文件移动到受保护备份，再原子移动已校验文件。父目录仅在 `createDirectories: true` 时创建。
++- intent 保存命令、目标、暂存、备份、前后哈希和阶段。Agent 重启后会重新开始尚未应用的下载、确认已经应用的目标哈希，或恢复备份并返回稳定失败，不重复执行破坏性步骤。
++- 回滚要求备份仍存在且当前目标 SHA-256 仍等于该次下发结果；文件被后续人工修改时拒绝覆盖。成功回滚返回恢复后的 SHA-256，并使备份失效；中断的回滚按 intent 完成或恢复当前文件。
++- `deploy-file` 结果包含下载字节数、哈希状态、目标、冲突策略、替换/备份状态、前后 SHA-256、耗时和净化错误；`rollback-file-deploy` 返回原命令 ID、目标、备份状态、恢复 SHA-256 和错误。服务日志不记录文件正文。
++- 面板入口位于“客户端管理 -> 批量操作 -> Windows -> 文件下发”，提供真实文件选择/拖放、上传进度、在线目标多选、目标路径、目录开关、冲突确认、批次刷新恢复、逐客户端结果及防重复回滚。
++
++## `manage-local-user` 契约
++
++```json
++{
++  "type": "manage-local-user",
++  "payload": {
++    "action": "list",
++    "userName": null,
++    "groupName": null
++  }
++}
++```
++
++- action 仅为 `list`、`enable`、`disable`、`delete`、`add-to-group`、`remove-from-group`。三个 payload 字段始终存在；不适用字段必须为 `null`，未知、重复、缺失、超长、控制字符、域名或歧义名称均失败。
++- Agent 使用 NetAPI/Win32 API 枚举和修改本地 SAM 账户，不启动 PowerShell、cmd 或其他 shell。`list` 不枚举域账户，按账户名稳定排序，并返回 SID、启用状态、内置标记和本地组。
++- `allowLocalUserManagement` 默认 `false`，`allowedLocalUsers` 与 `allowedLocalGroups` 默认空。写操作必须同时命中总开关与大小写不敏感的精确允许项；读取列表不旁路到远程域。
++- RID 500、501、503、504 的内置/系统账户按 SID 保护，不依赖本地化显示名。启用、禁用、加入组、移出组均幂等，重复状态返回 `changed:false`；删除不存在账户同样稳定成功且 `changed:false`。
++- 已进入 running 的删除命令在 Agent 重启后返回 `AGENT_RESTARTED`，不再执行；completed 结果只重试上报。结果严格为 list 的 `accounts` 或写操作的 `target`，并包含 action、changed 和结构化 error，完整 JSON 限制在 512 KiB UTF-8 内。
++- 新安装配置会写入三个策略字段；覆盖升级只更新连接信息并保留现有 `agent.json`。面板不提供创建账户、设置密码或远程改密入口。
++
++## `manage-registry` 契约
++
++```json
++{
++  "type": "manage-registry",
++  "payload": {
++    "action": "set",
++    "hive": "HKLM",
++    "view": "registry64",
++    "subKey": "SOFTWARE\\Vendor\\Product",
++    "valueName": "Enabled",
++    "valueKind": "dword",
++    "value": 1
++  }
++}
++```
++
++- action 仅为 `list|get|set|delete`，七个字段始终存在；list 的三个值字段均为 `null`，get/delete 的 `valueKind` 与 `value` 为 `null`。仅支持 HKLM/HKU 与 Registry32/Registry64，不读取 LocalSystem 的 HKCU。
++- `allowedRegistryPaths` 默认空，等价于注册表功能关闭；条目格式为 `HKLM\...` 或 `HKU\...`。Agent 规范化路径并按完整段做大小写不敏感前缀匹配，拒绝空根、双分隔、父目录段、歧义路径及相邻同名前缀。
++- Agent 直接使用 `Microsoft.Win32.RegistryKey`，不调用 PowerShell、cmd 或 reg.exe。set 可创建允许前缀内的键并在写前读取旧值；delete 只删除值。相同值 set 和删除不存在值返回 `changed:false`。
++- 类型映射为 String、ExpandString、DWord、QWord、MultiString、Binary。字符串拒绝控制字符，DWORD/QWORD 检查范围，binary 检查规范 Base64；执行前后都检查 64 KiB 单值上限，完整结果检查 512 KiB。
++- list/get 返回真实值与类型；set/delete 返回 `previous`、`current`、changed 和结构化 error。running 写操作遇到 Agent 重启时返回稳定失败并停止重放；completed 结果只重试上报。
++- 新安装配置生成 `allowedRegistryPaths: []`；旧配置缺少字段时保持空列表，覆盖升级保留管理员原配置。面板回滚通过普通严格 set/delete 命令完成，不存在专用旁路接口。
++
++## `show-message` 契约
++
++```json
++{
++  "type": "show-message",
++  "payload": {
++    "title": "Test notification",
++    "message": "Synthetic fixture message",
++    "severity": "warning",
++    "timeoutSeconds": 60,
++    "expiresAt": "由服务端生成的 UTC ISO-8601"
++  }
++}
++```
++
++- 从 Agent 1.1.7 起，新安装配置默认写入 `allowMessagePush: true`。1.1.7 首次启动会对既有数据目录执行一次迁移：备份原 `agent.json`、把该字段设为 `true`，并写入 `message-push-policy-v1.migrated.json`；迁移标记存在后不再强制覆盖，管理员后续仍可显式关闭。安装脚本在新装和覆盖部署时都明确启用该字段，迁移服务端并保留 `%ProgramData%\Nacho` 时策略继续有效。
++- `ActiveUserSessionResolver` 只考虑 Active 会话，优先当前活动控制台；控制台缺失时按 session ID 稳定选择活动 RDP 会话。结果和日志不包含用户名。
++- Agent 使用 `WTSSendMessageW` 与 OK/Cancel 原生对话框，根据 severity 映射信息、警告和错误图标。响应映射为 `confirmed`、`canceled` 或 `timed-out`；无会话、策略关闭、过期与 Win32 错误为结构化失败。
++- 投递前写入不含正文的 message intent，投递后标记 delivered。已进入投递的命令在 Agent 重启或重复调用时返回稳定失败，不再弹出同一消息。
++- result 仅包含 `sessionId`、`deliveryStatus`、`responseCode`、`timedOut`、`durationMs` 和 `error`。成功只表示 WTS 投递/响应，不代表用户阅读、理解或接受消息内容。
++- 自动迁移的原配置备份为 `%ProgramData%\Nacho\agent.json.before-message-push-enable.bak`；它继承受保护数据目录的 ACL，可用于精确回滚。配置正文、设备状态和 token 不进入 Agent 日志或面板结果。
++
+ ## 当前边界
+ 
+-本阶段不包含 Linux、ARM64、MSI、自动升级、用户交互会话、后台分离进程、远程机器重启、关机、休眠、注销、任意文件读取、Security/PowerShell 操作日志、实时订阅、日志删除或导出包；日志采集只覆盖显式开启本机策略的 Windows 目标及三个固定来源。
++当前不包含 Linux/ARM64 包安装、包依赖编排、安装后的自动系统重启、用户交互式安装器、任意脚本安装器、远程机器关机/休眠/注销、任意文件读取、Security/PowerShell 操作日志、实时订阅、日志删除或导出包。
+diff --git a/server/client/agent.example.json b/server/client/agent.example.json
+index 4e5caa1..b7bcf6b 100644
+--- a/server/client/agent.example.json
++++ b/server/client/agent.example.json
+@@ -9,6 +9,16 @@
+   "maxExecutionSeconds": 900,
+   "maxOutputBytes": 1048576,
+   "outputCodePage": 0,
++  "allowCmdExecution": false,
++  "allowPowerShellExecution": false,
++  "allowPackageInstall": false,
++  "allowLocalUserManagement": false,
++  "allowedLocalUsers": [],
++  "allowedLocalGroups": [],
++  "allowedRegistryPaths": [],
++  "allowMessagePush": true,
++  "allowedDeployRoots": [],
++  "fileDeployBackupRetentionDays": 7,
+   "allowSystemRestart": false,
+   "allowLogCollection": false,
+   "allowedServices": [],
+diff --git a/server/client/src/Nacho.Agent/AgentOptions.cs b/server/client/src/Nacho.Agent/AgentOptions.cs
+index 3b246a2..f54b5c8 100644
+--- a/server/client/src/Nacho.Agent/AgentOptions.cs
++++ b/server/client/src/Nacho.Agent/AgentOptions.cs
+@@ -13,6 +13,16 @@ public sealed class AgentOptions
+     public int MaxOutputBytes { get; init; } = 1_048_576;
+     public int OutputCodePage { get; init; }
+     public string[] AllowedPrograms { get; init; } = [];
++    public bool AllowCmdExecution { get; init; }
++    public bool AllowPowerShellExecution { get; init; }
++    public bool AllowPackageInstall { get; init; }
++    public bool AllowLocalUserManagement { get; init; }
++    public string[] AllowedLocalUsers { get; init; } = [];
++    public string[] AllowedLocalGroups { get; init; } = [];
++    public string[] AllowedRegistryPaths { get; init; } = [];
++    public bool AllowMessagePush { get; init; } = true;
++    public string[] AllowedDeployRoots { get; init; } = [];
++    public int FileDeployBackupRetentionDays { get; init; } = 7;
+     public string[] AllowedServices { get; init; } = [];
+     public string[] AllowedProcessPaths { get; init; } = [];
+     public bool AllowSystemRestart { get; init; }
+@@ -23,15 +33,25 @@ public sealed class AgentOptions
+ public sealed class AgentPaths(string dataDirectory)
+ {
+     public string DataDirectory { get; } = Path.GetFullPath(dataDirectory);
++    public string ConfigFile => Path.Combine(DataDirectory, "agent.json");
+     public string StateFile => Path.Combine(DataDirectory, "state.dat");
+     public string EnrollmentKeyFile => Path.Combine(DataDirectory, "enrollment.key");
+     public string QueueDirectory => Path.Combine(DataDirectory, "queue");
++    public string WorkDirectory => Path.Combine(DataDirectory, "work");
++    public string PackagesDirectory => Path.Combine(DataDirectory, "packages");
++    public string FileDeploymentsDirectory => Path.Combine(DataDirectory, "file-deployments");
++    public string MessageIntentsDirectory => Path.Combine(DataDirectory, "message-intents");
++    public string MessagePushPolicyMigrationFile => Path.Combine(DataDirectory, "message-push-policy-v1.migrated.json");
++    public string MessagePushPolicyBackupFile => Path.Combine(DataDirectory, "agent.json.before-message-push-enable.bak");
+     public string RestartIntentFile => Path.Combine(DataDirectory, "restart-intent.json");
+     public string AgentDiagnosticLogFile => Path.Combine(DataDirectory, "agent-diagnostics.jsonl");
+     public string UpdatesDirectory => Path.Combine(DataDirectory, "updates");
+     public string UpdateIntentFile => Path.Combine(DataDirectory, "update-intent.json");
+     public string UpdateHealthFile => Path.Combine(DataDirectory, "update-health.json");
+     public string LastKnownGoodFile => Path.Combine(DataDirectory, "last-known-good.exe");
++    public string PackageInstallIntentFile(string commandId) => Path.Combine(PackagesDirectory, commandId, "intent.json");
++    public string FileDeployIntentFile(string commandId) => Path.Combine(FileDeploymentsDirectory, commandId, "intent.json");
++    public string MessageIntentFile(string commandId) => Path.Combine(MessageIntentsDirectory, commandId + ".json");
+ 
+     public static string ResolveDataDirectory(string[] args)
+     {
+diff --git a/server/client/src/Nacho.Agent/Nacho.Agent.csproj b/server/client/src/Nacho.Agent/Nacho.Agent.csproj
+index b1e9287..b8fd14d 100644
+--- a/server/client/src/Nacho.Agent/Nacho.Agent.csproj
++++ b/server/client/src/Nacho.Agent/Nacho.Agent.csproj
+@@ -5,7 +5,7 @@
+     <ImplicitUsings>enable</ImplicitUsings>
+     <InvariantGlobalization>true</InvariantGlobalization>
+     <AssemblyName>nacho-agent</AssemblyName>
+-    <Version>1.1.1</Version>
++    <Version>1.1.7</Version>
+   </PropertyGroup>
+   <ItemGroup>
+     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.1" />
+diff --git a/server/client/src/Nacho.Agent/Program.cs b/server/client/src/Nacho.Agent/Program.cs
+index 2441405..6c290f4 100644
+--- a/server/client/src/Nacho.Agent/Program.cs
++++ b/server/client/src/Nacho.Agent/Program.cs
+@@ -12,6 +12,8 @@ if (args.Contains("--apply-update", StringComparer.Ordinal))
+     return;
+ }
+ 
++AgentPolicyMigrator.EnsureMessagePushEnabled(new AgentPaths(dataDirectory));
++
+ var builder = Host.CreateApplicationBuilder(args);
+ builder.Configuration.Sources.Clear();
+ builder.Configuration
+@@ -26,6 +28,11 @@ builder.Services.AddSingleton<StateStore>();
+ builder.Services.AddSingleton<CommandJournal>();
+ builder.Services.AddSingleton<WindowsMetrics>();
+ builder.Services.AddSingleton<ProgramExecutor>();
++builder.Services.AddSingleton<ShellCommandExecutor>();
++builder.Services.AddSingleton<IManagedArtifactDownloader>(sp => sp.GetRequiredService<AgentApiClient>());
++builder.Services.AddSingleton<IPackageInstallerRunner, PackageInstallerRunner>();
++    builder.Services.AddSingleton<PackageInstallManager>();
++    builder.Services.AddSingleton<FileDeploymentManager>();
+ builder.Services.AddSingleton<IWindowsServiceController, WindowsServiceController>();
+ builder.Services.AddSingleton<WindowsServiceManager>();
+ builder.Services.AddSingleton<IWindowsProcessController, WindowsProcessController>();
+@@ -35,6 +42,15 @@ builder.Services.AddSingleton<IWindowsRestartController, WindowsRestartControlle
+ builder.Services.AddSingleton<SystemRestartManager>();
+ builder.Services.AddSingleton<ILogCollectionSourceReader, WindowsLogCollectionSourceReader>();
+ builder.Services.AddSingleton<LogCollectionManager>();
++builder.Services.AddSingleton<ILocalUserPlatform, LocalUserPlatform>();
++builder.Services.AddSingleton<LocalUserManager>();
++builder.Services.AddSingleton<IRegistryPlatform, WindowsRegistryPlatform>();
++builder.Services.AddSingleton<RegistryManager>();
++builder.Services.AddSingleton<IUserSessionPlatform, WindowsUserSessionPlatform>();
++builder.Services.AddSingleton<ActiveUserSessionResolver>();
++builder.Services.AddSingleton<IWindowsMessageSender, WindowsMessageSender>();
++builder.Services.AddSingleton<IMessageClock, SystemMessageClock>();
++builder.Services.AddSingleton<MessagePushManager>();
+ builder.Services.AddSingleton<AgentApiClient>();
+ builder.Services.AddSingleton<CommandProcessor>();
+ builder.Services.AddSingleton<AgentUpdater>();
+diff --git a/server/deploy/windows/install.ps1 b/server/deploy/windows/install.ps1
+index 498ce61..1febd90 100644
+--- a/server/deploy/windows/install.ps1
++++ b/server/deploy/windows/install.ps1
+@@ -58,6 +58,11 @@ try {
+     if (Test-Path $configPath) {
+       $config = Get-Content -Raw -Encoding UTF8 $configPath | ConvertFrom-Json
+       $config.serverUrl = $ServerUrl
++      if ($config.PSObject.Properties.Name -contains 'allowMessagePush') {
++        $config.allowMessagePush = $true
++      } else {
++        $config | Add-Member -NotePropertyName allowMessagePush -NotePropertyValue $true
++      }
+     } else {
+       $config = [ordered]@{
+         serverUrl = $ServerUrl
+@@ -70,6 +75,16 @@ try {
+         maxExecutionSeconds = 900
+         maxOutputBytes = 1048576
+         outputCodePage = 0
++        allowCmdExecution = $false
++        allowPowerShellExecution = $false
++        allowPackageInstall = $false
++        allowLocalUserManagement = $false
++        allowedLocalUsers = @()
++        allowedLocalGroups = @()
++        allowedRegistryPaths = @()
++        allowMessagePush = $true
++        allowedDeployRoots = @()
++        fileDeployBackupRetentionDays = 7
+         allowSystemRestart = $false
+         allowLogCollection = $false
+         allowedServices = @()
+diff --git a/server/client/src/Nacho.Agent/AgentPolicyMigrator.cs b/server/client/src/Nacho.Agent/AgentPolicyMigrator.cs
+new file mode 100644
+index 0000000..77815de
+--- /dev/null
++++ b/server/client/src/Nacho.Agent/AgentPolicyMigrator.cs
+@@ -0,0 +1,69 @@
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++using System.Text.Json.Nodes;
++
++namespace Nacho.Agent;
++
++public sealed record MessagePushPolicyMigrationResult(bool Applied, bool Changed, bool BeforePolicy, bool AfterPolicy);
++
++public static class AgentPolicyMigrator
++{
++    public static MessagePushPolicyMigrationResult EnsureMessagePushEnabled(AgentPaths paths)
++    {
++        if (File.Exists(paths.MessagePushPolicyMigrationFile))
++            return new(false, false, ReadPolicy(paths.ConfigFile), ReadPolicy(paths.ConfigFile));
++
++        var originalBytes = File.ReadAllBytes(paths.ConfigFile);
++        var root = JsonNode.Parse(originalBytes)?.AsObject()
++            ?? throw new InvalidDataException("Agent configuration must contain a JSON object.");
++        var before = root["allowMessagePush"]?.GetValue<bool>() ?? false;
++        if (!before && !File.Exists(paths.MessagePushPolicyBackupFile))
++            File.WriteAllBytes(paths.MessagePushPolicyBackupFile, originalBytes);
++
++        var changed = !before;
++        if (changed)
++        {
++            root["allowMessagePush"] = true;
++            WriteAtomic(paths.ConfigFile, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
++            if (!ReadPolicy(paths.ConfigFile))
++                throw new InvalidDataException("Message push policy migration did not persist the enabled value.");
++        }
++
++        var marker = new
++        {
++            version = 1,
++            changed,
++            beforePolicy = before,
++            afterPolicy = true,
++            beforeSha256 = Hash(originalBytes),
++            afterSha256 = Hash(File.ReadAllBytes(paths.ConfigFile)),
++            appliedAt = DateTimeOffset.UtcNow,
++        };
++        WriteAtomic(paths.MessagePushPolicyMigrationFile, JsonSerializer.Serialize(marker));
++        return new(true, changed, before, true);
++    }
++
++    private static bool ReadPolicy(string configFile)
++    {
++        var root = JsonNode.Parse(File.ReadAllBytes(configFile))?.AsObject()
++            ?? throw new InvalidDataException("Agent configuration must contain a JSON object.");
++        return root["allowMessagePush"]?.GetValue<bool>() ?? false;
++    }
++
++    private static string Hash(byte[] value) => Convert.ToHexStringLower(SHA256.HashData(value));
++
++    private static void WriteAtomic(string path, string content)
++    {
++        var temporary = path + ".tmp";
++        try
++        {
++            File.WriteAllText(temporary, content, new UTF8Encoding(false));
++            File.Move(temporary, path, true);
++        }
++        finally
++        {
++            try { File.Delete(temporary); } catch { }
++        }
++    }
++}
+diff --git a/server/client/tests/Nacho.Agent.Tests/AgentPolicyMigratorTests.cs b/server/client/tests/Nacho.Agent.Tests/AgentPolicyMigratorTests.cs
+new file mode 100644
+index 0000000..31ce805
+--- /dev/null
++++ b/server/client/tests/Nacho.Agent.Tests/AgentPolicyMigratorTests.cs
+@@ -0,0 +1,94 @@
++using System.Text.Json;
++
++namespace Nacho.Agent.Tests;
++
++public sealed class AgentPolicyMigratorTests : IDisposable
++{
++    private readonly string _dir = Path.Combine(Path.GetTempPath(), "nacho-policy-migration-tests", Guid.NewGuid().ToString("N"));
++
++    [Fact]
++    public void Enables_existing_closed_policy_once_and_preserves_other_fields()
++    {
++        var paths = Paths("""
++            {
++              "serverUrl": "https://control.example.test",
++              "name": "fixture-agent",
++              "allowMessagePush": false,
++              "customField": { "preserved": true }
++            }
++            """);
++
++        var first = AgentPolicyMigrator.EnsureMessagePushEnabled(paths);
++
++        Assert.True(first.Applied);
++        Assert.True(first.Changed);
++        Assert.False(first.BeforePolicy);
++        Assert.True(first.AfterPolicy);
++        Assert.True(File.Exists(paths.MessagePushPolicyBackupFile));
++        Assert.True(File.Exists(paths.MessagePushPolicyMigrationFile));
++        using var current = JsonDocument.Parse(File.ReadAllText(paths.ConfigFile));
++        Assert.True(current.RootElement.GetProperty("allowMessagePush").GetBoolean());
++        Assert.Equal("fixture-agent", current.RootElement.GetProperty("name").GetString());
++        Assert.True(current.RootElement.GetProperty("customField").GetProperty("preserved").GetBoolean());
++        using var backup = JsonDocument.Parse(File.ReadAllText(paths.MessagePushPolicyBackupFile));
++        Assert.False(backup.RootElement.GetProperty("allowMessagePush").GetBoolean());
++
++        var second = AgentPolicyMigrator.EnsureMessagePushEnabled(paths);
++        Assert.False(second.Applied);
++        Assert.False(second.Changed);
++        Assert.True(second.BeforePolicy);
++    }
++
++    [Fact]
++    public void Existing_enabled_policy_gets_marker_without_unnecessary_backup()
++    {
++        var paths = Paths("""{"serverUrl":"https://control.example.test","allowMessagePush":true}""");
++
++        var result = AgentPolicyMigrator.EnsureMessagePushEnabled(paths);
++
++        Assert.True(result.Applied);
++        Assert.False(result.Changed);
++        Assert.True(result.BeforePolicy);
++        Assert.True(File.Exists(paths.MessagePushPolicyMigrationFile));
++        Assert.False(File.Exists(paths.MessagePushPolicyBackupFile));
++    }
++
++    [Fact]
++    public void Migration_marker_preserves_later_administrator_override()
++    {
++        var paths = Paths("""{"serverUrl":"https://control.example.test","allowMessagePush":false}""");
++        AgentPolicyMigrator.EnsureMessagePushEnabled(paths);
++        File.WriteAllText(paths.ConfigFile, """{"serverUrl":"https://control.example.test","allowMessagePush":false}""");
++
++        var result = AgentPolicyMigrator.EnsureMessagePushEnabled(paths);
++
++        Assert.False(result.Applied);
++        Assert.False(result.Changed);
++        Assert.False(result.BeforePolicy);
++        using var current = JsonDocument.Parse(File.ReadAllText(paths.ConfigFile));
++        Assert.False(current.RootElement.GetProperty("allowMessagePush").GetBoolean());
++    }
++
++    [Fact]
++    public void Invalid_configuration_does_not_create_migration_artifacts()
++    {
++        var paths = Paths("not-json");
++
++        Assert.ThrowsAny<JsonException>(() => AgentPolicyMigrator.EnsureMessagePushEnabled(paths));
++        Assert.False(File.Exists(paths.MessagePushPolicyBackupFile));
++        Assert.False(File.Exists(paths.MessagePushPolicyMigrationFile));
++    }
++
++    private AgentPaths Paths(string config)
++    {
++        Directory.CreateDirectory(_dir);
++        var paths = new AgentPaths(_dir);
++        File.WriteAllText(paths.ConfigFile, config);
++        return paths;
++    }
++
++    public void Dispose()
++    {
++        if (Directory.Exists(_dir)) Directory.Delete(_dir, true);
++    }
++}

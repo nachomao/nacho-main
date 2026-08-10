@@ -1,0 +1,56 @@
+{
+  "verifiedAt": "2026-08-07T06:40:00.089Z",
+  "feature": "show-message-production-policy",
+  "client": {
+    "id": "cl-2e2a5b138515",
+    "name": "猫羽雫的计算姬",
+    "version": "1.1.7",
+    "status": "online"
+  },
+  "release": {
+    "version": "1.1.7",
+    "fileName": "nacho-agent-1.1.7-win-x64.exe",
+    "sizeBytes": 76332641,
+    "sha256": "1fdc19d16711e75deccccd1bb6e97602091c6bcf434b257dc81ac07df9a4d3e4",
+    "deploymentBackup": "/opt/control-server-backups/stage6-policy-20260807T063545Z"
+  },
+  "updateCommand": {
+    "id": "cmd-da8108ab6183",
+    "status": "success",
+    "result": {
+      "fromVersion": "1.1.6",
+      "targetVersion": "1.1.7",
+      "phase": "healthy",
+      "downloadedBytes": 76332641,
+      "durationMs": 10874,
+      "rolledBack": false,
+      "rollbackReason": null,
+      "error": null
+    }
+  },
+  "messageCommand": {
+    "id": "cmd-bc19db4f49e5",
+    "status": "success",
+    "result": {
+      "sessionId": 1,
+      "deliveryStatus": "confirmed",
+      "responseCode": 1,
+      "timedOut": false,
+      "durationMs": 3446,
+      "error": null
+    }
+  },
+  "auditRedaction": true,
+  "server": {
+    "service": "active",
+    "healthHttp": 200,
+    "healthOk": true
+  },
+  "migration": {
+    "configField": "allowMessagePush",
+    "deployedValue": true,
+    "marker": "%ProgramData%/Nacho/message-push-policy-v1.migrated.json",
+    "backup": "%ProgramData%/Nacho/agent.json.before-message-push-enable.bak",
+    "preservesLaterAdministratorOverride": true
+  }
+}

@@ -1,0 +1,73 @@
+{
+    "stage":  7,
+    "feature":  "open-url",
+    "date":  "2026-08-07",
+    "serverDeploymentBackup":  "/opt/control-server-backups/stage7-20260807T071135Z-1712",
+    "canary":  {
+                   "version":  "1.1.9",
+                   "sizeBytes":  76353121,
+                   "sha256":  "5ce1ab78c8a42e671c9d50f32e06da9c44449f5ceffa4ba5a468aa9a58cb9b1b",
+                   "purpose":  "isolated effective-policy fixture only",
+                   "updateCommandId":  "cmd-b42ac8d2d23b",
+                   "updateStatus":  "success"
+               },
+    "release":  {
+                    "version":  "1.1.10",
+                    "fileName":  "nacho-agent-1.1.10-win-x64.exe",
+                    "sizeBytes":  76353123,
+                    "sha256":  "c2f668946b98119c453cfcc6a1b02a486cd9ee2c0a2f5d9aa0cdb5be09f31746",
+                    "updateCommandId":  "cmd-1b980002fecb",
+                    "updateStatus":  "success",
+                    "phase":  "healthy",
+                    "rolledBack":  false
+                },
+    "openUrl":  {
+                    "commandId":  "cmd-551d41020404",
+                    "status":  "success",
+                    "expiresAt":  "2026-08-07T07:29:36.131Z",
+                    "sessionId":  1,
+                    "processStarted":  true,
+                    "pid":  30440,
+                    "durationMs":  40,
+                    "expired":  false,
+                    "error":  null
+                },
+    "requests":  [
+                     {
+                         "method":  "GET",
+                         "path":  "/stage7?query-secret=redacted"
+                     },
+                     {
+                         "method":  "GET",
+                         "path":  "/favicon.ico"
+                     },
+                     {
+                         "method":  "GET",
+                         "path":  "/favicon.ico"
+                     }
+                 ],
+    "navigationCount":  1,
+    "logRedaction":  {
+                         "schemeHostPresent":  true,
+                         "processSummaryPresent":  true,
+                         "queryAbsent":  true,
+                         "fragmentAbsent":  true
+                     },
+    "restartNoReplay":  {
+                            "afterFinalUpdateNavigationCount":  1,
+                            "verified":  true
+                        },
+    "finalPolicy":  {
+                        "commandId":  "cmd-bf9fe9007a88",
+                        "status":  "failed",
+                        "processStarted":  false,
+                        "errorCode":  "POLICY_DISABLED"
+                    },
+    "browser":  {
+                    "defaultBrowser":  "Microsoft Edge",
+                    "fixtureTitleObserved":  true,
+                    "fixtureTabClosed":  true,
+                    "previousWindowRestored":  true
+                },
+    "finalServerDeploymentBackup":  "/opt/control-server-backups/stage7-final-20260807T074116Z-3246"
+}

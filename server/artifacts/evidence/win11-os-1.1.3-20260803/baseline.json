@@ -1,0 +1,18 @@
+{
+    "capturedAt":  "2026-08-03T02:31:11.9101164Z",
+    "os":  {
+               "Caption":  "Microsoft Windows 11 专业版",
+               "Version":  "10.0.26200",
+               "BuildNumber":  "26200"
+           },
+    "agentService":  {
+                         "Name":  "NachoAgent",
+                         "State":  "Running",
+                         "StartMode":  "Auto",
+                         "StartName":  "LocalSystem",
+                         "PathName":  "C:\\Program Files\\Nacho\\Agent\\nacho-agent.exe"
+                     },
+    "agentVersion":  "1.1.1",
+    "agentSize":  76131937,
+    "agentSha256":  "b3f05f83812900ad31149d924048c12dff707e8e2e2f892d93154cb550a9de8b"
+}

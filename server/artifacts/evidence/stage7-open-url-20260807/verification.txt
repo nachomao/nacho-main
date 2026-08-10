@@ -1,0 +1,28 @@
+﻿Stage 7 open-url verification — 2026-08-07
+
+Automated checks (all exit 0):
+- pnpm exec tsx --test tests/*.test.ts => 47 passed, 0 failed.
+- pnpm exec tsc --noEmit => passed.
+- pnpm build => passed; existing Next NFT trace warning only.
+- cd server && npm test => 27 passed, 0 failed on Windows.
+- WSL Debian isolated /tmp npm ci/npm test/npm run build => 27 passed, build passed, temporary directory removed.
+- dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj => 200 passed, 0 failed.
+- dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release => 0 warnings, 0 errors.
+
+Deployment and release:
+- Server backups: /opt/control-server-backups/stage7-20260807T071135Z-1712 and /opt/control-server-backups/stage7-final-20260807T074116Z-3246.
+- control-server.service: active; /health: HTTP 200.
+- Final Agent: 1.1.10, 76,353,123 bytes, SHA-256 c2f668946b98119c453cfcc6a1b02a486cd9ee2c0a2f5d9aa0cdb5be09f31746.
+- Final update cmd-1b980002fecb: success, phase healthy, rolledBack false.
+
+Real chain:
+- open-url cmd-551d41020404: success; Session 1; processStarted true; PID 30440; durationMs 40; expired false.
+- Fixture navigation /stage7?query-secret=redacted occurred exactly once; favicon occurred once; fragment was not transmitted.
+- Edge title confirmed Nacho Stage 7 Fixture; fixture tab closed after verification and the prior Edge window was restored.
+- After Agent restart/update, stage7 navigation count remained 1, proving no replay.
+- Service audit contained scheme=http;host=127.0.0.1 and processStarted=true, with query/fragment absent.
+- Final-policy probe cmd-bf9fe9007a88: failed with POLICY_DISABLED and processStarted false, proving the installed final default is closed.
+
+Browser:
+- 1280x720: no page-level horizontal overflow; 0 console warning/error.
+- 390x844: no page-level horizontal overflow; 0 console warning/error.

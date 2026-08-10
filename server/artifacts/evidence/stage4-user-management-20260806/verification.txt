@@ -1,0 +1,36 @@
+Stage 4 verification — 2026-08-06
+
+Panel
+- pnpm exec tsx --test tests/*.test.ts => exit 0, 37/37 passed
+- pnpm exec tsc --noEmit => exit 0
+- NACHO_NEXT_DIST_DIR=.next-stage4-build pnpm build => exit 0; Next.js production build passed; known NFT trace warning only
+- Browser /clients -> single-client management -> user management: real list rendered; built-in actions disabled
+- Browser 1280x720: document 1280/1280, no console warning/error
+- Browser 390x844: document 390/390, no console warning/error
+
+Server
+- Windows npm test => exit 0, 21/21 passed
+- Windows npm run build => exit 0
+- WSL Debian isolated npm ci/test/build => exit 0, 21/21 passed, build passed
+- Deployed source backups: /opt/control-server-backups/stage4-20260806T032055Z-856 and /opt/control-server-backups/stage4-final-20260806T033220Z-1681
+- systemctl is-active control-server.service => active
+- curl http://localhost:8443/health => HTTP 200
+
+Agent
+- dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj => exit 0, 164/164 passed
+- dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release => exit 0, 0 warning, 0 error
+- publish.ps1 => version 1.1.4, 76271201 bytes
+- SHA-256 => 1950ae78ba787e4668b57b1f4273068d0c45477cf66ceb61917a694f52889f56
+- update-agent cmd-e8ebafeeb258 => success
+- installed Agent => Running, version 1.1.4.0, matching SHA-256
+
+Real chain
+- list cmd-b78941793e98 => success, fixture present/enabled/non-built-in
+- disable cmd-da0b2f13bf63 => success, changed=true, target disabled
+- enable cmd-2e926af12960 => success, changed=true, target enabled
+- add-to-group cmd-72e4850bdb5b => success, changed=true, membership present
+- remove-from-group cmd-7d2c11569660 => success, changed=true, membership absent
+- delete cmd-ae570bd48d3f => success, changed=true, target absent
+- list cmd-bf1744eafd70 => success, fixture absent
+- Audit log check => fixture user/group and SID/list bodies absent
+- Restoration => fixture user absent, fixture group absent, Agent policy/config restored, NachoAgent Running

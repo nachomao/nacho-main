@@ -1,0 +1,52 @@
+{
+  "verifiedAt": "2026-08-07T06:06:40.886Z",
+  "url": "http://127.0.0.1:3000/clients",
+  "route": "客户端管理 > 批量操作 > Windows > 消息推送",
+  "desktop": {
+    "viewport": {
+      "height": 720,
+      "width": 1280
+    },
+    "document": {
+      "clientHeight": 720,
+      "clientWidth": 1280,
+      "scrollHeight": 720,
+      "scrollWidth": 1280
+    },
+    "body": {
+      "clientWidth": 1280,
+      "scrollWidth": 1280
+    },
+    "pageHorizontalOverflow": false,
+    "consoleWarningsOrErrors": 0,
+    "confirmedResultVisible": true,
+    "screenshots": [
+      "C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/stage6-message-push-20260807/browser-desktop-1280x720.png",
+      "C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/stage6-message-push-20260807/browser-desktop-result-1280x720.png"
+    ]
+  },
+  "mobile": {
+    "viewport": {
+      "height": 844,
+      "width": 390
+    },
+    "document": {
+      "clientHeight": 844,
+      "clientWidth": 390,
+      "scrollHeight": 844,
+      "scrollWidth": 390
+    },
+    "body": {
+      "clientWidth": 390,
+      "scrollWidth": 390
+    },
+    "pageHorizontalOverflow": false,
+    "consoleWarningsOrErrors": 0,
+    "confirmedResultVisible": true,
+    "screenshots": [
+      "C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/stage6-message-push-20260807/browser-mobile-390x844.png",
+      "C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/stage6-message-push-20260807/browser-mobile-result-390x844.png"
+    ]
+  },
+  "connection": "fixture Panel API connection succeeded and one online Windows client rendered"
+}

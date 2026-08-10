@@ -51,6 +51,7 @@ type ServerDataContextValue = {
   error: string | null
   refresh: () => Promise<void>
   apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
+  uploadRequest: <T>(path: string, file: File, onProgress: (percent: number) => void) => Promise<T>
 }
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
@@ -107,6 +108,39 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     [connection],
   )
 
+  const uploadRequest = useCallback(
+    <T,>(path: string, file: File, onProgress: (percent: number) => void): Promise<T> => {
+      if (!connection) return Promise.reject(new Error("尚未配置服务端连接"))
+      return new Promise<T>((resolve, reject) => {
+        const request = new XMLHttpRequest()
+        request.open("PUT", `${connection.baseUrl}/api/panel${path}`)
+        request.timeout = 60 * 60 * 1000
+        request.setRequestHeader("Accept", "application/json")
+        request.setRequestHeader("Authorization", `Bearer ${connection.key}`)
+        request.setRequestHeader("Content-Type", "application/octet-stream")
+        request.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+        }
+        request.onerror = () => reject(new Error("上传连接失败，请检查服务端地址和网络"))
+        request.ontimeout = () => reject(new Error("上传超时"))
+        request.onabort = () => reject(new Error("上传已取消"))
+        request.onload = () => {
+          let body: ApiEnvelope<T> | null = null
+          try { body = JSON.parse(request.responseText) as ApiEnvelope<T> } catch { /* 使用统一错误 */ }
+          if (request.status < 200 || request.status >= 300 || !body?.ok) {
+            const message = body && !body.ok ? body.message || body.error : undefined
+            reject(new Error(message || `服务端请求失败（HTTP ${request.status}）`))
+            return
+          }
+          onProgress(100)
+          resolve(body.data)
+        }
+        request.send(file)
+      })
+    },
+    [connection],
+  )
+
   const refresh = useCallback(async () => {
     if (!connection) {
       setError("尚未配置服务端连接")
@@ -152,8 +186,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, refresh])
 
   const value = useMemo(
-    () => ({ overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest }),
-    [overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest],
+    () => ({ overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest }),
+    [overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

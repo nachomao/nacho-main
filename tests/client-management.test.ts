@@ -103,6 +103,19 @@ test("客户端卡片渲染发行版标识而非通用图标", () => {
   assert.match(ubuntuHtml, new RegExp(escapeRegExp(resolveOsBrand("Linux", "ubuntu").path.slice(0, 40))))
 })
 
+test("Windows 11 客户端卡片渲染具体版本与等宽四窗格标识", () => {
+  const osName = "Windows 11 Pro 25H2"
+  const win11Brand = resolveOsBrand("Windows", osName)
+  const legacyBrand = resolveOsBrand("Windows", "Windows 10 Pro 22H2")
+  const html = renderToStaticMarkup(
+    createElement(ClientCard, { client: { ...windowsClient, osName, version: "1.1.3" } }),
+  )
+
+  assert.match(html, /Windows 11 Pro 25H2/)
+  assert.match(html, new RegExp(escapeRegExp(win11Brand.path)))
+  assert.doesNotMatch(html, new RegExp(escapeRegExp(legacyBrand.path)))
+})
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

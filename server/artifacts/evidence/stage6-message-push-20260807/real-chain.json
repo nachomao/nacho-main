@@ -1,0 +1,58 @@
+{
+  "stage": 6,
+  "feature": "show-message",
+  "verifiedAt": "2026-08-07T04:46:00Z",
+  "clientId": "cl-2e2a5b138515",
+  "command": {
+    "id": "cmd-39a47bfa66bf",
+    "status": "success",
+    "sessionId": 1,
+    "deliveryStatus": "timed-out",
+    "responseCode": 32000,
+    "timedOut": true,
+    "durationMs": 5046,
+    "recordCountAfterRestart": 1,
+    "redeliveredAfterRestart": false
+  },
+  "confirmedFollowUp": {
+    "verifiedAt": "2026-08-07T06:09:02.636Z",
+    "fixture": "isolated-real-chain",
+    "clientId": "cl-36c3db0bfd5f",
+    "id": "cmd-437d34fa2eec",
+    "status": "success",
+    "sessionId": 1,
+    "deliveryStatus": "confirmed",
+    "responseCode": 1,
+    "timedOut": false,
+    "durationMs": 3970,
+    "recordCountAfterRestart": 1,
+    "redeliveredAfterRestart": false
+  },
+  "browserFollowUp": {
+    "desktop": {
+      "viewport": "1280x720",
+      "documentWidth": "1280/1280",
+      "bodyWidth": "1280/1280",
+      "pageHorizontalOverflow": false,
+      "consoleWarningsOrErrors": 0,
+      "confirmedResultVisible": true
+    },
+    "mobile": {
+      "viewport": "390x844",
+      "documentWidth": "390/390",
+      "bodyWidth": "390/390",
+      "pageHorizontalOverflow": false,
+      "consoleWarningsOrErrors": 0,
+      "confirmedResultVisible": true
+    }
+  },
+  "productionPolicyFix": "production-policy-fix.json",
+  "auditRedaction": true,
+  "restoration": {
+    "agentConfigRestored": true,
+    "messageIntentRemoved": true,
+    "agentService": "Running",
+    "isolatedFixtureRemoved": true,
+    "isolatedPortsClosed": [3000, 18447]
+  }
+}
