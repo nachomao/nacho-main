@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -8,12 +8,14 @@ import {
   ChevronDown,
   CircleAlert,
   Info,
+  Loader2,
+  RotateCw,
   Search,
   Server,
   ListFilter,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { mockSeedLiveLogRows, mockSeedLogs } from "@/lib/mock-panel-api"
+import { useServerData } from "@/components/server-data-context"
 import { useLogs } from "./logs-context"
 
 /* 通用面板外壳：与健康/脚本/任务面板保持一致 */
@@ -87,10 +89,6 @@ const levelMeta: Record<
 
 const levelOrder: Level[] = ["error", "warn", "info", "debug"]
 
-/* ---------- 来源：由服务端日志动态提供；演示模式下从模拟种子去重推导 ---------- */
-const sources: readonly string[] = Array.from(
-  new Set([...mockSeedLogs(), ...mockSeedLiveLogRows()].map((row) => row.source)),
-)
 type Source = string
 
 /* ---------- 数据模型 ---------- */
@@ -111,13 +109,19 @@ function fmt(ts: number) {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
 }
 
-/* ---------- 初始日志：由服务端 API 获取；演示模式下用模拟种子填充 ---------- */
-function makeInitial(): LogEntry[] {
-  return mockSeedLogs().map((row) => ({ ...row, time: fmt(row.ts) }))
+/* ---------- 服务端 /logs 的行结构，time 由前端按本地时区派生 ---------- */
+type ServerLogRow = {
+  id: string
+  ts: number
+  level: Level
+  source: string
+  message: string
+  detail?: string | null
 }
 
-/* ---------- 实时日志候选：由服务端实时推送；演示模式下用模拟种子填充 ---------- */
-const liveCandidates: Omit<LogEntry, "id" | "time" | "ts">[] = mockSeedLiveLogRows()
+function toEntry(row: ServerLogRow): LogEntry {
+  return { ...row, detail: row.detail ?? undefined, time: fmt(row.ts) }
+}
 
 /* 统计卡片 */
 function StatCard({
@@ -154,7 +158,11 @@ export function LogsView() {
   const live = logsCtx?.live ?? true
   // 初始为空，挂载后（仅客户端）再生成基于 Date.now() 的演示数据，
   // 避免服务端/客户端时间戳不一致导致的水合失败（hydration mismatch）
+  const { apiRequest } = useServerData()
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [sources, setSources] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [levelFilter, setLevelFilter] = useState<"all" | Level>("all")
   const [sourceFilter, setSourceFilter] = useState<"all" | Source>("all")
   const [query, setQuery] = useState("")
@@ -162,27 +170,49 @@ export function LogsView() {
   const [flashId, setFlashId] = useState<string | null>(null)
 
   const listRef = useRef<HTMLDivElement>(null)
-  const counterRef = useRef(0)
+  // 已见过的日志 id，用于识别本轮新增条目并只对新增项做高亮
+  const seenRef = useRef<Set<string>>(new Set())
 
-  /* 挂载后在客户端生成初始演示数据（避免 SSR 时间戳不一致） */
-  useEffect(() => {
-    setLogs(makeInitial())
-  }, [])
+  /* 从服务端拉取日志与来源列表。silent=true 用于轮询，避免反复闪加载态 */
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true)
+      try {
+        const [rows, srcList] = await Promise.all([
+          apiRequest<ServerLogRow[]>("/logs?limit=200"),
+          apiRequest<string[]>("/logs/sources"),
+        ])
+        const entries = rows.map(toEntry)
+        // 首次加载不高亮；后续轮询只高亮此前未见过的最新一条
+        const fresh = entries.find((e) => !seenRef.current.has(e.id))
+        const isFirst = seenRef.current.size === 0
+        entries.forEach((e) => seenRef.current.add(e.id))
+        setLogs(entries)
+        setSources(srcList)
+        setError(null)
+        if (!isFirst && fresh) {
+          setFlashId(fresh.id)
+          setTimeout(() => setFlashId((cur) => (cur === fresh.id ? null : cur)), 900)
+        }
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "加载日志失败")
+      } finally {
+        if (!silent) setLoading(false)
+      }
+    },
+    [apiRequest],
+  )
 
-  /* 实时跟随：定时向列表头部追加一条随机日志 */
   useEffect(() => {
-    if (!live || liveCandidates.length === 0) return
-    const timer = setInterval(() => {
-      const pick = liveCandidates[Math.floor(Math.random() * liveCandidates.length)]
-      const ts = Date.now()
-      counterRef.current += 1
-      const entry: LogEntry = { ...pick, id: `log-${ts}-${counterRef.current}`, ts, time: fmt(ts) }
-      setLogs((prev) => [entry, ...prev].slice(0, 200))
-      setFlashId(entry.id)
-      setTimeout(() => setFlashId((cur) => (cur === entry.id ? null : cur)), 900)
-    }, 2600)
+    void load()
+  }, [load])
+
+  /* 实时跟随：开启时每 3 秒静默重拉，暂停时停止轮询 */
+  useEffect(() => {
+    if (!live) return
+    const timer = setInterval(() => void load(true), 3000)
     return () => clearInterval(timer)
-  }, [live])
+  }, [live, load])
 
   /* 统计 */
   const stats = useMemo(() => {
@@ -209,9 +239,17 @@ export function LogsView() {
     ...levelOrder.map((l) => ({ id: l, label: levelMeta[l].label })),
   ]
 
-  const clearLogs = () => {
-    setLogs([])
-    setExpanded(null)
+  /* 清空：DELETE /logs 真正清除服务端记录，成功后再清本地列表 */
+  const clearLogs = async () => {
+    try {
+      await apiRequest("/logs", { method: "DELETE" })
+      seenRef.current.clear()
+      setLogs([])
+      setExpanded(null)
+      setError(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "清空日志失败")
+    }
   }
 
   const exportLogs = () => {
@@ -333,7 +371,25 @@ export function LogsView() {
 
         {/* 日志列表 */}
         <div ref={listRef} className="mt-4 flex max-h-[52vh] flex-col gap-1.5 overflow-auto pr-1">
-          {filtered.length > 0 ? (
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              <p className="text-sm">正在从服务端加载日志…</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <AlertTriangle className="h-8 w-8 text-negative" />
+              <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3.5 text-xs font-medium transition-colors hover:bg-surface"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                重试
+              </button>
+            </div>
+          ) : filtered.length > 0 ? (
             filtered.map((l) => {
               const meta = levelMeta[l.level]
               const open = expanded === l.id
