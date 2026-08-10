@@ -13,7 +13,6 @@ import {
   ListFilter,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { mockSeedLiveLogRows, mockSeedLogs } from "@/lib/mock-panel-api"
 import { useLogs } from "./logs-context"
 
 /* 通用面板外壳：与健康/脚本/任务面板保持一致 */
@@ -87,10 +86,8 @@ const levelMeta: Record<
 
 const levelOrder: Level[] = ["error", "warn", "info", "debug"]
 
-/* ---------- 来源：由服务端日志动态提供；演示模式下从模拟种子去重推导 ---------- */
-const sources: readonly string[] = Array.from(
-  new Set([...mockSeedLogs(), ...mockSeedLiveLogRows()].map((row) => row.source)),
-)
+/* ---------- 来源：由服务端日志动态提供，面板不再内置模拟来源 ---------- */
+const sources: readonly string[] = []
 type Source = string
 
 /* ---------- 数据模型 ---------- */
@@ -111,13 +108,13 @@ function fmt(ts: number) {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
 }
 
-/* ---------- 初始日志：由服务端 API 获取；演示模式下用模拟种子填充 ---------- */
+/* ---------- 初始日志：由服务端 API 获取，面板不再内置模拟数据 ---------- */
 function makeInitial(): LogEntry[] {
-  return mockSeedLogs().map((row) => ({ ...row, time: fmt(row.ts) }))
+  return []
 }
 
-/* ---------- 实时日志候选：由服务端实时推送；演示模式下用模拟种子填充 ---------- */
-const liveCandidates: Omit<LogEntry, "id" | "time" | "ts">[] = mockSeedLiveLogRows()
+/* ---------- 实时日志候选：由服务端实时推送，面板不再内置模拟数据 ---------- */
+const liveCandidates: Omit<LogEntry, "id" | "time" | "ts">[] = []
 
 /* 统计卡片 */
 function StatCard({

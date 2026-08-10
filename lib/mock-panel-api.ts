@@ -13,6 +13,12 @@
  * 恢复真实链路：删除本文件并还原 .mock-backup/ 中的原始文件即可。
  */
 
+import {
+  defaultLocalSettings,
+  type LocalSettings,
+  type LocalSettingsPatch,
+} from "@/lib/local-settings-schema"
+
 const MOCK_DEFAULT_ENABLED = true
 
 export function isMockPanelEnabled(): boolean {
@@ -1181,9 +1187,73 @@ function finishUpload(artifact: MockArtifact) {
 /* ==================== 安装劫持 ==================== */
 
 const PANEL_PREFIX = "/api/panel"
+const LOCAL_SETTINGS_PATH = "/api/local-settings"
+const LOCAL_SETTINGS_STORE_KEY = "nacho-mock-local-settings"
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+/**
+ * 预览环境下 `/api/local-settings` 的同源校验必然失败（浏览器 Origin 是 sandbox 域名，
+ * 服务端 nextUrl.origin 是 localhost:3000），因此演示模式在浏览器侧用 localStorage 承载
+ * 面板本机设置。真实 Windows 本机运行时该分支不会启用，路由的安全校验保持原样。
+ */
+function readMockLocalSettings(): LocalSettings {
+  const fallback: LocalSettings = { ...defaultLocalSettings(), legacyMigrationVersion: 1 }
+  try {
+    const raw = window.localStorage.getItem(LOCAL_SETTINGS_STORE_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as Partial<LocalSettings>
+    return {
+      ...fallback,
+      ...parsed,
+      profile: { ...fallback.profile, ...parsed.profile },
+      legacyMigrationVersion: 1,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function writeMockLocalSettings(settings: LocalSettings) {
+  try {
+    window.localStorage.setItem(LOCAL_SETTINGS_STORE_KEY, JSON.stringify(settings))
+  } catch {
+    // 存储不可用时保持当前会话内的内存值即可
+  }
+  return settings
+}
+
+function handleLocalSettings(method: string, rawBody: string | null): Response {
+  const current = readMockLocalSettings()
+  if (method === "GET") {
+    return new Response(
+      JSON.stringify({ ok: true, data: current, meta: { exists: true, recovered: false } }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )
+  }
+  if (method === "DELETE") {
+    return ok(writeMockLocalSettings({ ...defaultLocalSettings(), legacyMigrationVersion: 1 }))
+  }
+  if (method === "PATCH") {
+    let patch: LocalSettingsPatch = {}
+    try {
+      patch = rawBody ? (JSON.parse(rawBody) as LocalSettingsPatch) : {}
+    } catch {
+      return fail("请求体不是有效 JSON", 400)
+    }
+    const next: LocalSettings = {
+      ...current,
+      ...(patch.theme ? { theme: patch.theme } : {}),
+      ...(typeof patch.onboardingCompleted === "boolean"
+        ? { onboardingCompleted: patch.onboardingCompleted }
+        : {}),
+      profile: { ...current.profile, ...patch.profile },
+    }
+    return ok(writeMockLocalSettings(next))
+  }
+  return fail(`模拟本地设置未实现该方法：${method}`, 405)
 }
 
 let installed = false
@@ -1214,13 +1284,17 @@ export function installMockPanelApi() {
     } catch {
       return originalFetch(input as RequestInfo, init)
     }
-    if (!url.pathname.startsWith(PANEL_PREFIX)) return originalFetch(input as RequestInfo, init)
+    const isPanel = url.pathname.startsWith(PANEL_PREFIX)
+    const isLocalSettings = url.pathname === LOCAL_SETTINGS_PATH
+    if (!isPanel && !isLocalSettings) return originalFetch(input as RequestInfo, init)
 
     const request = input instanceof Request ? input : null
     const method = (init?.method ?? request?.method ?? "GET").toUpperCase()
     let rawBody: string | null = null
     if (typeof init?.body === "string") rawBody = init.body
     else if (request && method !== "GET" && method !== "HEAD") rawBody = await request.clone().text().catch(() => null)
+
+    if (isLocalSettings) return handleLocalSettings(method, rawBody)
 
     await delay(90 + Math.random() * 120)
     return handle(method, url.pathname.slice(PANEL_PREFIX.length) || "/", url.searchParams, rawBody)
@@ -1242,4 +1316,399 @@ export async function mockUploadPanelApi<T>(path: string, file: File, onProgress
   }
   onProgress(100)
   return finishUpload(artifact) as unknown as T
+}
+
+/* ==================== 本地 state 视图的种子数据 ====================
+ * 系统日志 / 计划任务 / 插件 / 健康中心 目前仍是纯 React 本地 state（AGENTS.md 第 5 节的演示边界），
+ * fetch 拦截无法注入。以下常量供这些视图在演示模式下作为初值使用；
+ * 关闭 mock（NEXT_PUBLIC_NACHO_MOCK=off）时各视图会回到原本的空数组。
+ */
+
+function seedGuard<T>(rows: T[]): T[] {
+  return isMockPanelEnabled() ? rows : []
+}
+
+/* ---------- 系统日志视图 ---------- */
+
+type SeedLogRow = {
+  level: "error" | "warn" | "info" | "debug"
+  source: string
+  message: string
+  detail?: string
+}
+
+const LOG_SEED_ROWS: SeedLogRow[] = [
+  { level: "info", source: "control-server", message: "control-server.service 启动完成，监听 0.0.0.0:8443", detail: "node v22.23.1 · sqlite=node:sqlite · env=production" },
+  { level: "info", source: "agent-ws", message: "win-office-07 建立 WebSocket 长连接", detail: "deviceId=dev-win-office-07 · protocol=nacho-agent/1" },
+  { level: "debug", source: "agent-heartbeat", message: "收到心跳 win-dev-12（version=1.1.0）", detail: "cpu=41% memory=66% disk=48%" },
+  { level: "warn", source: "health", message: "win-kiosk-03 磁盘可用空间低于 15%", detail: "volume=C:\\ free=11.4GB total=128GB" },
+  { level: "info", source: "command", message: "下发命令 run-shell -> win-office-07", detail: "commandId=cmd-3af470600000 shell=powershell timeout=300s" },
+  { level: "info", source: "command", message: "命令 run-shell 执行成功（812ms）", detail: "exitCode=0 stdoutBytes=486" },
+  { level: "error", source: "command", message: "命令 manage-service 执行失败：拒绝访问", detail: "service=WinDefend action=stop exitCode=5" },
+  { level: "warn", source: "agent-ws", message: "win-lab-21 连接断开，命令转入 HTTP 轮询回退", detail: "reason=1006 abnormal closure · queued=2" },
+  { level: "info", source: "artifact", message: "制品上传完成：nacho-agent 1.1.1", detail: "size=48.2MB sha256=9f2c…a71e" },
+  { level: "debug", source: "db", message: "SQLite 增量建表检查通过", detail: "tables=12 migrations=0 pending" },
+  { level: "error", source: "health", message: "cache-prod-02 Redis 服务未响应健康探测", detail: "endpoint=10.0.1.32:6379 timeout=3000ms" },
+  { level: "info", source: "panel-api", message: "面板请求 /api/panel/clients 成功", detail: "count=8 online=4 durationMs=23" },
+  { level: "warn", source: "security", message: "检测到 3 次 Panel API Key 校验失败", detail: "remote=192.168.10.201 window=60s" },
+  { level: "info", source: "agent-update", message: "win-office-07 升级完成并跨启动核验通过", detail: "from=1.1.0 to=1.1.1 rollback=not-required" },
+  { level: "debug", source: "collect-logs", message: "日志采集包裁剪至 512 KiB 上限", detail: "host=web-prod-01 raw=1.8MB truncated=true" },
+]
+
+/** 系统日志视图初值（较新的在前，时间戳在客户端生成以避免水合不一致） */
+export function mockSeedLogs() {
+  if (!isMockPanelEnabled()) return []
+  const now = Date.now()
+  return LOG_SEED_ROWS.map((row, index) => {
+    const ts = now - index * 47_000 - (index % 3) * 1_300
+    return { ...row, id: `seed-log-${index}`, ts }
+  })
+}
+
+/** 实时跟随时随机追加的候选条目 */
+export function mockSeedLiveLogRows(): SeedLogRow[] {
+  return seedGuard([
+    { level: "debug", source: "agent-heartbeat", message: "收到心跳 web-prod-01（version=1.1.0）", detail: "cpu=32% memory=61% disk=44%" },
+    { level: "info", source: "panel-api", message: "面板请求 /api/panel/overview 成功", detail: "durationMs=18" },
+    { level: "info", source: "command", message: "命令 collect-logs 上报结果（success）", detail: "bytes=486321 truncated=false" },
+    { level: "warn", source: "health", message: "db-prod-01 内存占用持续高于 85%", detail: "sampled=5m avg=88%" },
+    { level: "debug", source: "agent-ws", message: "心跳保活 ping/pong 正常", detail: "clients=4 rttMs=12" },
+    { level: "error", source: "command", message: "命令 terminate-process 被本机策略拒绝", detail: "pid=4 reason=protected-system-process" },
+  ])
+}
+
+/* ---------- 计划任务视图 ---------- */
+
+/** 计划任务的可选目标客户端（与客户端列表保持一致） */
+export function mockSeedTaskClients() {
+  return {
+    windows: seedGuard([
+      { id: "cli-win-office-07", name: "win-office-07", ip: "192.168.10.7", os: "Windows 11 专业版", online: true },
+      { id: "cli-win-dev-12", name: "win-dev-12", ip: "192.168.10.12", os: "Windows 11 专业版", online: true },
+      { id: "cli-win-kiosk-03", name: "win-kiosk-03", ip: "10.20.3.3", os: "Windows 10 LTSC", online: true },
+      { id: "cli-win-lab-21", name: "win-lab-21", ip: "10.20.4.21", os: "Windows Server 2022", online: false },
+    ]),
+    linux: seedGuard([
+      { id: "cli-web-prod-01", name: "web-prod-01", ip: "10.0.1.11", os: "ubuntu 24.04", online: true },
+      { id: "cli-db-prod-01", name: "db-prod-01", ip: "10.0.1.21", os: "debian 12", online: true },
+      { id: "cli-cache-prod-02", name: "cache-prod-02", ip: "10.0.1.32", os: "alpine 3.20", online: false },
+    ]),
+  }
+}
+
+/** 计划任务列表初值 */
+export function mockSeedTasks() {
+  return seedGuard([
+    {
+      id: "task-nightly-backup",
+      name: "夜间配置备份",
+      os: "windows" as const,
+      action: "运行程序",
+      program: "C:\\Scripts\\backup.bat",
+      args: "--target D:\\Backup --keep 7",
+      triggerId: "daily" as const,
+      time: "02:30",
+      interval: 1,
+      cron: "0 3 * * *",
+      clientIds: ["cli-win-office-07", "cli-win-dev-12"],
+      enabled: true,
+    },
+    {
+      id: "task-weekly-defender",
+      name: "每周全盘扫描",
+      os: "windows" as const,
+      action: "运行程序",
+      program: "C:\\Program Files\\Windows Defender\\MpCmdRun.exe",
+      args: "-Scan -ScanType 2",
+      triggerId: "weekly" as const,
+      time: "23:00",
+      interval: 1,
+      cron: "0 3 * * *",
+      clientIds: ["cli-win-office-07", "cli-win-kiosk-03", "cli-win-lab-21"],
+      enabled: true,
+    },
+    {
+      id: "task-kiosk-reset",
+      name: "展厅机登录重置",
+      os: "windows" as const,
+      action: "运行程序",
+      program: "C:\\Scripts\\kiosk-reset.ps1",
+      args: "",
+      triggerId: "logon" as const,
+      time: "06:00",
+      interval: 1,
+      cron: "0 3 * * *",
+      clientIds: ["cli-win-kiosk-03"],
+      enabled: false,
+    },
+    {
+      id: "task-log-rotate",
+      name: "Nginx 日志轮转",
+      os: "linux" as const,
+      action: "运行程序",
+      program: "/usr/sbin/logrotate",
+      args: "-f /etc/logrotate.d/nginx",
+      triggerId: "cron" as const,
+      time: "04:00",
+      interval: 1,
+      cron: "30 4 * * *",
+      clientIds: ["cli-web-prod-01"],
+      enabled: true,
+    },
+    {
+      id: "task-pg-dump",
+      name: "数据库定时导出",
+      os: "linux" as const,
+      action: "运行程序",
+      program: "/usr/local/bin/pg-dump-all.sh",
+      args: "--gzip --out /var/backups/pg",
+      triggerId: "daily" as const,
+      time: "01:15",
+      interval: 1,
+      cron: "0 3 * * *",
+      clientIds: ["cli-db-prod-01"],
+      enabled: true,
+    },
+    {
+      id: "task-redis-boot",
+      name: "开机预热缓存",
+      os: "linux" as const,
+      action: "运行程序",
+      program: "/opt/cache/warmup.sh",
+      args: "--keys 5000",
+      triggerId: "boot" as const,
+      time: "06:00",
+      interval: 1,
+      cron: "0 3 * * *",
+      clientIds: ["cli-cache-prod-02"],
+      enabled: false,
+    },
+  ])
+}
+
+/* ---------- 插件视图 ---------- */
+
+/** 插件列表初值（icon 取 iconMap 的键，category 取插件视图的分类） */
+export function mockSeedPlugins() {
+  return seedGuard([
+    {
+      id: "pg-restore-guard",
+      name: "系统还原卫士",
+      version: "2.4.1",
+      author: "Nacho Labs",
+      category: "系统防护",
+      description: "为公用机器提供重启即还原能力，写入操作在会话结束后自动丢弃。",
+      size: "18.6 MB",
+      icon: "restore",
+      status: "installed" as const,
+      restartRestore: true,
+      params: [
+        { id: "pp-restore-1", label: "保护分区", value: "C:\\" },
+        { id: "pp-restore-2", label: "排除目录", value: "D:\\UserData" },
+      ],
+    },
+    {
+      id: "pg-defender-policy",
+      name: "安全基线策略",
+      version: "1.9.0",
+      author: "Nacho Labs",
+      category: "系统防护",
+      description: "统一下发 Windows Defender 与防火墙基线，偏离时自动纠正。",
+      size: "6.2 MB",
+      icon: "shield",
+      status: "installed" as const,
+      params: [{ id: "pp-defender-1", label: "巡检间隔（分钟）", value: "30" }],
+    },
+    {
+      id: "pg-metrics-agent",
+      name: "性能指标采集",
+      version: "3.1.2",
+      author: "Nacho Labs",
+      category: "监控",
+      description: "按秒级采样 CPU、内存、磁盘与句柄数，异常时推送到健康中心。",
+      size: "9.8 MB",
+      icon: "gauge",
+      status: "installed" as const,
+      params: [
+        { id: "pp-metrics-1", label: "采样间隔（秒）", value: "5" },
+        { id: "pp-metrics-2", label: "上报阈值 CPU %", value: "85" },
+      ],
+    },
+    {
+      id: "pg-event-watch",
+      name: "事件日志监视",
+      version: "1.4.7",
+      author: "社区贡献",
+      category: "监控",
+      description: "订阅 Windows 事件通道，命中规则时生成健康中心发现项。",
+      size: "4.1 MB",
+      icon: "activity",
+      status: "disabled" as const,
+      params: [{ id: "pp-event-1", label: "监听通道", value: "System,Application" }],
+    },
+    {
+      id: "pg-net-probe",
+      name: "网络连通探测",
+      version: "2.0.3",
+      author: "Nacho Labs",
+      category: "网络",
+      description: "定时探测内网关键端点，记录丢包率与延迟抖动。",
+      size: "5.5 MB",
+      icon: "network",
+      status: "available" as const,
+      params: [
+        { id: "pp-net-1", label: "探测目标", value: "10.0.1.11,10.0.1.21" },
+        { id: "pp-net-2", label: "超时（毫秒）", value: "3000" },
+      ],
+    },
+    {
+      id: "pg-file-sync",
+      name: "目录同步",
+      version: "1.2.0",
+      author: "社区贡献",
+      category: "工具",
+      description: "把指定目录增量同步到文件服务器，支持断点续传。",
+      size: "12.3 MB",
+      icon: "sync",
+      status: "available" as const,
+      params: [{ id: "pp-sync-1", label: "同步源", value: "D:\\Share" }],
+    },
+    {
+      id: "pg-screenshot",
+      name: "远程截屏",
+      version: "0.9.4",
+      author: "社区贡献",
+      category: "工具",
+      description: "按需抓取当前会话桌面截图，用于故障复现。",
+      size: "3.7 MB",
+      icon: "camera",
+      status: "available" as const,
+      params: [{ id: "pp-shot-1", label: "图片质量", value: "80" }],
+    },
+  ])
+}
+
+/* ---------- 健康中心视图 ---------- */
+
+/** 健康发现项初值 */
+export function mockSeedFindings() {
+  return seedGuard([
+    {
+      id: "hf-01",
+      host: "win-kiosk-03",
+      severity: "critical" as const,
+      category: "磁盘存储" as const,
+      title: "系统盘可用空间不足 15%",
+      detail: "C:\\ 剩余 11.4GB / 128GB。近 7 天日均增长 1.2GB，预计 9 天内耗尽。建议清理 Windows.old 与休眠文件。",
+      time: "04:52",
+      read: false,
+    },
+    {
+      id: "hf-02",
+      host: "cache-prod-02",
+      severity: "critical" as const,
+      category: "服务异常" as const,
+      title: "Redis 服务未响应健康探测",
+      detail: "连续 6 次探测 10.0.1.32:6379 超时（3000ms）。systemd 显示 redis-server 处于 activating (auto-restart)。",
+      time: "04:47",
+      read: false,
+    },
+    {
+      id: "hf-03",
+      host: "win-office-07",
+      severity: "error" as const,
+      category: "应用崩溃" as const,
+      title: "Excel 反复崩溃（Application Error 1000）",
+      detail: "24 小时内 5 次崩溃，故障模块 VBE7.DLL 版本 7.1.11.98。建议回滚上周的加载项更新。",
+      time: "04:31",
+      read: false,
+    },
+    {
+      id: "hf-04",
+      host: "db-prod-01",
+      severity: "error" as const,
+      category: "服务异常" as const,
+      title: "PostgreSQL 连接池接近上限",
+      detail: "活动连接 96 / max_connections 100，等待锁的事务 7 个，最长等待 42s。",
+      time: "04:18",
+      read: false,
+    },
+    {
+      id: "hf-05",
+      host: "win-lab-21",
+      severity: "warning" as const,
+      category: "网络连接" as const,
+      title: "客户端长连接频繁断开",
+      detail: "近 1 小时 WebSocket 断开 9 次（code 1006），已回退 HTTP 轮询，2 条命令排队等待。",
+      time: "04:05",
+      read: true,
+    },
+    {
+      id: "hf-06",
+      host: "web-prod-01",
+      severity: "warning" as const,
+      category: "系统日志" as const,
+      title: "Nginx 5xx 比例上升",
+      detail: "过去 30 分钟 502 共 143 次，集中在 /api/report 路径，上游 upstream timeout。",
+      time: "03:58",
+      read: true,
+    },
+    {
+      id: "hf-07",
+      host: "win-office-07",
+      severity: "warning" as const,
+      category: "安全审计" as const,
+      title: "多次登录失败后成功登录",
+      detail: "事件 4625 连续 4 次后出现 4624（登录类型 10 / RDP），源地址 192.168.10.201。",
+      time: "03:41",
+      read: false,
+    },
+    {
+      id: "hf-08",
+      host: "win-dev-12",
+      severity: "info" as const,
+      category: "系统日志" as const,
+      title: "Agent 升级完成并跨启动核验通过",
+      detail: "1.1.0 -> 1.1.1，agent.json 与 DPAPI 身份保留，journal 恢复 0 条待执行命令。",
+      time: "03:22",
+      read: true,
+    },
+    {
+      id: "hf-09",
+      host: "mac-design-05",
+      severity: "info" as const,
+      category: "网络连接" as const,
+      title: "客户端切换到无线网络",
+      detail: "接口由 en0(有线) 切换到 en1(Wi-Fi)，心跳 RTT 由 8ms 上升到 24ms。",
+      time: "03:04",
+      read: true,
+    },
+  ])
+}
+
+/** 日志包初值 */
+export function mockSeedLogPackages() {
+  return seedGuard([
+    { id: "lp-01", host: "win-kiosk-03", category: "磁盘存储" as const, sizeMB: 0.49, time: "04:52", findings: 3, status: "analyzed" as const },
+    { id: "lp-02", host: "cache-prod-02", category: "服务异常" as const, sizeMB: 0.31, time: "04:47", findings: 2, status: "analyzed" as const },
+    { id: "lp-03", host: "win-office-07", category: "应用崩溃" as const, sizeMB: 0.5, time: "04:33", findings: 4, status: "analyzed" as const },
+    { id: "lp-04", host: "db-prod-01", category: "服务异常" as const, sizeMB: 0.42, time: "04:20", findings: 1, status: "analyzing" as const },
+    { id: "lp-05", host: "web-prod-01", category: "系统日志" as const, sizeMB: 0.5, time: "03:59", findings: 2, status: "analyzed" as const },
+    { id: "lp-06", host: "win-lab-21", category: "网络连接" as const, sizeMB: 0.18, time: "03:47", findings: 0, status: "pending" as const },
+    { id: "lp-07", host: "win-office-07", category: "安全审计" as const, sizeMB: 0.27, time: "03:41", findings: 1, status: "analyzed" as const },
+  ])
+}
+
+/** 健康中心的采集目标客户端 */
+export function mockSeedCollectClients() {
+  return seedGuard([
+    { id: "cli-win-office-07", name: "win-office-07", ip: "192.168.10.7", os: "Windows 11 专业版", online: true },
+    { id: "cli-win-dev-12", name: "win-dev-12", ip: "192.168.10.12", os: "Windows 11 专业版", online: true },
+    { id: "cli-win-kiosk-03", name: "win-kiosk-03", ip: "10.20.3.3", os: "Windows 10 LTSC", online: true },
+    { id: "cli-win-lab-21", name: "win-lab-21", ip: "10.20.4.21", os: "Windows Server 2022", online: false },
+    { id: "cli-web-prod-01", name: "web-prod-01", ip: "10.0.1.11", os: "ubuntu 24.04", online: true },
+    { id: "cli-db-prod-01", name: "db-prod-01", ip: "10.0.1.21", os: "debian 12", online: true },
+    { id: "cli-cache-prod-02", name: "cache-prod-02", ip: "10.0.1.32", os: "alpine 3.20", online: false },
+    { id: "cli-mac-design-05", name: "mac-design-05", ip: "192.168.10.45", os: "macOS 15.3", online: true },
+  ])
 }
