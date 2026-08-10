@@ -2851,19 +2851,17 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
     setActiveId(null)
   }
 
-  // 钻取进入下一层：新卡片从下方上移进场
   const openTool = (id: string) => {
     setEnterAnim("animate-panel-enter")
     setActiveId(id)
   }
 
-  // 返回上一层：方向与钻取相反，上一层卡片从上方下移进场
   const back = () => {
     if (!activeId && client) {
       onExit?.()
       return
     }
-    setEnterAnim("animate-panel-enter-down")
+    setEnterAnim("animate-panel-enter")
     setActiveId(null)
   }
 
