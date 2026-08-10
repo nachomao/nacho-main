@@ -165,8 +165,9 @@ export function ClientsPanel() {
   async function deleteClient(client: Client, origin?: HTMLElement) {
     const accepted = await confirm({
       title: `删除“${client.name}”？`,
-      description: "历史命令记录会一并删除，不可撤销。",
-      body: `主机名：${client.hostname}\nIP 地址：${client.ip}`,
+      description: "历史命令记录一并删除，不可撤销。",
+      // 优先展示 agent 上报的具体系统名，未上报时回退到系统大类
+      body: `主机名：${client.hostname}\nIP 地址：${client.ip}\n操作系统：${client.osName?.trim() || client.os}`,
       confirmLabel: "删除",
       tone: "danger",
       origin,

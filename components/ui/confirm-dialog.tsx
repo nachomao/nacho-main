@@ -570,10 +570,10 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                     </button>
                   </div>
 
-                  {/* 信息区占据剩余空间并垂直居中，内容少时留白均匀、多时内部滚动 */}
-                  <div className="mt-2.5 flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-y-auto">
+                  {/* 信息区占据剩余空间并垂直居中；内容多时 justify-center 自动让位于滚动 */}
+                  <div className="mt-2 flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-y-auto">
                     {rows.length > 0 ? (
-                      <dl className="flex flex-wrap gap-1.5">
+                      <dl className="flex flex-wrap gap-x-1.5 gap-y-1">
                         {rows.map((row) => (
                           // 键值合成一枚胶囊横向排列，两行表格压缩成一行
                           <div
@@ -596,7 +596,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                     {promptField}
                   </div>
 
-                  <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">{actions(true)}</div>
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">{actions(true)}</div>
                 </div>
               </div>
             </div>
