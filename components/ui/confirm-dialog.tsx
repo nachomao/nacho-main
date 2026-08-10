@@ -94,13 +94,6 @@ type Geometry = {
   radius: string
   /** 翻转方向：按钮在卡片右半侧时朝反向转，转轴总是背离手指 */
   dir: 1 | -1
-  /** 内容超出卡片高度时允许向下生长的上限，避免挤压又不溢出视口 */
-  maxHeight: number
-}
-
-/** 卡片下方可用的生长空间；至少保留卡片自身高度 */
-function growRoom(top: number, height: number) {
-  return Math.max(height, window.innerHeight - top - 16)
 }
 
 /* ==================== 明细解析 ====================
@@ -184,7 +177,6 @@ function measure(surface: HTMLElement, origin: HTMLElement): Geometry {
     height: rect.height,
     radius: window.getComputedStyle(surface).borderRadius || "1rem",
     dir,
-    maxHeight: growRoom(top, rect.height),
   }
 }
 
@@ -411,11 +403,8 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
         if (!surface || !frame) return
         const rect = surface.getBoundingClientRect()
         const shift = translationOf(surface)
-        const top = rect.top - shift.y
-        frame.style.top = `${top}px`
+        frame.style.top = `${rect.top - shift.y}px`
         frame.style.left = `${rect.left - shift.x}px`
-        // 卡片随滚动上移时同步放宽高度上限
-        if (dialogRef.current) dialogRef.current.style.maxHeight = `${growRoom(top, rect.height)}px`
       })
     }
     window.addEventListener("scroll", sync, { capture: true, passive: true })
@@ -536,11 +525,10 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="confirm-dialog-title"
-                // 绝对定位并只约束最小高度：内容多时向下生长而非互相挤压
-                className="card-glow @container pointer-events-auto absolute inset-x-0 top-0 flex min-h-full flex-col overflow-hidden bg-card ring-1 ring-border"
+                // 严格沿用卡片尺寸，靠内部布局消化内容
+                className="card-glow @container pointer-events-auto h-full w-full overflow-hidden bg-card ring-1 ring-border"
                 style={{
                   borderRadius: geometry.radius,
-                  maxHeight: geometry.maxHeight,
                   // 首帧停在背面（完全背对镜头），随后由 WAAPI 接管
                   transform: flipAt(-180 * geometry.dir, 1),
                   backfaceVisibility: "hidden",
@@ -549,7 +537,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               >
                 <div
                   ref={contentRef}
-                  className="flex min-h-full w-full flex-col p-4"
+                  className="flex h-full w-full flex-col p-4"
                   style={{ opacity: 0, pointerEvents: "none", willChange: "opacity" }}
                 >
                   <div className="flex items-start gap-3">
@@ -582,17 +570,18 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                     </button>
                   </div>
 
-                  <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+                  {/* 信息区占据剩余空间并垂直居中，内容少时留白均匀、多时内部滚动 */}
+                  <div className="mt-2.5 flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-y-auto">
                     {rows.length > 0 ? (
-                      <dl className="flex flex-col divide-y divide-border overflow-hidden rounded-xl bg-surface/60">
+                      <dl className="flex flex-wrap gap-1.5">
                         {rows.map((row) => (
+                          // 键值合成一枚胶囊横向排列，两行表格压缩成一行
                           <div
                             key={`${row.label}-${row.value}`}
-                            // 卡片够宽时左右分列，过窄则上下堆叠，长值换行而非截断
-                            className="flex flex-col gap-y-0.5 px-3 py-2 @[19rem]:flex-row @[19rem]:flex-wrap @[19rem]:items-baseline @[19rem]:gap-x-3"
+                            className="flex min-w-0 items-baseline gap-1.5 rounded-lg bg-surface/70 px-2 py-1"
                           >
-                            <dt className="shrink-0 text-xs font-medium text-muted-foreground">{row.label}</dt>
-                            <dd className="min-w-0 break-all font-mono text-xs leading-5 text-card-foreground @[19rem]:flex-1 @[19rem]:text-right">
+                            <dt className="shrink-0 text-[11px] text-muted-foreground">{row.label}</dt>
+                            <dd className="min-w-0 break-all font-mono text-xs leading-4 text-card-foreground">
                               {row.value}
                             </dd>
                           </div>
@@ -600,16 +589,14 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
                       </dl>
                     ) : null}
                     {notes.map((note) => (
-                      <p key={note} className="text-pretty text-xs leading-5 text-muted-foreground">
+                      <p key={note} className="text-pretty text-[11px] leading-4 text-muted-foreground">
                         {note}
                       </p>
                     ))}
                     {promptField}
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
-                    {actions(true)}
-                  </div>
+                  <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2">{actions(true)}</div>
                 </div>
               </div>
             </div>
