@@ -2690,9 +2690,9 @@ const clientToolSections: { label: string; hint: string; ids: string[] }[] = [
   { label: "系统与账户", hint: "账户、注册表与诊断", ids: ["users", "registry", "collect-logs", "message", "webpage"] },
 ]
 
-function tintSoft(tint: string, amount: number) {
-  return `color-mix(in oklab, ${tint} ${amount}%, transparent)`
-}
+/* 单机列表里颜色只承载一个含义：该操作是否会中断业务。
+   其余功能一律中性，避免无语义的彩虹色轮转。 */
+const disruptiveToolIds = new Set(["restart-system", "terminate-process"])
 
 function formatUptime(seconds: number) {
   if (seconds <= 0) return "—"
@@ -2704,12 +2704,22 @@ function formatUptime(seconds: number) {
 }
 
 function MetricBar({ label, value }: { label: string; value: number }) {
-  const level = value >= 85 ? "bg-negative" : value >= 65 ? "bg-[#dce02d]" : "bg-primary"
+  /* 水位正常时保持中性：颜色只用来提示越界，三条常态蓝条既噪声大又无信息量。
+     阈值色使用 warning/negative 语义令牌，不再硬编码 #dce02d。 */
+  const level = value >= 85 ? "bg-negative" : value >= 65 ? "bg-warning" : "bg-muted-foreground/40"
+  const alerting = value >= 65
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between text-[11px]">
         <span className="font-medium text-muted-foreground">{label}</span>
-        <span className="font-mono text-xs text-foreground">{Math.round(value)}%</span>
+        <span
+          className={cn(
+            "font-mono text-xs tabular-nums",
+            value >= 85 ? "text-negative" : alerting ? "text-warning" : "text-foreground",
+          )}
+        >
+          {Math.round(value)}%
+        </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-background/60">
         <div className={cn("h-full rounded-full transition-[width] duration-500", level)} style={{ width: `${Math.min(100, Math.max(2, value))}%` }} />
@@ -2718,7 +2728,7 @@ function MetricBar({ label, value }: { label: string; value: number }) {
   )
 }
 
-/* 左侧设备档案：单机管理独有的身份区，批量操作没有 */
+/* 左侧设备档案：单机管理��有的身份区，批量操作没有 */
 function DeviceProfile({ client }: { client: Client }) {
   const s = statusMeta[client.status]
   const brand = resolveOsBrand(client.os, client.osName)
@@ -2732,8 +2742,9 @@ function DeviceProfile({ client }: { client: Client }) {
   return (
     <aside className="flex shrink-0 flex-col gap-4 self-start rounded-2xl border border-border bg-surface/40 p-4 lg:w-64 xl:w-72">
       <div className="flex items-center gap-3">
+        {/* 与客户端列表卡保持一致：品牌实色块不再叠加状态光晕，状态由下方文字指示器表达 */}
         <span
-          className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", s.ring)}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
           style={{ backgroundColor: brand.color }}
           title={brand.label}
         >
@@ -2742,7 +2753,7 @@ function DeviceProfile({ client }: { client: Client }) {
         <div className="min-w-0 leading-tight">
           <p className="truncate text-sm font-semibold">{client.name}</p>
           <span className={cn("mt-1 flex items-center gap-1.5 text-xs font-medium", s.text)}>
-            <span className={cn("h-2 w-2 rounded-full", s.dot)} />
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", s.dot)} />
             <span className="truncate">
               {s.label} · {brand.label}
             </span>
@@ -2776,7 +2787,7 @@ function DeviceProfile({ client }: { client: Client }) {
       {client.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 border-t border-border pt-3">
           {client.tags.map((tag) => (
-            <span key={tag} className="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary">
+            <span key={tag} className="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
               {tag}
             </span>
           ))}
@@ -2825,24 +2836,29 @@ function ClientToolHub({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {sec.items.map((t) => {
                 const Icon = t.icon
+                const disruptive = disruptiveToolIds.has(t.id)
                 return (
                   <button
                     key={t.id}
                     onClick={() => onOpen(t.id)}
-                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-border/70 bg-surface/40 py-2.5 pr-3 text-left hover:border-primary/40 hover:bg-surface"
+                    className="group flex items-center gap-3 rounded-xl border border-border/70 bg-surface/40 p-2.5 text-left transition-colors hover:border-border hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   >
-                    <span className="h-11 w-1 shrink-0 rounded-r-full" style={{ backgroundColor: t.tint }} />
+                    {/* 图标为中性描边块，仅高危操作用 negative 语义色示警 */}
                     <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                      style={{ backgroundColor: tintSoft(t.tint, 18), color: t.tint }}
+                      className={cn(
+                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                        disruptive
+                          ? "border-negative/30 bg-negative/10 text-negative"
+                          : "border-border bg-background/40 text-muted-foreground group-hover:text-foreground",
+                      )}
                     >
                       <Icon className="h-[18px] w-[18px]" />
                     </span>
                     <span className="min-w-0 flex-1 leading-tight">
-                      <span className="block text-sm font-semibold">{t.title}</span>
-                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{t.desc}</span>
+                      <span className="block truncate text-sm font-medium">{t.title}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{t.desc}</span>
                     </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" />
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
                   </button>
                 )
               })}
@@ -3000,7 +3016,7 @@ function ManagementPanel({ client, onExit }: { client?: Client; onExit?: () => v
         {client && clientBrand ? (
           <div className="flex items-center gap-3 rounded-full border border-border bg-surface/60 px-3.5 py-2 text-xs">
             <span className={cn("flex items-center gap-1.5 font-medium", clientStatus?.text)}>
-              <span className={cn("h-2 w-2 rounded-full", clientStatus?.dot)} />
+              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", clientStatus?.dot)} />
               {clientStatus?.label}
             </span>
             <span className="h-4 w-px bg-border" />
