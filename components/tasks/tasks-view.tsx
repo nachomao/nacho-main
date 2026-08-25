@@ -937,7 +937,7 @@ export function TasksView() {
         )}
       </PanelShell>
 
-      {/* 新建任务弹窗：由顶栏「新建任务」下拉触发��按所选系统初始化 */}
+      {/* 新建任务弹窗：由顶栏「新建任务」下拉触发，并按所选系统初始化 */}
       <TaskFormDialog
         open={!!createOS}
         mode="create"

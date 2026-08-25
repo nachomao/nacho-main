@@ -306,7 +306,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
             }}
             aria-hidden={screen !== "avatar"}
           >
-            {/* 大号预览：每���选择重触发弹入动画 */}
+            {/* 大号预览：每次选择重触发弹入动画 */}
             <div
               className="will-change-transform"
               style={{

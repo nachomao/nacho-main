@@ -210,9 +210,9 @@ export function AIWorkspace() {
   const [input, setInput] = useState("")
   const [busy, setBusy] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  // 弹窗定位：菜单通��� Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
+  // 弹窗定位：菜单通过 Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
   const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
-  // 关闭时先播放���场动画，动画结束后再卸载
+  // 关闭时先播放退场动画，动画结束后再卸载
   const [menuClosing, setMenuClosing] = useState(false)
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const inputModelBtnRef = useRef<HTMLButtonElement>(null)
@@ -1017,7 +1017,7 @@ export function AIWorkspace() {
           </section>
         </Rise>
 
-        {/* ===== 右栏：��行遥测 ===== */}
+        {/* ===== 右栏：执行遥测 ===== */}
         <Rise shown={shown} exiting={exiting} delay={260} className="hidden w-64 shrink-0 xl:block">
           <aside className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/55 backdrop-blur-xl">
             <div className="flex items-center gap-2 px-4 pb-3 pt-4">
@@ -1086,7 +1086,7 @@ export function AIWorkspace() {
               {!cfg.enabled && (
                 <p className="mt-2 flex items-center gap-1 text-[10px] text-warning">
                   <ShieldAlert className="h-3 w-3" />
-                  AI Mode ���在设置中停用
+                  AI Mode 已在设置中停用
                 </p>
               )}
             </div>
@@ -1190,7 +1190,7 @@ function Expand({ show, children }: { show: boolean; children: React.ReactNode }
 /**
  * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
  * key 用文本本身，文本变化（如回复更新为最终结论）时自动重播。
- * 中文无空格，按字符分组切（每 2 字一组），英文按空格切���
+ * 中文无空格，按字符分组切（每 2 字一组），英文按空格切分。
  */
 function BlurWords({ text, className }: { text: string; className?: string }) {
   const parts = text.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]{1,2}|\S+\s*|\s+/g) ?? [text]

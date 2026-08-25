@@ -42,6 +42,7 @@ export type LogEntry = {
 type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; message?: string; error?: string }
 
 type ServerDataContextValue = {
+  serverBaseUrl: string
   overview: Overview | null
   clients: Client[]
   groups: string[]
@@ -52,6 +53,7 @@ type ServerDataContextValue = {
   refresh: () => Promise<void>
   apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
   uploadRequest: <T>(path: string, file: File, onProgress: (percent: number) => void) => Promise<T>
+  downloadRequest: (path: string, fallbackFileName: string) => Promise<void>
 }
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
@@ -142,6 +144,36 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     [connection],
   )
 
+  const downloadRequest = useCallback(async (path: string, fallbackFileName: string): Promise<void> => {
+    if (!connection) throw new Error("尚未配置服务端连接")
+    let response: Response
+    try {
+      response = await fetch(`${connection.baseUrl}/api/panel${path}`, {
+        signal: AbortSignal.timeout(30_000),
+        headers: { Accept: "application/json", Authorization: `Bearer ${connection.key}` },
+      })
+    } catch {
+      throw new Error("下载连接失败，请检查服务端地址和网络")
+    }
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as ApiEnvelope<never> | null
+      const message = body && !body.ok ? body.message || body.error : undefined
+      throw new Error(message || `下载失败（HTTP ${response.status}）`)
+    }
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    try {
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = fallbackFileName
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  }, [connection])
+
   const refresh = useCallback(async () => {
     if (!connection) {
       setError("尚未配置服务端连接")
@@ -187,8 +219,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, refresh])
 
   const value = useMemo(
-    () => ({ overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest }),
-    [overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest],
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
+    [connection, overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

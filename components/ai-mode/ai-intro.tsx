@@ -171,7 +171,7 @@ export function AIIntro({ onDone }: { onDone: () => void }) {
             {/* drawn 切换时重建分组，使 SVG 原生旋转从第一帧重新开始。 */}
             <g key={drawn ? "drawn" : "idle"}>
             {drawn && (
-              /* 旋转量 1.5 圈���1.2s 收尾：光瓣展开完成（约 700ms）时
+              /* 旋转量 1.5 圈、1.2s 收尾：光瓣展开完成（约 700ms）时
                  仍有明显旋转余量，避免"转完了才看见星"的观感 */
               <animateTransform
                 attributeName="transform"

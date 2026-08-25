@@ -1,0 +1,5 @@
+SERVER_ROLLBACK_VERIFY_OK
+VERIFY_ONLY_OK
+Agent: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\windows\nacho-agent-1.1.18-win-x64.exe (43b69ff4ca612564d404f48c04df1539e6aa14610bac47318adc866ad878bbd0)
+Server backup: /opt/control-server/backups/process-inventory-20260825-161006
+Run with -Apply to perform rollback.

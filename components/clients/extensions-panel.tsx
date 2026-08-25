@@ -38,6 +38,7 @@ import { statusMeta } from "./client-data"
 import { OsLogo, resolveOsBrand } from "./os-logos"
 import { useServerData } from "@/components/server-data-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
+import { ProcessMobileMenu, ProcessRowContextMenu, type ProcessMenuAction, type ProcessMenuActionOptions } from "@/components/ui/process-action-menu"
 import {
   isAbsoluteWindowsExecutablePath,
   isValidProcessId,
@@ -81,6 +82,33 @@ import {
   type ManagedPackage,
   type PackageDeploymentBatch,
 } from "@/lib/package-deployment"
+import {
+  filterAndSortServices,
+  formatServiceBytes,
+  parseWindowsServiceControlResult,
+  parseWindowsServiceListResult,
+  serviceControlRestrictionText,
+  supportsServiceInventory,
+  type ServiceControlAction,
+  type ServiceListFilter,
+  type ServiceSort,
+  type WindowsServiceItem,
+  type WindowsServiceListResult,
+} from "@/lib/windows-service-inventory"
+import {
+  filterAndSortProcesses,
+  formatProcessBytes,
+  parseWindowsProcessListResult,
+  parseRestartProcessResult,
+  parseSetProcessEfficiencyResult,
+  processFormSelection,
+  processTerminationRestrictionText,
+  supportsProcessInventory,
+  supportsProcessActions,
+  type ProcessSort,
+  type WindowsProcessItem,
+  type WindowsProcessListResult,
+} from "@/lib/windows-process-inventory"
 import {
   isRollbackEligible,
   isTerminalFileBatch,
@@ -1728,47 +1756,76 @@ function Registry({ os, clientId }: DetailProps) {
   )
 }
 
-/* ---------- 子功能：服务管理（Linux systemctl） ---------- */
-type ServiceAction = "query" | "start" | "stop" | "restart"
+/* ---------- 子功能：Windows 服务清单与控制 ---------- */
+type ServiceAction = ServiceControlAction
 type ServiceCommand = {
   id: string
   clientId: string
   status: CommandStatus
   result: string | null
 }
-type ServiceResult = {
-  serviceName: string
-  action: ServiceAction
-  initialStatus: string
-  finalStatus: string
-  durationMs: number
-  timedOut: boolean
-  error: string | null
-}
-
 const serviceActions: { id: ServiceAction; label: string }[] = [
   { id: "query", label: "查询" },
   { id: "start", label: "启动" },
-  { id: "stop", label: "停���" },
+  { id: "stop", label: "停止" },
   { id: "restart", label: "重启" },
 ]
-
-function parseServiceResult(raw: string | null): ServiceResult | null {
-  if (!raw) return null
-  try {
-    const value = JSON.parse(raw) as Partial<ServiceResult>
-    if (typeof value.serviceName !== "string" || typeof value.action !== "string") return null
-    return value as ServiceResult
-  } catch {
-    return null
-  }
-}
 
 type TerminateProcessCommand = {
   id: string
   clientId: string
+  type: string
   status: CommandStatus
   result: string | null
+}
+
+type ProcessInventoryViewProps = {
+  inventory: WindowsProcessListResult
+  processes: WindowsProcessItem[]
+  search: string
+  sort: ProcessSort
+  selectedProcessId: number | null
+  actionsSupported: boolean
+  busyProcessId: number | null
+  busyAction: ProcessMenuAction | null
+  onSearch: (value: string) => void
+  onSort: (value: ProcessSort) => void
+  onSelect: (process: WindowsProcessItem) => void
+  onAction: (process: WindowsProcessItem, action: ProcessMenuAction, options?: ProcessMenuActionOptions) => void
+}
+
+function ProcessInventoryView({ inventory, processes, search, sort, selectedProcessId, actionsSupported, busyProcessId, busyAction, onSearch, onSort, onSelect, onAction }: ProcessInventoryViewProps) {
+  const capturedAt = new Date(inventory.capturedAtUtc).toLocaleString("zh-CN")
+  return (
+    <section className="min-w-0 rounded-2xl border border-border bg-surface/45 p-3 sm:p-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div><p className="text-sm font-semibold text-foreground">进程快照 · {inventory.returned} 项</p><p className="mt-1 text-xs text-muted-foreground">采集于 {capturedAt} · 采样 {inventory.sampleDurationMs} ms · 点击任意进程回填终止参数</p></div>
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+          <div className="relative min-w-0 sm:w-64"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="搜索进程名、PID 或路径" className={cn(inputCls, "pl-9")} /></div>
+          <Select value={sort} onChange={(value) => onSort(value as ProcessSort)} options={[{ value: "cpu", label: "CPU 降序" }, { value: "memory", label: "内存降序" }, { value: "name", label: "名称排序" }, { value: "pid", label: "PID 排序" }]} />
+        </div>
+      </div>
+      {processes.length === 0 ? <div className="py-10 text-center text-sm text-muted-foreground">当前搜索条件下没有进程。</div> : (
+        <>
+          <div className="mt-4 hidden overflow-x-auto rounded-xl border border-border md:block">
+            <table className="w-full min-w-[1050px] table-fixed text-left text-xs">
+              <thead className="bg-background/60 text-muted-foreground"><tr><th className="w-[17%] p-3">进程</th><th className="w-20 p-3">PID</th><th className="w-20 p-3">CPU</th><th className="w-24 p-3">工作集</th><th className="w-24 p-3">专用内存</th><th className="w-20 p-3">状态</th><th className="w-[27%] p-3">映像路径</th><th className="p-3">终止校验</th></tr></thead>
+              <tbody>{processes.map((process) => {
+                const restriction = processTerminationRestrictionText(process)
+                const choose = () => onSelect(process)
+                const trigger = <tr role="button" tabIndex={0} aria-label={`选择进程 ${process.processName} PID ${process.processId}`} onClick={choose} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose() } else if (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); event.currentTarget.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: rect.left + Math.min(rect.width / 2, 160), clientY: rect.top + rect.height / 2 })) } }} className={cn("cursor-pointer border-t border-border align-top outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary", selectedProcessId === process.processId && "bg-primary/10")}><td className="break-all p-3 font-mono font-medium text-foreground">{process.processName}</td><td className="p-3 font-mono">{process.processId}</td><td className="p-3 font-mono">{process.resources?.cpuPercent == null ? "—" : `${process.resources.cpuPercent.toFixed(2)}%`}</td><td className="p-3 font-mono">{formatProcessBytes(process.resources?.workingSetBytes)}</td><td className="p-3 font-mono">{formatProcessBytes(process.resources?.privateMemoryBytes)}</td><td className="p-3 text-positive">{process.efficiencyMode ? "效能" : "—"}</td><td className="break-all p-3 font-mono text-muted-foreground" title={process.executablePath ?? ""}>{process.executablePath ?? "—"}</td><td className="p-3">{process.canTerminate ? <span className="text-positive">策略允许</span> : <span className="text-warning">{restriction}</span>}</td></tr>
+                return <ProcessRowContextMenu key={process.processId} trigger={trigger} process={process} supported={actionsSupported} busyAction={busyProcessId === process.processId ? busyAction : null} onAction={(action, options) => onAction(process, action, options)} />
+              })}</tbody>
+            </table>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:hidden">{processes.map((process) => {
+            const restriction = processTerminationRestrictionText(process)
+            return <div key={process.processId} role="button" tabIndex={0} onClick={() => onSelect(process)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(process) } }} className={cn("min-w-0 rounded-xl border border-border bg-background/40 p-3 text-left", selectedProcessId === process.processId && "border-primary bg-primary/10")}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all font-mono text-sm font-semibold">{process.processName}</p><p className="mt-1 font-mono text-xs text-muted-foreground">PID {process.processId}{process.efficiencyMode ? " · 效能模式" : ""}</p></div><ProcessMobileMenu process={process} supported={actionsSupported} busyAction={busyProcessId === process.processId ? busyAction : null} onAction={(action, options) => onAction(process, action, options)} /></div><p className="mt-2 break-all font-mono text-xs text-muted-foreground">{process.executablePath ?? "映像路径不可读"}</p><div className="mt-3 grid grid-cols-3 gap-2 text-xs"><span>CPU <b className="font-mono">{process.resources?.cpuPercent == null ? "—" : `${process.resources.cpuPercent.toFixed(2)}%`}</b></span><span>工作集 <b className="font-mono">{formatProcessBytes(process.resources?.workingSetBytes)}</b></span><span>专用 <b className="font-mono">{formatProcessBytes(process.resources?.privateMemoryBytes)}</b></span></div><p className={cn("mt-2 text-xs", process.canTerminate ? "text-positive" : "text-warning")}>{process.canTerminate ? "目标 Agent 策略允许终止" : restriction}</p></div>
+          })}</div>
+        </>
+      )}
+    </section>
+  )
 }
 
 function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
@@ -1780,10 +1837,23 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
   const [expectedPath, setExpectedPath] = useState("")
   const [killProcessTree, setKillProcessTree] = useState(true)
   const [timeoutSeconds, setTimeoutSeconds] = useState(30)
+  const [inventoryCommand, setInventoryCommand] = useState<TerminateProcessCommand | null>(null)
   const [command, setCommand] = useState<TerminateProcessCommand | null>(null)
+  const [actionCommand, setActionCommand] = useState<TerminateProcessCommand | null>(null)
+  const [inventory, setInventory] = useState<WindowsProcessListResult | null>(null)
+  const [processSearch, setProcessSearch] = useState("")
+  const [processSort, setProcessSort] = useState<ProcessSort>("cpu")
+  const [selectedProcessId, setSelectedProcessId] = useState<number | null>(null)
+  const [selectionWarning, setSelectionWarning] = useState<string | null>(null)
+  const [listing, setListing] = useState(false)
+  const [busyProcessId, setBusyProcessId] = useState<number | null>(null)
+  const [busyAction, setBusyAction] = useState<ProcessMenuAction | null>(null)
+  const [pendingSelectPid, setPendingSelectPid] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [inventoryError, setInventoryError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const windowsClientKey = windowsClients.map((client) => client.id).join("|")
+  const refreshedActionId = useRef<string | null>(null)
 
   useEffect(() => {
     if (fixedClientId) {
@@ -1793,6 +1863,43 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
     if (windowsClients.some((client) => client.id === clientId)) return
     setClientId(windowsClients[0]?.id ?? "")
   }, [clientId, fixedClientId, windowsClientKey])
+
+  useEffect(() => {
+    setInventory(null)
+    setInventoryCommand(null)
+    setCommand(null)
+    setActionCommand(null)
+    setProcessId("")
+    setExpectedPath("")
+    setSelectedProcessId(null)
+    setSelectionWarning(null)
+    setInventoryError(null)
+    setError(null)
+    setListing(false)
+    setBusyProcessId(null)
+    setBusyAction(null)
+    setPendingSelectPid(null)
+  }, [clientId])
+
+  useEffect(() => {
+    if (!inventoryCommand || terminalCommandStatuses.includes(inventoryCommand.status)) return
+    let active = true
+    const poll = async () => {
+      try {
+        const commands = await apiRequest<TerminateProcessCommand[]>(`/commands?clientId=${encodeURIComponent(inventoryCommand.clientId)}`)
+        const next = commands.find((item) => item.id === inventoryCommand.id)
+        if (active && next) setInventoryCommand(next)
+      } catch (caught) {
+        if (active) setInventoryError(caught instanceof Error ? caught.message : "进程清单命令状态查询失败")
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 1_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [apiRequest, inventoryCommand?.clientId, inventoryCommand?.id, inventoryCommand?.status])
 
   useEffect(() => {
     if (!command || terminalCommandStatuses.includes(command.status)) return
@@ -1814,7 +1921,31 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
     }
   }, [apiRequest, command?.clientId, command?.id, command?.status])
 
+  useEffect(() => {
+    if (!actionCommand || terminalCommandStatuses.includes(actionCommand.status)) return
+    let active = true
+    const poll = async () => {
+      try {
+        const commands = await apiRequest<TerminateProcessCommand[]>(`/commands?clientId=${encodeURIComponent(actionCommand.clientId)}`)
+        const next = commands.find((item) => item.id === actionCommand.id)
+        if (active && next) setActionCommand(next)
+      } catch (caught) {
+        if (active) setError(caught instanceof Error ? caught.message : "进程操作状态查询失败")
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => void poll(), 1_000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [apiRequest, actionCommand?.clientId, actionCommand?.id, actionCommand?.status])
+
   const selectedClient = windowsClients.find((client) => client.id === clientId)
+  const inventorySupported = Boolean(selectedClient && supportsProcessInventory(selectedClient.version))
+  const actionsSupported = Boolean(selectedClient && supportsProcessActions(selectedClient.version))
+  const listResult = parseWindowsProcessListResult(inventoryCommand?.result ?? null)
+  const visibleProcesses = useMemo(
+    () => filterAndSortProcesses(inventory?.processes ?? [], processSearch, processSort),
+    [inventory, processSearch, processSort],
+  )
   const normalizedPath = expectedPath.trim()
   const valid = Boolean(
     selectedClient &&
@@ -1823,6 +1954,91 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
     isValidProcessTimeout(timeoutSeconds),
   )
   const parsedResult = parseTerminateProcessResult(command?.result ?? null)
+  const actionTerminateResult = actionCommand?.type === "terminate-process" ? parseTerminateProcessResult(actionCommand.result) : null
+  const actionRestartResult = actionCommand?.type === "restart-process" ? parseRestartProcessResult(actionCommand.result) : null
+  const actionEfficiencyResult = actionCommand?.type === "set-process-efficiency" ? parseSetProcessEfficiencyResult(actionCommand.result) : null
+
+  useEffect(() => {
+    if (!inventoryCommand || !terminalCommandStatuses.includes(inventoryCommand.status)) return
+    setListing(false)
+    if (listResult) {
+      setInventory(listResult)
+      if (listResult.error) setInventoryError(listResult.error)
+      if (pendingSelectPid !== null) {
+        const replacement = listResult.processes.find((process) => process.processId === pendingSelectPid)
+        if (replacement) selectProcess(replacement)
+        setPendingSelectPid(null)
+      } else if (selectedProcessId !== null && !listResult.processes.some((process) => process.processId === selectedProcessId)) {
+        setSelectedProcessId(null)
+      }
+    } else if (inventoryCommand.result) {
+      setInventoryError("Agent 返回了未通过完整字段校验的进程清单")
+    }
+  }, [inventoryCommand?.id, inventoryCommand?.status, inventoryCommand?.result])
+
+  useEffect(() => {
+    if (!actionCommand || !terminalCommandStatuses.includes(actionCommand.status) || refreshedActionId.current === actionCommand.id) return
+    refreshedActionId.current = actionCommand.id
+    setBusyProcessId(null)
+    setBusyAction(null)
+    if (actionCommand.status === "success" && actionRestartResult?.newProcessId) setPendingSelectPid(actionRestartResult.newProcessId)
+    void fetchProcesses()
+  }, [actionCommand?.id, actionCommand?.status, actionCommand?.result])
+
+  async function fetchProcesses() {
+    if (!selectedClient || !inventorySupported || selectedClient.status !== "online" || listing) return
+    setListing(true)
+    setInventoryError(null)
+    try {
+      const freshClient = await apiRequest<Client>(`/clients/${encodeURIComponent(selectedClient.id)}`)
+      if (freshClient.os !== "Windows" || freshClient.status !== "online") throw new Error(`客户端 ${freshClient.name} 当前离线，无法获取进程`)
+      const created = await apiRequest<TerminateProcessCommand>(`/clients/${encodeURIComponent(freshClient.id)}/commands`, {
+        method: "POST",
+        body: JSON.stringify({ type: "list-processes", payload: {} }),
+      })
+      setInventoryCommand(created)
+    } catch (caught) {
+      setListing(false)
+      setInventoryError(caught instanceof Error ? caught.message : "进程清单获取失败")
+    }
+  }
+
+  function selectProcess(process: WindowsProcessItem) {
+    const selection = processFormSelection(process)
+    setProcessId(selection.processId)
+    setExpectedPath(selection.expectedPath)
+    setSelectionWarning(selection.warning)
+    setSelectedProcessId(process.processId)
+  }
+
+  async function runProcessAction(process: WindowsProcessItem, action: ProcessMenuAction, options: ProcessMenuActionOptions = {}) {
+    if (!selectedClient || !actionsSupported || busyAction || !process.executablePath || !process.startedAtUtc) return
+    const identity = { processId: process.processId, expectedPath: process.executablePath, expectedStartedAtUtc: process.startedAtUtc }
+    if (action === "terminate" && !options.confirmedByMenu) {
+      if (!(await confirm({ title: `终止进程 ${process.processName}？`, description: "只终止当前 PID，不终止完整进程树。", body: `客户端：${selectedClient.name}\nPID：${process.processId}\n路径：${process.executablePath}`, confirmLabel: "终止进程", tone: "danger" }))) return
+    } else if (action === "restart" && !options.confirmedByMenu) {
+      if (!(await confirm({ title: `重启进程 ${process.processName}？`, description: "Agent 将终止原进程树，并在原活动用户会话中使用原启动参数重新启动。", body: `客户端：${selectedClient.name}\nPID：${process.processId}\n路径：${process.executablePath}`, confirmLabel: "重启进程", tone: "warning" }))) return
+    } else if (options.enabled && !(await confirm({ title: `为 ${process.processName} 启用效能模式？`, description: "将启用 Windows EcoQoS 并降低该 PID 的进程优先级。", body: `客户端：${selectedClient.name}\nPID：${process.processId}`, confirmLabel: "启用效能模式", tone: "warning" }))) return
+
+    setBusyProcessId(process.processId)
+    setBusyAction(action)
+    setError(null)
+    setActionCommand(null)
+    selectProcess(process)
+    try {
+      const body = action === "terminate"
+        ? { type: "terminate-process", payload: { ...identity, timeoutSeconds, killProcessTree: false } }
+        : action === "restart"
+          ? { type: "restart-process", payload: { ...identity, timeoutSeconds } }
+          : { type: "set-process-efficiency", payload: { ...identity, enabled: Boolean(options.enabled) } }
+      const created = await apiRequest<TerminateProcessCommand>(`/clients/${encodeURIComponent(selectedClient.id)}/commands`, { method: "POST", body: JSON.stringify(body) })
+      setActionCommand(created)
+    } catch (caught) {
+      setBusyProcessId(null)
+      setBusyAction(null)
+      setError(caught instanceof Error ? caught.message : "进程操作命令下发失败")
+    }
+  }
 
   async function submit() {
     if (!selectedClient || !valid || submitting) return
@@ -1857,15 +2073,15 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
   }
 
   return (
-    <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    <div className="flex h-full min-w-0 flex-col gap-5 overflow-auto pr-1">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
         <Field label="目标 Windows 客户端" icon={<AppWindow className="h-3.5 w-3.5" />}>
           <Select
             value={clientId}
             onChange={setClientId}
             disabled={Boolean(fixedClientId)}
             placeholder="选择客户端"
-            options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
+            options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status} · ${client.version}` }))}
           />
         </Field>
         <Field label="进程 ID（PID）" icon={<CircleStop className="h-3.5 w-3.5" />}>
@@ -1873,20 +2089,29 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
             inputMode="numeric"
             className={cn(inputCls, "font-mono")}
             value={processId}
-            onChange={(event) => setProcessId(event.target.value)}
+            onChange={(event) => { setProcessId(event.target.value); setSelectedProcessId(null); setSelectionWarning(null) }}
             placeholder="1234"
           />
         </Field>
+        <div className="flex items-end"><button type="button" onClick={() => void fetchProcesses()} disabled={!selectedClient || selectedClient.status !== "online" || !inventorySupported || listing || Boolean(inventoryCommand && !terminalCommandStatuses.includes(inventoryCommand.status))} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:pointer-events-none disabled:opacity-50 xl:w-auto">{listing || inventoryCommand && !terminalCommandStatuses.includes(inventoryCommand.status) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}{inventory ? "刷新进程" : "获取进程"}</button></div>
       </div>
+
+      {selectedClient && !inventorySupported && <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">进程清单需要 Agent 1.1.19 或更高版本；当前 {selectedClient.version || "版本未知"} 仍可手工填写 PID 与映像路径。</p>}
+      {inventory?.truncated && <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">结果已按 480 KiB 上限截断：显示 {inventory.returned} / {inventory.total} 项。</p>}
+      {inventoryError && <div role="alert" className="rounded-xl border border-negative/30 bg-negative/10 px-4 py-3 text-sm text-negative">{inventoryError}</div>}
+      {inventory && <ProcessInventoryView inventory={inventory} processes={visibleProcesses} search={processSearch} sort={processSort} selectedProcessId={selectedProcessId} actionsSupported={actionsSupported} busyProcessId={busyProcessId} busyAction={busyAction} onSearch={setProcessSearch} onSort={setProcessSort} onSelect={selectProcess} onAction={(process, action, options) => void runProcessAction(process, action, options)} />}
+
+      {actionCommand && <section className="rounded-2xl border border-border bg-surface/60 p-4" aria-live="polite"><div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4"><div><p className="text-muted-foreground">右键操作</p><p className="mt-1 font-mono">{actionCommand.type}</p></div><div><p className="text-muted-foreground">命令状态</p><p className="mt-1 font-mono">{actionCommand.status}</p></div>{actionRestartResult && <><div><p className="text-muted-foreground">原 PID</p><p className="mt-1 font-mono">{actionRestartResult.originalProcessId}</p></div><div><p className="text-muted-foreground">新 PID</p><p className="mt-1 font-mono">{actionRestartResult.newProcessId ?? "—"}</p></div></>}{actionEfficiencyResult && <><div><p className="text-muted-foreground">请求状态</p><p className="mt-1 font-mono">{actionEfficiencyResult.requestedEnabled ? "启用" : "关闭"}</p></div><div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono">{actionEfficiencyResult.finalEnabled == null ? "—" : actionEfficiencyResult.finalEnabled ? "已启用" : "已关闭"}</p></div></>}{actionTerminateResult && <div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono">{actionTerminateResult.finalStatus}</p></div>}</div>{(actionRestartResult?.error || actionEfficiencyResult?.error || actionTerminateResult?.error) && <p className="mt-3 text-sm text-negative">{actionRestartResult?.error || actionEfficiencyResult?.error || actionTerminateResult?.error}</p>}</section>}
 
       <Field label="预期绝对映像路径">
         <input
           className={cn(inputCls, "font-mono")}
           value={expectedPath}
-          onChange={(event) => setExpectedPath(event.target.value)}
+          onChange={(event) => { setExpectedPath(event.target.value); setSelectedProcessId(null); setSelectionWarning(null) }}
           placeholder="C:\\Program Files\\Example\\worker.exe"
         />
       </Field>
+      {selectionWarning && <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">{selectionWarning}；提交后仍由 Agent 执行最终身份与路径校验。</p>}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="超时（秒）">
@@ -1929,8 +2154,8 @@ function WindowsProcessTerminate({ clientId: fixedClientId }: DetailProps) {
               <div><p className="text-muted-foreground">终止进程树</p><p className="mt-1 font-mono text-foreground">{parsedResult ? (parsedResult.killProcessTree ? "是" : "否") : "-"}</p></div>
               {parsedResult && (
                 <>
-                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期���径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
-                  <div className="sm:col-span-2"><p className="text-muted-foreground">���际路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.actualPath ?? "-"}</p></div>
+                  <div className="sm:col-span-2"><p className="text-muted-foreground">预期路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.expectedPath}</p></div>
+                  <div className="sm:col-span-2"><p className="text-muted-foreground">实际路径</p><p className="mt-1 break-all font-mono text-foreground">{parsedResult.actualPath ?? "-"}</p></div>
                   <div><p className="text-muted-foreground">初始状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.initialStatus}</p></div>
                   <div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono text-foreground">{parsedResult.finalStatus}</p></div>
                   <div><p className="text-muted-foreground">耗时</p><p className="mt-1 font-mono text-foreground">{parsedResult.durationMs} ms</p></div>
@@ -2057,7 +2282,7 @@ function WindowsSystemRestart({ clientId: fixedClientId }: DetailProps) {
             value={clientId}
             onChange={setClientId}
             disabled={Boolean(fixedClientId)}
-            placeholder="选择���线客户端"
+            placeholder="选择在线客户端"
             options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status}` }))}
           />
         </Field>
@@ -2372,9 +2597,16 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
   const [serviceName, setServiceName] = useState("")
   const [action, setAction] = useState<ServiceAction>("query")
   const [timeoutSeconds, setTimeoutSeconds] = useState(30)
-  const [command, setCommand] = useState<ServiceCommand | null>(null)
+  const [inventoryCommand, setInventoryCommand] = useState<ServiceCommand | null>(null)
+  const [controlCommand, setControlCommand] = useState<ServiceCommand | null>(null)
+  const [inventory, setInventory] = useState<WindowsServiceListResult | null>(null)
+  const [filter, setFilter] = useState<ServiceListFilter>("running")
+  const [sort, setSort] = useState<ServiceSort>("cpu")
+  const [search, setSearch] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [listing, setListing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const refreshedControlId = useRef<string | null>(null)
   const windowsClientKey = windowsClients.map((client) => client.id).join("|")
 
   useEffect(() => {
@@ -2387,13 +2619,21 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
   }, [clientId, fixedClientId, windowsClientKey])
 
   useEffect(() => {
+    setInventory(null)
+    setInventoryCommand(null)
+    setControlCommand(null)
+    setServiceName("")
+    setError(null)
+  }, [clientId])
+
+  function pollCommand(command: ServiceCommand | null, update: (value: ServiceCommand) => void) {
     if (!command || terminalCommandStatuses.includes(command.status)) return
     let active = true
     const poll = async () => {
       try {
         const commands = await apiRequest<ServiceCommand[]>(`/commands?clientId=${encodeURIComponent(command.clientId)}`)
         const next = commands.find((item) => item.id === command.id)
-        if (active && next) setCommand(next)
+        if (active && next) update(next)
       } catch (caught) {
         if (active) setError(caught instanceof Error ? caught.message : "命令状态查询失败")
       }
@@ -2404,14 +2644,59 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
       active = false
       window.clearInterval(timer)
     }
-  }, [apiRequest, command?.clientId, command?.id, command?.status])
+  }
+
+  useEffect(() => {
+    return pollCommand(inventoryCommand, setInventoryCommand)
+  }, [apiRequest, inventoryCommand?.clientId, inventoryCommand?.id, inventoryCommand?.status])
+  useEffect(() => {
+    return pollCommand(controlCommand, setControlCommand)
+  }, [apiRequest, controlCommand?.clientId, controlCommand?.id, controlCommand?.status])
 
   const selectedClient = windowsClients.find((client) => client.id === clientId)
-  const parsedResult = parseServiceResult(command?.result ?? null)
+  const inventorySupported = Boolean(selectedClient && supportsServiceInventory(selectedClient.version))
+  const listResult = parseWindowsServiceListResult(inventoryCommand?.result ?? null)
+  const controlResult = parseWindowsServiceControlResult(controlCommand?.result ?? null)
+  const visibleServices = useMemo(
+    () => filterAndSortServices(inventory?.services ?? [], filter, search, sort),
+    [filter, inventory, search, sort],
+  )
+  const selectedService = inventory?.services.find((service) => service.serviceName === serviceName) ?? null
+  const mutationAllowed = action === "query" || !inventorySupported || Boolean(selectedService?.canControl)
+
+  useEffect(() => {
+    if (!listResult) return
+    setInventory(listResult)
+    setListing(false)
+    if (listResult.error) setError(listResult.error)
+  }, [inventoryCommand?.id, inventoryCommand?.status, inventoryCommand?.result])
+
+  const fetchServices = useCallback(async () => {
+    if (!selectedClient || !inventorySupported || selectedClient.status !== "online" || listing) return
+    setListing(true)
+    setError(null)
+    try {
+      const created = await apiRequest<ServiceCommand>(`/clients/${encodeURIComponent(selectedClient.id)}/commands`, {
+        method: "POST",
+        body: JSON.stringify({ type: "manage-service", payload: { action: "list" } }),
+      })
+      setInventoryCommand(created)
+    } catch (caught) {
+      setListing(false)
+      setError(caught instanceof Error ? caught.message : "服务清单获取失败")
+    }
+  }, [apiRequest, inventorySupported, listing, selectedClient])
+
+  useEffect(() => {
+    if (!controlCommand || !terminalCommandStatuses.includes(controlCommand.status)) return
+    if (refreshedControlId.current === controlCommand.id) return
+    refreshedControlId.current = controlCommand.id
+    void fetchServices()
+  }, [controlCommand?.id, controlCommand?.status, fetchServices])
 
   async function submit() {
     const normalizedName = serviceName.trim()
-    if (!selectedClient || !normalizedName || timeoutSeconds < 1 || timeoutSeconds > 120) return
+    if (!selectedClient || !normalizedName || timeoutSeconds < 1 || timeoutSeconds > 120 || !mutationAllowed) return
     if (selectedClient.status !== "online") {
       setError(`客户端 ${selectedClient.name} 当前离线，命令尚未下发`)
       return
@@ -2424,16 +2709,13 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
     }))) return
     setSubmitting(true)
     setError(null)
-    setCommand(null)
+    setControlCommand(null)
     try {
       const created = await apiRequest<ServiceCommand>(`/clients/${encodeURIComponent(selectedClient.id)}/commands`, {
         method: "POST",
-        body: JSON.stringify({
-          type: "manage-service",
-          payload: { serviceName: normalizedName, action, timeoutSeconds },
-        }),
+        body: JSON.stringify({ type: "manage-service", payload: { serviceName: normalizedName, action, timeoutSeconds } }),
       })
-      setCommand(created)
+      setControlCommand(created)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "服务控制命令下发失败")
     } finally {
@@ -2441,103 +2723,70 @@ function WindowsServiceManage({ clientId: fixedClientId }: DetailProps) {
     }
   }
 
+  function selectService(service: WindowsServiceItem) {
+    setServiceName(service.serviceName)
+    if (!service.canControl && action !== "query") setAction("query")
+  }
+
+  const restriction = selectedService ? serviceControlRestrictionText(selectedService) : null
+  const capturedAt = inventory ? new Date(inventory.capturedAtUtc).toLocaleString("zh-CN") : null
+
   return (
-    <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    <div className="flex h-full min-w-0 flex-col gap-5 overflow-auto pr-1">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
         <Field label="目标 Windows 客户端" icon={<AppWindow className="h-3.5 w-3.5" />}>
-          <Select
-            value={clientId}
-            onChange={setClientId}
-            disabled={Boolean(fixedClientId)}
-            placeholder="选择客户端"
-            options={windowsClients.map((client) => ({
-              value: client.id,
-              label: `${client.name} · ${client.status}`,
-            }))}
-          />
+          <Select value={clientId} onChange={setClientId} disabled={Boolean(fixedClientId)} placeholder="选择客户端" options={windowsClients.map((client) => ({ value: client.id, label: `${client.name} · ${client.status} · ${client.version}` }))} />
         </Field>
-        <Field label="服务名称" icon={<Server className="h-3.5 w-3.5" />}>
-          <input
-            className={cn(inputCls, "font-mono")}
-            value={serviceName}
-            onChange={(event) => setServiceName(event.target.value)}
-            placeholder="ExampleService"
-          />
-        </Field>
+        <div className="flex items-end">
+          <button type="button" onClick={() => void fetchServices()} disabled={!selectedClient || selectedClient.status !== "online" || !inventorySupported || listing} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:pointer-events-none disabled:opacity-50 lg:w-auto">
+            {listing || inventoryCommand && !terminalCommandStatuses.includes(inventoryCommand.status) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+            {inventory ? "刷新服务" : "获取服务"}
+          </button>
+        </div>
       </div>
 
-      <Field label="操作">
-        <div className="grid grid-cols-2 gap-2 sm:hidden">
-          {serviceActions.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setAction(option.id)}
-              className={cn(
-                "h-10 rounded-lg border text-sm font-medium transition-colors",
-                action === option.id
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-surface/60 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        <div className="hidden sm:block">
-          <SegmentedControl fill value={action} onChange={setAction} options={serviceActions} />
-        </div>
-      </Field>
+      {selectedClient && !inventorySupported && <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">服务清单需要 Agent 1.1.18 或更高版本；当前 {selectedClient.version || "版本未知"} 仍可使用原有单项查询与控制。</p>}
+      {inventory?.truncated && <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">结果已按 480 KiB 上限截断：显示 {inventory.returned} / {inventory.total} 项。</p>}
 
-      <Field label="超时（秒）">
-        <input
-          type="number"
-          min={1}
-          max={120}
-          step={1}
-          value={timeoutSeconds}
-          onChange={(event) => setTimeoutSeconds(Number(event.target.value))}
-          className={cn(inputCls, "max-w-40 font-mono")}
-        />
-      </Field>
-
-      {(command || error) && (
-        <div className="rounded-2xl border border-border bg-surface/60 p-4">
-          {command && (
-            <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-              <div><p className="text-muted-foreground">命令 ID</p><p className="mt-1 break-all font-mono text-foreground">{command.id}</p></div>
-              <div><p className="text-muted-foreground">状态</p><p className="mt-1 font-mono text-foreground">{command.status}</p></div>
-              <div><p className="text-muted-foreground">初始状态</p><p className="mt-1 font-mono text-foreground">{parsedResult?.initialStatus ?? "-"}</p></div>
-              <div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono text-foreground">{parsedResult?.finalStatus ?? "-"}</p></div>
-              {parsedResult && (
-                <>
-                  <div><p className="text-muted-foreground">服务</p><p className="mt-1 font-mono text-foreground">{parsedResult.serviceName}</p></div>
-                  <div><p className="text-muted-foreground">操作</p><p className="mt-1 font-mono text-foreground">{parsedResult.action}</p></div>
-                  <div><p className="text-muted-foreground">耗时</p><p className="mt-1 font-mono text-foreground">{parsedResult.durationMs} ms</p></div>
-                  <div><p className="text-muted-foreground">超时</p><p className="mt-1 font-mono text-foreground">{parsedResult.timedOut ? "是" : "否"}</p></div>
-                </>
-              )}
+      {inventory && (
+        <section className="min-w-0 rounded-2xl border border-border bg-surface/45 p-3 sm:p-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div><p className="text-sm font-semibold text-foreground">服务快照 · {inventory.returned} 项</p><p className="mt-1 text-xs text-muted-foreground">采集于 {capturedAt} · 采样 {inventory.sampleDurationMs} ms；共享 PID 显示宿主进程总占用。</p></div>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+              <div className="relative min-w-0 sm:w-56"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索服务名或显示名称" className={cn(inputCls, "pl-9")} /></div>
+              <Select value={filter} onChange={(value) => setFilter(value as ServiceListFilter)} options={[{ value: "running", label: "运行中" }, { value: "all", label: "全部" }, { value: "stopped", label: "已停止" }]} />
+              <Select value={sort} onChange={(value) => setSort(value as ServiceSort)} options={[{ value: "cpu", label: "CPU 降序" }, { value: "memory", label: "内存降序" }, { value: "name", label: "名称排序" }]} />
             </div>
+          </div>
+
+          {visibleServices.length === 0 ? <div className="py-10 text-center text-sm text-muted-foreground">当前筛选条件下没有服务。</div> : (
+            <>
+              <div className="mt-4 hidden overflow-x-auto rounded-xl border border-border md:block">
+                <table className="w-full min-w-[900px] table-fixed text-left text-xs">
+                  <thead className="bg-background/60 text-muted-foreground"><tr><th className="w-[28%] p-3">服务</th><th className="w-24 p-3">状态</th><th className="w-24 p-3">PID</th><th className="w-24 p-3">CPU</th><th className="w-28 p-3">工作集</th><th className="w-28 p-3">专用内存</th><th className="p-3">控制</th></tr></thead>
+                  <tbody>{visibleServices.map((service) => <tr key={service.serviceName} onClick={() => selectService(service)} className={cn("cursor-pointer border-t border-border align-top hover:bg-primary/5", service.serviceName === serviceName && "bg-primary/10")}><td className="p-3"><p className="break-all font-mono font-medium text-foreground">{service.serviceName}</p><p className="mt-1 break-words text-muted-foreground">{service.displayName}</p>{service.sharedProcess && <p className="mt-1 text-warning">共享宿主 · {service.sharedServiceCount} 项服务</p>}</td><td className="p-3 font-mono">{service.status}</td><td className="p-3 font-mono">{service.processId ?? "—"}</td><td className="p-3 font-mono">{service.resources?.cpuPercent === null || service.resources?.cpuPercent === undefined ? "—" : `${service.resources.cpuPercent.toFixed(2)}%`}</td><td className="p-3 font-mono">{formatServiceBytes(service.resources?.workingSetBytes)}</td><td className="p-3 font-mono">{formatServiceBytes(service.resources?.privateMemoryBytes)}</td><td className="p-3">{service.canControl ? <span className="text-positive">可控制</span> : <span className="text-muted-foreground">{serviceControlRestrictionText(service)}</span>}</td></tr>)}</tbody>
+                </table>
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-3 md:hidden">{visibleServices.map((service) => <button key={service.serviceName} type="button" onClick={() => selectService(service)} className={cn("min-w-0 rounded-xl border border-border bg-background/40 p-3 text-left", service.serviceName === serviceName && "border-primary bg-primary/10")}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all font-mono text-sm font-semibold">{service.serviceName}</p><p className="mt-1 break-words text-xs text-muted-foreground">{service.displayName}</p></div><span className="shrink-0 font-mono text-xs">{service.status}</span></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><span>PID <b className="font-mono">{service.processId ?? "—"}</b></span><span>CPU <b className="font-mono">{service.resources?.cpuPercent == null ? "—" : `${service.resources.cpuPercent.toFixed(2)}%`}</b></span><span>工作集 <b className="font-mono">{formatServiceBytes(service.resources?.workingSetBytes)}</b></span><span>专用 <b className="font-mono">{formatServiceBytes(service.resources?.privateMemoryBytes)}</b></span></div>{service.sharedProcess && <p className="mt-2 text-xs text-warning">共享宿主进程 · {service.sharedServiceCount} 项服务</p>}<p className="mt-2 text-xs text-muted-foreground">{service.canControl ? "可执行启停与重启" : serviceControlRestrictionText(service)}</p></button>)}</div>
+            </>
           )}
-          {(error || parsedResult?.error) && <p className="mt-3 break-words text-sm text-negative">{error || parsedResult?.error}</p>}
-        </div>
+        </section>
       )}
 
-      <div className="mt-auto flex justify-end border-t border-border pt-4">
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={!selectedClient || !serviceName.trim() || timeoutSeconds < 1 || timeoutSeconds > 120 || submitting}
-          className="flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50"
-        >
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          下发命令
-        </button>
-      </div>
+      <section className="rounded-2xl border border-border bg-surface/60 p-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_180px]">
+          <Field label="已选服务" icon={<Server className="h-3.5 w-3.5" />}><input className={cn(inputCls, "font-mono")} value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="从清单选择，或输入服务名" /></Field>
+          <Field label="超时（秒）"><input type="number" min={1} max={120} step={1} value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} className={cn(inputCls, "font-mono")} /></Field>
+        </div>
+        <Field label="操作"><div className="mt-2"><SegmentedControl fill value={action} onChange={setAction} options={serviceActions} /></div></Field>
+        {restriction && <p className="mt-3 text-xs text-warning">{restriction}；仍可执行只读查询。</p>}
+        <div className="mt-4 flex justify-end"><button type="button" onClick={() => void submit()} disabled={!selectedClient || !serviceName.trim() || timeoutSeconds < 1 || timeoutSeconds > 120 || submitting || !mutationAllowed} className="flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:pointer-events-none disabled:opacity-50">{submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}执行操作</button></div>
+      </section>
+
+      {(controlCommand || error) && <div className="rounded-2xl border border-border bg-surface/60 p-4" aria-live="polite">{controlCommand && <div className="grid grid-cols-2 gap-3 text-xs lg:grid-cols-4"><div><p className="text-muted-foreground">命令</p><p className="mt-1 break-all font-mono">{controlCommand.id}</p></div><div><p className="text-muted-foreground">状态</p><p className="mt-1 font-mono">{controlCommand.status}</p></div><div><p className="text-muted-foreground">初始状态</p><p className="mt-1 font-mono">{controlResult?.initialStatus ?? "—"}</p></div><div><p className="text-muted-foreground">最终状态</p><p className="mt-1 font-mono">{controlResult?.finalStatus ?? "—"}</p></div></div>}{(error || controlResult?.error) && <p className="mt-3 break-words text-sm text-negative">{error || controlResult?.error}</p>}</div>}
     </div>
   )
 }
-
 const services = [
   { name: "nginx.service", desc: "A high performance web server", running: true },
   { name: "docker.service", desc: "Docker Application Container Engine", running: true },
@@ -2587,7 +2836,7 @@ function ServiceManage({ os, clientId }: DetailProps) {
 /* ---------- 子功能：计划任务（Linux Cron） ---------- */
 const cronJobs = [
   { schedule: "0 3 * * *", cmd: "/usr/local/bin/backup.sh", note: "每日 03:00 备份" },
-  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "�� 10 分钟���康检查" },
+  { schedule: "*/10 * * * *", cmd: "curl -s http://localhost/health", note: "每 10 分钟健康检查" },
   { schedule: "0 0 * * 0", cmd: "apt-get update && apt-get -y upgrade", note: "每周日更新系统" },
 ]
 
@@ -2651,7 +2900,7 @@ type Tool = {
 }
 
 const windowsTools: Tool[] = [
-  { id: "service", title: "服务控制", desc: "查询、启动、停止或重启 Windows 服务", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
+  { id: "service", title: "服务控制", desc: "获取服务清单、查看占用并执行启停或重启", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
   { id: "terminate-process", title: "进程终止", desc: "按 PID 与允许路径安全终止本机进程", icon: CircleStop, tint: "oklch(0.65 0.2 25)", Detail: WindowsProcessTerminate },
   { id: "restart-system", title: "系统重启", desc: "经本机策略确认后重启 Windows 并跨启动核验", icon: RotateCw, tint: "oklch(0.62 0.22 25)", Detail: WindowsSystemRestart },
   { id: "collect-logs", title: "日志采集", desc: "采集受限来源的本机诊断与 Windows 事件快照", icon: FileClock, tint: "oklch(0.5 0.15 200)", Detail: WindowsLogCollection },
@@ -2669,7 +2918,7 @@ const linuxTools: Tool[] = [
   { id: "file-deploy", title: "文件下发", desc: "分发文件到指定目录", icon: FileUp, tint: "oklch(0.5 0.15 200)", Detail: FileDeploy },
   { id: "command", title: "命令执行", desc: "远程运行 Shell 命令", icon: SquareTerminal, tint: "oklch(0.72 0.16 60)", Detail: CommandRun },
   { id: "message", title: "消息推送", desc: "向客户端发送广播通知", icon: MessageSquare, tint: "oklch(0.82 0.19 145)", Detail: MessagePush },
-  { id: "users", title: "用户管理", desc: "管����系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
+  { id: "users", title: "用户管理", desc: "管理系统账户与权限", icon: Users, tint: "oklch(0.5 0.15 200)", Detail: UserManage },
   { id: "service", title: "服务管理", desc: "管理 systemd 服务状态", icon: Server, tint: "oklch(0.72 0.16 60)", Detail: ServiceManage },
   { id: "cron", title: "计划任务", desc: "编辑 Crontab 定时任务", icon: CalendarClock, tint: "oklch(0.82 0.19 145)", Detail: CronManage },
 ]
@@ -2726,7 +2975,7 @@ function MetricBar({ label, value }: { label: string; value: number }) {
   )
 }
 
-/* 左侧设备档案：单机管理��有的身份区，批量操作没有 */
+/* 左侧设备档案：单机管理独有的身份区，批量操作没有 */
 function DeviceProfile({ client }: { client: Client }) {
   const s = statusMeta[client.status]
   const brand = resolveOsBrand(client.os, client.osName)

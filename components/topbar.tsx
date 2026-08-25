@@ -234,7 +234,7 @@ function TasksActions({ active }: { active: boolean }) {
 /**
  * 顶栏系统日志功能区：暂停/继续 / 导出 / 清空。
  * 与客户端页一致——仅在 /logs 挂载于条件插槽，采用两阶段过渡：
- * 1) 先渲染上一页（首页���式）的四个动作按钮，令其向左收拢、变淡并模糊离场（回收动画）；
+ * 1) 先渲染上一页（首页样式）的四个动作按钮，令其向左收拢、变淡并模糊离场（回收动画）；
  * 2) 待其完全消失后，日志三个功能键再从左到右逐个模糊渐显展开。
  * 离开日志页时，由目标页工具栏（如 HomeActions 的 fromLogs 分支）负责回放日志按钮的收拢。
  */
@@ -406,7 +406,7 @@ function IconButton({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className={cn(
-        // 图标用固定左右内边距锁定在 48px 圆形��域内，justify-start 保证不随宽度变化而抖动；
+        // 图标用固定左右内边距锁定在 48px 圆形区域内，justify-start 保证不随宽度变化而抖动；
         // 按钮宽度由内部文字的 max-width 动画驱动，展开/收回都能平滑过渡
         "relative flex h-12 items-center justify-start rounded-full bg-surface px-3.5 text-foreground transition-colors duration-300 ease-out hover:bg-muted",
       )}
@@ -592,7 +592,7 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
   // 0: 渲染上一页按钮（静止） 1: 向左合并离场 2: 展示首页功能键
   const [stage, setStage] = useState<0 | 1 | 2>(reverse ? 0 : 2)
   // 初值恒为「未入场」：无论从客户端/日志返回，还是首页 ↔ 脚本安装切换，
-  // 都从模糊轻移态开始逐个揭示，保证每次进入页面顶栏都有一致的切入��画。
+  // 都从模糊轻移态开始逐个揭示，保证每次进入页面顶栏都有一致的切入动画。
   const [keysIn, setKeysIn] = useState(false)
 
   useEffect(() => {
@@ -662,7 +662,7 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
                   : "border border-border bg-surface/70 text-foreground",
               )}
               style={{
-                // 全部向最左���「客户��」靠拢堆叠，伴随变淡与模糊
+                // 全部向最左侧「客户端」靠拢堆叠，伴随变淡与模糊
                 transform: merging ? `translateX(-${i * 60}px) scale(0.92)` : "translateX(0) scale(1)",
                 opacity: merging ? 0 : 1,
                 filter: merging ? "blur(6px)" : "blur(0px)",
@@ -722,7 +722,7 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
   )
 }
 
-/** 客户端页的标签按钮：图标常驻，激活或悬浮时标签模糊渐显展开���继承「数据库管理」按钮动效） */
+/** 客户端页的标签按钮：图标常驻，激活或悬浮时标签模糊渐显展开（继承「数据库管理」按钮动效） */
 function TopbarTab({
   tab,
   isActive,
@@ -733,7 +733,7 @@ function TopbarTab({
   tab: (typeof clientTabs)[number]
   isActive: boolean
   onSelect: () => void
-  /** 入场��否完成（驱动从左到右逐个展开） */
+  /** 入场是否完成（驱动从左到右逐个展开） */
   show: boolean
   delay: number
 }) {
@@ -785,8 +785,8 @@ function TopbarTab({
 
 /**
  * 客户端页顶栏动作区：
- * 1) 延续首页的四个动作按钮（含加号），向左侧第一个按钮收拢、合并���伴随变淡与模糊后消失；
- * 2) 待其完全消失后，客户��标签从左到右逐个展开（由浅到深、模糊到清晰）。
+ * 1) 延续首页的四个动作按钮（含加号），向左侧第一个按钮收拢、合并，伴随变淡与模糊后消失；
+ * 2) 待其完全消失后，客户端标签从左到右逐个展开（由浅到深、模糊到清晰）。
  */
 function ClientsActions() {
   const ctx = useClientTabs()

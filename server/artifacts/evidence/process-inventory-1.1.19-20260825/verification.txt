@@ -1,0 +1,99 @@
+Nacho Windows 进程清单 1.1.19 验证记录
+时间：2026-08-25 Asia/Shanghai
+
+[Baseline]
+命令：pnpm exec tsx --test tests/terminate-process.test.ts tests/windows-service-inventory.test.ts tests/client-management.test.ts
+输入：仓库原有 1.1.18 服务清单与手工进程终止实现
+输出：tests 12; pass 12; fail 0
+退出状态：0
+
+命令：dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj --filter "FullyQualifiedName~WindowsProcessTerminatorTests|FullyQualifiedName~WindowsServiceManagerTests" --no-restore
+输入：Agent 1.1.18 基线
+输出：通过 60，失败 0，跳过 0，总计 60
+退出状态：0
+
+命令：Invoke-WebRequest http://localhost:3000/clients；systemctl is-active control-server.service；curl http://localhost:8443/health；查询 NachoAgent
+输入：变更前本机运行态
+输出：Panel HTTP 200；control-server active / health HTTP 200；NachoAgent Running/Auto/LocalSystem，FileVersion 1.1.18.0
+退出状态：0
+
+[Modified source]
+命令：pnpm exec tsx --test tests/*.test.ts
+输入：新增 list-processes 面板解析、筛选、排序与回填逻辑
+输出：tests 61; pass 61; fail 0
+退出状态：0
+
+命令：pnpm exec tsc --noEmit
+输入：完整面板 TypeScript 源码
+输出：（无诊断）
+退出状态：0
+
+命令：pnpm build
+输入：仓库原位面板源码，构建前停止原 dev 进程，构建后恢复 dev
+输出：Turbopack Compiled successfully；静态页面 2/2；/clients 为动态路由；存在 1 条既有 local-settings-store NFT 动态路径告警
+退出状态：0
+
+命令：WSL Debian /tmp 隔离副本 npm ci --no-audit --no-fund；npm test；npm run build
+输入：server/package*.json、server/tsconfig.json、server/src
+输出：tests 38; pass 38; fail 0；tsc -p tsconfig.json 完成
+退出状态：0
+
+命令：dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj
+输入：Agent 1.1.19 完整测试工程
+输出：通过 216，失败 0，跳过 0，总计 216
+退出状态：0
+
+命令：dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release
+输入：Agent 1.1.19 工程
+输出：已成功生成；0 个警告；0 个错误
+退出状态：0
+
+[Artifact]
+命令：powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1；Get-FileHash
+输入：Nacho.Agent.csproj Version=1.1.19
+输出：nacho-agent-1.1.19-win-x64.exe；76422755 bytes；FileVersion 1.1.19.0；SHA-256 651ff062833d182cf5e87bcf3b20e380be3393ece8d4ba0dda9fd12818c97688；与 latest.json 一致
+退出状态：0
+
+[Deployment and update]
+命令：wsl -d Debian -u root -- bash tmp/deploy-process-inventory.sh
+输入：WSL /opt/control-server 与发布制品
+输出：DEPLOY_BACKUP=/opt/control-server/backups/process-inventory-20260825-161006；SERVICE_STATUS=active；health {"ok":true,"service":"nacho-server"}；运行制品哈希 651ff062833d182cf5e87bcf3b20e380be3393ece8d4ba0dda9fd12818c97688
+退出状态：0
+
+命令：POST /api/panel/agent-updates（client cl-2e2a5b138515）并轮询命令与心跳
+输入：1.1.19 发布清单
+输出：commandId=cmd-ce8e9aadab95；commandStatus=success；phase=healthy；currentVersion=1.1.19；status=online；connected=true
+退出状态：0
+
+命令：查询 Win32_Service、安装文件版本与 SHA-256
+输入：NachoAgent
+输出：Running / Auto / LocalSystem；FileVersion 1.1.19.0；SHA-256 651ff062833d182cf5e87bcf3b20e380be3393ece8d4ba0dda9fd12818c97688
+退出状态：0
+
+[Real process fixture]
+命令：启动 Nacho.Agent.TestProcess --idle；POST list-processes；轮询命令终态
+输入：PID 7444；C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\client\tests\Nacho.Agent.TestProcess\bin\Debug\net10.0-windows\nacho-agent-test-process.exe
+输出：commandId=cmd-01ddff6dbaef；success；total=337；returned=337；truncated=false；resultBytes=85930；夹具 PID、进程名与路径精确匹配；canTerminate=true；terminationRestriction=null
+退出状态：0
+
+命令：真实浏览器访问 http://localhost:3000/clients，进入单机管理/进程终止，点击获取进程，搜索 7444 并选择
+输入：同一测试夹具
+输出：PID 字段=7444；预期路径精确回填；终止按钮 enabled；未点击终止；浏览器控制台 warn/error=[]
+退出状态：0
+
+命令：浏览器视口 390x844，读取 documentElement/client/body 宽度
+输入：已筛选的测试夹具移动端卡片
+输出：viewportWidth=390；pageScrollWidth=390；bodyScrollWidth=390；mobileCards=1；selectedPid=7444
+退出状态：0
+
+[Restore]
+命令：按 PID 与完整路径复核后停止 Nacho.Agent.TestProcess；恢复浏览器默认视口；重新启动 npm run dev；GET /clients
+输入：临时夹具与原面板 dev 状态
+输出：FIXTURE_STOPPED=7444；Next.js Ready；Panel HTTP 200
+退出状态：0
+
+[Rollback verification]
+命令：powershell -ExecutionPolicy Bypass -File rollback.ps1
+输入：1.1.18 制品与 WSL 部署备份（verify-only）
+预期输出：VERIFY_ONLY_OK；Agent 1.1.18 SHA-256 43b69ff4ca612564d404f48c04df1539e6aa14610bac47318adc866ad878bbd0；WSL 备份完整
+实际执行状态：见本目录 rollback-verify.txt

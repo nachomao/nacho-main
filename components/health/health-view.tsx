@@ -20,8 +20,8 @@ import {
   Siren,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { logSources } from "@/lib/collect-logs"
 import { useServerData } from "@/components/server-data-context"
+import { createHealthCollectionPayload, healthPackagePrimaryAction, isHealthPackageActive, type HealthPackageStatus } from "@/lib/health-center"
 
 /* 通用面板外壳：与脚本/任务面板保持一致 */
 function PanelShell({
@@ -112,12 +112,21 @@ type Finding = {
 
 type LogPackage = {
   id: string
+  clientId: string | null
+  commandId: string | null
   host: string
   category: Category
   sizeMB: number
   time: string
   findings: number
-  status: "analyzed" | "analyzing" | "pending"
+  status: HealthPackageStatus
+  sizeBytes: number
+  sources: string[]
+  entryCount: number
+  truncated: boolean
+  error: string | null
+  analyzedAt: number | null
+  downloadable: boolean
 }
 
 type CollectClient = {
@@ -142,12 +151,21 @@ type ServerFinding = {
 
 type ServerPackage = {
   id: string
+  clientId: string | null
+  commandId: string | null
   host: string
   category: string
   sizeMB: number
   ts: number
   findings: number
   status: LogPackage["status"]
+  sizeBytes: number
+  sources: string[]
+  entryCount: number
+  truncated: boolean
+  error: string | null
+  analyzedAt: number | null
+  downloadable: boolean
 }
 
 /* 相对时间：服务端只给时间戳，展示层统一转成「刚刚 / N 分钟前」 */
@@ -194,13 +212,13 @@ function StatCard({
 }
 
 export function HealthView() {
-  const { apiRequest, clients } = useServerData()
+  const { apiRequest, downloadRequest, clients } = useServerData()
   const [findings, setFindings] = useState<Finding[]>([])
   const [packages, setPackages] = useState<LogPackage[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [reanalyzing, setReanalyzing] = useState<string[]>([])
+  const [packageActions, setPackageActions] = useState<Record<string, "download" | "reanalyze" | "recollect">>({})
 
   /* 采集目标来自真实客户端列表：日志采集仅支持 Windows Agent */
   const collectClients: CollectClient[] = useMemo(
@@ -212,8 +230,8 @@ export function HealthView() {
   )
 
   /* 从服务端拉取发现项与日志包 */
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     try {
       const [findingRows, packageRows] = await Promise.all([
         apiRequest<ServerFinding[]>("/health/findings"),
@@ -234,25 +252,40 @@ export function HealthView() {
       setPackages(
         packageRows.map((p) => ({
           id: p.id,
+          clientId: p.clientId,
+          commandId: p.commandId,
           host: p.host,
           category: toCategory(p.category),
           sizeMB: p.sizeMB,
           time: relTime(p.ts),
           findings: p.findings,
           status: p.status,
+          sizeBytes: p.sizeBytes,
+          sources: p.sources,
+          entryCount: p.entryCount,
+          truncated: p.truncated,
+          error: p.error,
+          analyzedAt: p.analyzedAt,
+          downloadable: p.downloadable,
         })),
       )
       setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "加载健康数据失败")
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [apiRequest])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!packages.some((item) => isHealthPackageActive(item.status))) return
+    const timer = window.setInterval(() => void load(false), 1000)
+    return () => window.clearInterval(timer)
+  }, [load, packages])
 
   /* 筛选：级别 + 类别 */
   const [levelFilter, setLevelFilter] = useState<"all" | Severity>("all")
@@ -321,33 +354,17 @@ export function HealthView() {
   }
 
   /* 采集窗口：最近 24 小时，与单机日志采集面板使用同一套受限来源与条数上限 */
-  const collectPayload = () => {
-    const until = new Date()
-    const since = new Date(until.getTime() - 24 * 60 * 60 * 1000)
-    return {
-      sources: [...logSources],
-      sinceUtc: since.toISOString(),
-      untilUtc: until.toISOString(),
-      maxEntries: 500,
-    }
-  }
-
   /* 主动采集：向选中的在线客户端下发真实 collect-logs 命令 */
   const handleCollect = async () => {
     if (selectedOnline.length === 0 || collecting) return
     setCollecting(true)
     setActionError(null)
     try {
-      await Promise.all(
-        selectedOnline.map((id) =>
-          apiRequest(`/clients/${encodeURIComponent(id)}/commands`, {
-            method: "POST",
-            body: JSON.stringify({ type: "collect-logs", payload: collectPayload() }),
-          }),
-        ),
-      )
-      // 命令已入队，结果由 Agent 回传后写入服务端；重新拉取以反映最新状态
-      await load()
+      await apiRequest("/health/collections", {
+        method: "POST",
+        body: JSON.stringify(createHealthCollectionPayload(selectedOnline)),
+      })
+      await load(false)
       setSelected([])
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "下发日志采集命令失败")
@@ -356,33 +373,31 @@ export function HealthView() {
     }
   }
 
-  /* 重新采集：对该日志包所属主机重新下发一次 collect-logs */
-  const reanalyze = async (id: string) => {
-    if (reanalyzing.includes(id)) return
-    const pkg = packages.find((p) => p.id === id)
-    const target = pkg && collectClients.find((c) => c.name === pkg.host || c.id === pkg.host)
-    if (!target) {
-      setActionError(`未找到日志包所属的在线客户端：${pkg?.host ?? id}`)
-      return
-    }
-    if (!target.online) {
-      setActionError(`客户端 ${target.name} 当前离线，采集命令尚未下发`)
-      return
-    }
-    setReanalyzing((r) => [...r, id])
+  const runPackageAction = async (id: string, action: "download" | "reanalyze" | "recollect") => {
+    if (packageActions[id]) return
+    setPackageActions((current) => ({ ...current, [id]: action }))
     setActionError(null)
     try {
-      await apiRequest(`/clients/${encodeURIComponent(target.id)}/commands`, {
-        method: "POST",
-        body: JSON.stringify({ type: "collect-logs", payload: collectPayload() }),
-      })
-      await load()
+      if (action === "download") {
+        await downloadRequest(`/health/packages/${encodeURIComponent(id)}/download`, `health-${id}.json`)
+      } else {
+        await apiRequest(`/health/packages/${encodeURIComponent(id)}/${action}`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        })
+        await load(false)
+      }
       setFlashId(id)
       setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 1200)
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "重新采集失败")
+      const fallback = action === "download" ? "下载日志快照失败" : action === "reanalyze" ? "重新分析失败" : "重新采集失败"
+      setActionError(caught instanceof Error ? caught.message : fallback)
     } finally {
-      setReanalyzing((r) => r.filter((x) => x !== id))
+      setPackageActions((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
     }
   }
 
@@ -591,7 +606,7 @@ export function HealthView() {
           {/* 日志包 */}
           <PanelShell
             title="日志包"
-            desc="上传后的 zip 保存在服务端本机，可下载或重新运行内置分析。"
+            desc="Agent 回传的 JSON 快照保存在服务端，可校验下载、重新分析或失败重采。"
             action={
               <span className="flex h-8 items-center gap-1.5 rounded-full bg-primary/12 px-3 text-xs font-medium text-primary">
                 <FileArchive className="h-3.5 w-3.5" />共 {packages.length} 个
@@ -617,62 +632,82 @@ export function HealthView() {
                 </div>
               ) : filteredPackages.length > 0 ? (
                 filteredPackages.map((p) => {
-                  // analyzing 取服务端状态，或本地正在下发重新采集命令
-                  const analyzing = p.status === "analyzing" || reanalyzing.includes(p.id)
+                  const action = packageActions[p.id]
+                  const busy = Boolean(action) || p.status === "collecting" || p.status === "analyzing"
+                  const primaryAction = healthPackagePrimaryAction(p.status, p.downloadable, Boolean(p.clientId))
                   return (
                     <div
                       key={p.id}
                       className={cn(
-                        "flex items-center gap-3 rounded-2xl border border-border bg-surface/60 px-4 py-3.5 transition-all duration-300",
+                        "flex flex-col gap-3 rounded-2xl border border-border bg-surface/60 px-4 py-3.5 transition-all duration-300 sm:flex-row sm:items-center",
                         flashId === p.id && "ring-2 ring-primary/50",
                       )}
                     >
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background/40">
-                        <FileArchive className="h-5 w-5 text-muted-foreground" />
-                      </span>
-                      <div className="min-w-0 flex-1 leading-tight">
-                        <p className="truncate text-sm font-medium">{p.host}</p>
-                        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                          <span>{p.category}</span>
-                          <span className="text-muted-foreground/40">·</span>
-                          <span className="tabular-nums">{p.sizeMB} MB</span>
-                          <span className="text-muted-foreground/40">·</span>
-                          <span>{p.time}</span>
-                        </p>
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background/40">
+                          <FileArchive className="h-5 w-5 text-muted-foreground" />
+                        </span>
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <p className="truncate text-sm font-medium">{p.host}</p>
+                          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                            <span>{p.category}</span>
+                            <span className="text-muted-foreground/40">·</span>
+                            <span className="tabular-nums">{p.sizeBytes > 0 ? `${p.sizeMB} MB` : "等待快照"}</span>
+                            <span className="text-muted-foreground/40">·</span>
+                            <span>{p.entryCount} 条</span>
+                            {p.truncated && <span className="text-warning">已截断</span>}
+                            <span className="text-muted-foreground/40">·</span>
+                            <span>{p.time}</span>
+                          </p>
+                          {p.sources.length > 0 && <p className="mt-1 truncate text-xs text-muted-foreground/70">来源：{p.sources.join(" / ")}</p>}
+                          {p.error && <p className="mt-1 break-words text-xs leading-relaxed text-warning">{p.error}</p>}
+                        </div>
                       </div>
-                      {/* 状态 / 命中数 */}
-                      {analyzing ? (
-                        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          分析中
-                        </span>
-                      ) : p.status === "pending" ? (
-                        <span className="shrink-0 rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                          待分析
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded-full bg-primary/12 px-2.5 py-1 text-xs font-medium text-primary">
-                          {p.findings} 项命中
-                        </span>
-                      )}
-                      {/* 操作 */}
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          title="下载日志包"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
-                        >
-                          <Download className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          title="重新采集并分析"
-                          disabled={analyzing}
-                          onClick={() => void reanalyze(p.id)}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <RefreshCw className={cn("h-4 w-4", analyzing && "animate-spin")} />
-                        </button>
+                      <div className="flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-end">
+                        {p.status === "collecting" ? (
+                          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-primary/12 px-2.5 py-1 text-xs font-medium text-primary"><Loader2 className="h-3.5 w-3.5 animate-spin" />采集中</span>
+                        ) : p.status === "analyzing" ? (
+                          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning"><Loader2 className="h-3.5 w-3.5 animate-spin" />分析中</span>
+                        ) : p.status === "failed" ? (
+                          <span className="shrink-0 rounded-full bg-negative/12 px-2.5 py-1 text-xs font-medium text-negative">采集失败</span>
+                        ) : (
+                          <span className="shrink-0 rounded-full bg-primary/12 px-2.5 py-1 text-xs font-medium text-primary">{p.findings} 项命中</span>
+                        )}
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            title="下载 JSON 日志快照"
+                            aria-label={`下载 ${p.host} 的 JSON 日志快照`}
+                            disabled={!p.downloadable || busy}
+                            onClick={() => void runPackageAction(p.id, "download")}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {action === "download" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                          </button>
+                          {primaryAction === "recollect" ? (
+                            <button
+                              type="button"
+                              title="重新采集"
+                              aria-label={`重新采集 ${p.host} 的日志`}
+                              disabled={busy || !p.clientId}
+                              onClick={() => void runPackageAction(p.id, "recollect")}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <RotateCw className={cn("h-4 w-4", action === "recollect" && "animate-spin")} />
+                            </button>
+                          ) : primaryAction === "reanalyze" ? (
+                            <button
+                              type="button"
+                              title="重新分析现有快照"
+                              aria-label={`重新分析 ${p.host} 的日志快照`}
+                              disabled={busy || p.status !== "analyzed" || !p.downloadable}
+                              onClick={() => void runPackageAction(p.id, "reanalyze")}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background/40 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <RefreshCw className={cn("h-4 w-4", action === "reanalyze" && "animate-spin")} />
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   )

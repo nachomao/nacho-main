@@ -232,7 +232,7 @@ export function BalanceCard() {
             </ComposedChart>
           </ResponsiveContainer>
 
-          {/* 胶囊叠加层，通过绝对定位确保始终在最顶层，CSS transition ��动平移动画 */}
+          {/* 胶囊叠加层，通过绝对定位确保始终在最顶层，CSS transition 驱动平移动画 */}
           {pillLeft != null && (
             <div
               className="pointer-events-none absolute inset-0"
@@ -252,7 +252,7 @@ export function BalanceCard() {
                     stroke="oklch(0.92 0.2 100)"
                     strokeWidth={2.5}
                   />
-                  {/* 徽标：CPU 占���值，带 iOS 风格数字滚动动画 */}
+                  {/* 徽标：CPU 占用值，带 iOS 风格数字滚动动画 */}
                   <foreignObject x={-22} y={badgeTop} width={44} height={22} overflow="visible">
                     <div
                       style={{

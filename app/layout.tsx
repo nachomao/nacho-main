@@ -50,7 +50,7 @@ export default async function RootLayout({
       style={{ height: '100%', overflow: 'hidden' }}
       suppressHydrationWarning
     >
-      <body className="font-sans antialiased" style={{ height: '100%', overflow: 'hidden' }}>
+      <body className="font-sans antialiased" style={{ height: '100%', overflow: 'hidden', overflowX: 'hidden' }}>
         {!localSettings.exists && (
           <script dangerouslySetInnerHTML={{ __html: legacyThemeInitScript }} />
         )}

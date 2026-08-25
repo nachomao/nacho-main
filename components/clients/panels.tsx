@@ -26,6 +26,7 @@ import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { defaultServerBaseUrl } from "@/lib/server-connection"
 import { useConfirm } from "@/components/ui/confirm-dialog"
+import { installCommands, installScriptUrl } from "@/lib/install-profiles"
 
 /* 通用面板外壳：标题 + 描述 + 内容 */
 function PanelShell({
@@ -321,10 +322,8 @@ export function AddClientPanel() {
 /* Windows：PowerShell 安装脚本（保持不变） */
 function WindowsInstall({ base }: { base: string }) {
   const installPath = "C:\\Program Files\\Nacho\\Agent"
-  const scriptUrl = `${base}/install.ps1`
-  const iwrCmd = `irm "${scriptUrl}" | iex`
-  const wgetCmd = `iwr "${scriptUrl}" -OutFile install.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1`
-  const deployCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${scriptUrl}' | iex"`
+  const scriptUrl = installScriptUrl(base)
+  const commands = installCommands(base)
 
   return (
     <>
@@ -381,12 +380,12 @@ function WindowsInstall({ base }: { base: string }) {
         <CommandBlock
           step="2"
           comment="PowerShell 一键部署"
-          command={iwrCmd}
+          command={commands.standard}
         />
         <CommandBlock
           step="3"
           comment="下载后执行"
-          command={wgetCmd}
+          command={commands.download}
         />
       </div>
 
@@ -399,7 +398,7 @@ function WindowsInstall({ base }: { base: string }) {
           <h3 className="text-sm font-semibold">一键部署模式</h3>
         </div>
 
-        <Field label="部署链接（与控制服务端共用端口，可分���给自动化系统）" icon={<Link2 className="h-3.5 w-3.5" />}>
+        <Field label="部署链接（与控制服务端共用端口，可分发给自动化系统）" icon={<Link2 className="h-3.5 w-3.5" />}>
           <div className="flex items-center gap-2">
             <input readOnly value={scriptUrl} className={cn(inputCls, "flex-1 font-mono")} />
             <CopyButton text={scriptUrl} label="复制链接" />
@@ -408,7 +407,7 @@ function WindowsInstall({ base }: { base: string }) {
 
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">部署执行命令</span>
-          <CommandBlock command={deployCmd} />
+          <CommandBlock command={commands.boot} />
         </div>
 
         <p className="text-xs leading-relaxed text-muted-foreground/80">
@@ -447,7 +446,7 @@ export function AddGroupPanel() {
       setMessage("分组已创建")
       await refresh()
     } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "创建分组���败")
+      setMessage(caught instanceof Error ? caught.message : "创建分组失败")
     } finally {
       setSaving(false)
     }
@@ -642,7 +641,7 @@ export function ClientUpdatePanel() {
   return (
     <PanelShell
       title="客户端更新"
-      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务���发布清���"}
+      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务端发布清单"}
       action={
         <button type="button" onClick={() => void queue("all")} disabled={!updates || submitting || available === 0} className="flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50">
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}全部更新
