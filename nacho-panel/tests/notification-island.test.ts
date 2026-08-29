@@ -37,6 +37,8 @@ test("通知图标通过 animationend 推进可逆状态机", () => {
 })
 
 test("通知图标按指定笔顺绘制并严格倒序擦除", () => {
+  // 铃铛拆成三笔：一步画完的帽罩、铃身底边、铃舌。
+  assert.match(topbarSource, /notice-bell-hood/)
   assert.match(topbarSource, /notice-bell-body/)
   assert.match(topbarSource, /notice-bell-clapper/)
   assert.match(topbarSource, /notice-warning-triangle/)
@@ -44,19 +46,33 @@ test("通知图标按指定笔顺绘制并严格倒序擦除", () => {
   assert.match(topbarSource, /notice-warning-dot/)
   assert.match(topbarSource, /pathLength="1"/)
 
-  // 断线：铃舌先擦除、主体后擦除；三角先绘制、感叹号后绘制。
-  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-clapper[\s\S]+160ms ease-in both/)
-  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-body[\s\S]+380ms[\s\S]+120ms both/)
-  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-triangle[\s\S]+460ms/)
-  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-mark[\s\S]+380ms both/)
-  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-dot[\s\S]+540ms both/)
+  // 断线：铃舌 → 铃身 → 帽罩反向擦除，随后三角 → 竖线 → 圆点正绘。
+  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-clapper \{\s*animation: notice-stroke-erase 140ms/)
+  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-body \{\s*animation: notice-stroke-erase 300ms[^;]*110ms both/)
+  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-hood \{\s*animation: notice-stroke-erase 220ms[^;]*380ms both/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-triangle \{\s*animation: notice-stroke-draw 520ms/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-mark \{\s*animation: notice-stroke-draw 200ms[^;]*480ms both/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-dot \{\s*animation: notice-stroke-draw 130ms[^;]*660ms both/)
 
-  // 恢复：感叹号先擦除、三角后擦除；铃铛主体先绘制、铃舌后绘制。
-  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-dot[\s\S]+120ms ease-in both/)
-  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-triangle[\s\S]+200ms both/)
-  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-body[\s\S]+420ms/)
-  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-clapper[\s\S]+340ms both/)
-  assert.match(globalCssSource, /stroke-dasharray: 1;/)
-  assert.match(globalCssSource, /@keyframes notice-stroke-erase[\s\S]+stroke-dashoffset: -1;/)
+  // 恢复：圆点 → 竖线 → 三角反向擦除，随后帽罩 → 铃身 → 铃舌正绘。
+  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-dot \{\s*animation: notice-stroke-erase 110ms/)
+  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-mark \{\s*animation: notice-stroke-erase 170ms[^;]*80ms both/)
+  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-triangle \{\s*animation: notice-stroke-erase 420ms[^;]*220ms both/)
+  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-hood \{\s*animation: notice-stroke-draw 300ms/)
+  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-body \{\s*animation: notice-stroke-draw 420ms[^;]*270ms both/)
+  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-clapper \{\s*animation: notice-stroke-draw 170ms[^;]*660ms both/)
+
+  // 归一化虚线不得叠加 non-scaling-stroke，否则描边动画几乎不可见。
+  assert.match(globalCssSource, /stroke-dasharray: 1 1;/)
+  assert.doesNotMatch(globalCssSource, /\.notice-stroke \{[^}]*non-scaling-stroke/)
+  // 擦除必须让笔尾先消失（dashoffset 0 → 1），取 -1 会从起笔处开始吃线。
+  assert.match(globalCssSource, /@keyframes notice-stroke-erase \{\s*from \{ stroke-dashoffset: 0; \}\s*to \{ stroke-dashoffset: 1; \}/)
   assert.match(globalCssSource, /prefers-reduced-motion: reduce/)
+})
+
+test("图标配色跟随笔画身份，避免红铃铛与绿警告", () => {
+  assert.match(topbarSource, /const iconWarning = iconPhase\.startsWith\("warning"\)/)
+  assert.match(topbarSource, /iconWarning \? "text-negative" : recovered \? "text-positive" : "text-foreground"/)
+  assert.match(topbarSource, /expanded && iconWarning && <span/)
+  assert.doesNotMatch(topbarSource, /expanded \? "text-negative"/)
 })

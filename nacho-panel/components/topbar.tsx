@@ -468,16 +468,19 @@ function NoticeStrokeIcon({ phase, onSequenceEnd }: { phase: NoticeIconPhase; on
       }}
     >
       {warning ? (
-        <>
+        // 警告落笔顺序：三角形 → 中间竖线 → 底部圆点；倒绘时严格反向。
+        <g key="warning">
           <path className="notice-stroke notice-warning-triangle" pathLength="1" d="M10.3 3.6 2.7 17a2 2 0 0 0 1.75 3h15.1a2 2 0 0 0 1.75-3L13.7 3.6a2 2 0 0 0-3.4 0Z" data-sequence-end={phase === "warning-erasing" ? "true" : undefined} />
           <path className="notice-stroke notice-warning-mark" pathLength="1" d="M12 9v4" />
-          <circle className="notice-stroke notice-warning-dot" pathLength="1" cx="12" cy="17" r=".45" data-sequence-end={phase === "warning-drawing" ? "true" : undefined} />
-        </>
+          <circle className="notice-stroke notice-warning-dot" pathLength="1" cx="12" cy="17" r=".5" data-sequence-end={phase === "warning-drawing" ? "true" : undefined} />
+        </g>
       ) : (
-        <>
-          <path className="notice-stroke notice-bell-body" pathLength="1" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" data-sequence-end={phase === "bell-erasing" ? "true" : undefined} />
-          <path className="notice-stroke notice-bell-clapper" pathLength="1" d="M9.7 20a2.6 2.6 0 0 0 4.6 0" data-sequence-end={phase === "bell-drawing" ? "true" : undefined} />
-        </>
+        // 铃铛落笔顺序：先一笔画完顶部帽罩 → 再画下方铃身与底边 → 最后补铃舌；倒绘时严格反向。
+        <g key="bell">
+          <path className="notice-stroke notice-bell-hood" pathLength="1" d="M6 8a6 6 0 0 1 12 0" data-sequence-end={phase === "bell-erasing" ? "true" : undefined} />
+          <path className="notice-stroke notice-bell-body" pathLength="1" d="M18 8c0 4.5 1.4 6 2.7 7.3A1 1 0 0 1 20 17H4a1 1 0 0 1-.7-1.7C4.6 14 6 12.5 6 8" />
+          <path className="notice-stroke notice-bell-clapper" pathLength="1" d="M10.3 20a2 2 0 0 0 3.4 0" data-sequence-end={phase === "bell-drawing" ? "true" : undefined} />
+        </g>
       )}
     </svg>
   )
@@ -526,6 +529,8 @@ function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () =>
   }
 
   const expanded = Boolean(error)
+  // 图标配色跟随当前笔画身份而非连接状态：避免出现“红色铃铛”“绿色警告”这类过渡中间态。
+  const iconWarning = iconPhase.startsWith("warning")
   return (
     <div
       role={expanded ? "alert" : undefined}
@@ -545,13 +550,16 @@ function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () =>
       <button
         type="button"
         onClick={expanded ? undefined : onOpen}
-        className={cn("relative z-10 flex h-13 w-13 shrink-0 items-center justify-center rounded-full", expanded ? "text-negative" : recovered ? "text-positive" : "text-foreground")}
+        className={cn(
+          "relative z-10 flex h-13 w-13 shrink-0 items-center justify-center rounded-full transition-colors duration-300",
+          iconWarning ? "text-negative" : recovered ? "text-positive" : "text-foreground",
+        )}
         aria-label={expanded ? "服务端连接已断开" : "通知中心"}
       >
         <span className="inline-flex">
           <NoticeStrokeIcon phase={iconPhase} onSequenceEnd={advanceIconSequence} />
         </span>
-        {expanded && <span className="absolute inset-1 rounded-full border border-negative/30 animate-notice-pulse" />}
+        {expanded && iconWarning && <span className="absolute inset-1 rounded-full border border-negative/30 animate-notice-pulse" />}
         {!expanded && unread > 0 && (
           <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-semibold text-primary-foreground">
             {unread > 9 ? "9+" : unread}
