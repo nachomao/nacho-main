@@ -1,0 +1,14 @@
+{
+  "name": "nacho-main",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "dev": "pnpm --dir nacho-panel dev",
+    "build": "pnpm --dir nacho-panel build",
+    "start": "pnpm --dir nacho-panel start",
+    "lint": "pnpm --dir nacho-panel lint",
+    "test": "pnpm --dir nacho-panel exec tsx --test tests/*.test.ts",
+    "typecheck": "pnpm --dir nacho-panel exec tsc --noEmit"
+  }
+}

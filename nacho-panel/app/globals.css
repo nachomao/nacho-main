@@ -330,7 +330,7 @@
   animation: aurora-drift 14s ease-in-out infinite;
 }
 
-/* iOS 椋庢牸閫愯瘝娴幇锛氭瘡涓瘝浠庢ā绯?+ 杞诲井涓嬬Щ + 缂╁皬涓笎鏄撅紙Apple Intelligence 璐ㄦ劅锛?*/
+/* iOS 风格逐词浮现：每个词由模糊、轻微下移和缩小状态渐显。 */
 @keyframes word-blur-in {
   0% {
     opacity: 0;
@@ -553,101 +553,69 @@
 
 /* 閫氱煡鍥炬爣褰㈠彉锛氭寜鎵嬬粯绗旈『鎵ц鎻忚竟鍔ㄧ敾銆傞搩閾涘厛鐢讳富浣撳啀鐢讳笅鏂瑰皬閿わ紝
    璀﹀憡鍏堢敾涓夎褰紝鍐嶇敾鎰熷徆鍙凤紱鍊掔粯鏃朵弗鏍煎弽鍚戞摝闄ゃ€?*/
-@keyframes notice-icon-draw {
-  0% {
-    opacity: 0;
-    transform: scale(0.55) rotate(-18deg);
-    filter: blur(5px);
-  }
-  55% {
-    opacity: 0.75;
-    transform: scale(1.12) rotate(5deg);
-    filter: blur(1px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) rotate(0deg);
-    filter: blur(0);
-  }
+.notice-stroke-icon {
+  overflow: visible;
 }
 
-.animate-notice-retract {
-  /* 澶栧眰淇濇寔鍘熶綅锛屽€掔粯鍙綔鐢ㄤ簬 SVG 鎻忚竟锛岄伩鍏嶅彉鎴愭ā绯婃贰鍑恒€?*/
-  opacity: 1;
-  transform: none;
-  filter: none;
-}
-
-.animate-notice-retract .animate-notice-icon,
-.animate-notice-icon.animate-notice-retract {
-  animation: none;
-  opacity: 1;
-  transform: none;
-  filter: none;
-}
-
-/* 鍊掔粯闃舵锛氭瘡鏉?SVG 绾夸粠瀹屾暣鐘舵€侀€€鍥炰笉鍙銆俻athLength=1 璁╄繘搴︿笌鍥炬爣鍑犱綍闀垮害鏃犲叧銆?*/
-.animate-notice-retract path,
-.animate-notice-retract circle,
-.animate-notice-retract line,
-.animate-notice-retract polyline,
-.animate-notice-retract polygon,
-.animate-notice-icon.animate-notice-retract path,
-.animate-notice-icon.animate-notice-retract circle,
-.animate-notice-icon.animate-notice-retract line,
-.animate-notice-icon.animate-notice-retract polyline,
-.animate-notice-icon.animate-notice-retract polygon {
-  /* 浣跨敤澶т簬 24px 鍥炬爣鍛ㄩ暱鐨勫崟浣嶏紝鍏煎 pathLength 浠呮寕鍦?svg 鏍硅妭鐐圭殑 Lucide 瀹炵幇銆?*/
-  stroke-dasharray: 200;
+.notice-stroke {
+  stroke-dasharray: 1;
   stroke-dashoffset: 0;
-  animation: notice-stroke-retract 320ms cubic-bezier(0.4, 0, 1, 1) both;
+  vector-effect: non-scaling-stroke;
 }
 
-/* 姣忎釜鍥炬爣鐙珛鐨勮惤绗旈『搴忋€侺ucide Bell 鐨勭浜屾潯 path 鏄搩閾涗富浣擄紝
-   绗竴鏉?path 鏄笅鏂瑰皬閿わ紱TriangleAlert 鐨勪笁鏉?path 渚濇涓轰笁瑙掑舰銆?   鎰熷徆鍙风珫绾裤€佸渾鐐广€?*/
-.animate-notice-icon.notice-icon-bell:not(.animate-notice-retract) path:nth-child(2) {
-  animation-delay: 40ms;
-}
-.animate-notice-icon.notice-icon-bell:not(.animate-notice-retract) path:nth-child(1) {
-  animation-delay: 420ms;
-}
-.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(1) {
-  animation-duration: 460ms;
-  animation-delay: 0ms;
-}
-.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(2) {
-  animation-duration: 220ms;
-  animation-delay: 360ms;
-}
-.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(3) {
-  animation-duration: 140ms;
-  animation-delay: 540ms;
+.notice-phase-bell-erasing .notice-bell-clapper {
+  animation: notice-stroke-erase 160ms ease-in both;
 }
 
-/* 鍊掔粯涓ユ牸浠庢渶鍚庤惤绗旂殑閮ㄥ垎寮€濮嬶細閾冮摏灏忛敜鈫掍富浣擄紝璀﹀憡鍦嗙偣鈫掔珫绾库啋涓夎褰€?*/
-.animate-notice-icon.notice-icon-bell.animate-notice-retract path:nth-child(2) {
-  animation-delay: 180ms;
-}
-.animate-notice-icon.notice-icon-bell.animate-notice-retract path:nth-child(1) {
-  animation-delay: 0ms;
-}
-.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(3) {
-  animation-delay: 0ms;
-}
-.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(2) {
-  animation-delay: 120ms;
-}
-.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(1) {
-  animation-delay: 240ms;
+.notice-phase-bell-erasing .notice-bell-body {
+  animation: notice-stroke-erase 380ms cubic-bezier(0.4, 0, 1, 1) 120ms both;
 }
 
-@keyframes notice-stroke-retract {
-  from {
-    stroke-dashoffset: 0;
-  }
-  to {
-    stroke-dashoffset: 200;
-  }
+.notice-phase-warning-drawing .notice-stroke,
+.notice-phase-bell-drawing .notice-stroke {
+  stroke-dashoffset: 1;
+}
+
+.notice-phase-warning-drawing .notice-warning-triangle {
+  animation: notice-stroke-draw 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.notice-phase-warning-drawing .notice-warning-mark {
+  animation: notice-stroke-draw 200ms ease-out 380ms both;
+}
+
+.notice-phase-warning-drawing .notice-warning-dot {
+  animation: notice-stroke-draw 120ms ease-out 540ms both;
+}
+
+.notice-phase-warning-erasing .notice-warning-dot {
+  animation: notice-stroke-erase 120ms ease-in both;
+}
+
+.notice-phase-warning-erasing .notice-warning-mark {
+  animation: notice-stroke-erase 180ms ease-in 80ms both;
+}
+
+.notice-phase-warning-erasing .notice-warning-triangle {
+  animation: notice-stroke-erase 400ms cubic-bezier(0.4, 0, 1, 1) 200ms both;
+}
+
+.notice-phase-bell-drawing .notice-bell-body {
+  animation: notice-stroke-draw 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.notice-phase-bell-drawing .notice-bell-clapper {
+  animation: notice-stroke-draw 180ms ease-out 340ms both;
+}
+
+@keyframes notice-stroke-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes notice-stroke-erase {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -1; }
 }
 
 @keyframes notice-icon-pulse {
@@ -662,28 +630,15 @@
   }
 }
 
-.animate-notice-icon {
-  animation: notice-icon-draw 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.animate-notice-icon path,
-.animate-notice-icon circle,
-.animate-notice-icon line,
-.animate-notice-icon polyline,
-.animate-notice-icon polygon {
-  stroke-dasharray: 200;
-  stroke-dashoffset: 200;
-  animation: notice-stroke-draw 520ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
-}
-
-@keyframes notice-stroke-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
 .animate-notice-pulse {
   animation: notice-icon-pulse 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice-stroke {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+  }
 }
 
 
