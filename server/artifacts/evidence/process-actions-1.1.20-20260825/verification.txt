@@ -1,0 +1,93 @@
+Nacho Windows 进程右键操作与 Agent 1.1.20 验证记录
+时间：2026-08-25 Asia/Shanghai
+
+[Baseline]
+对象：已部署 Agent 1.1.19 进程清单
+确认结果：Panel HTTP 200；control-server.service active；/health HTTP 200；NachoAgent Running/Auto/LocalSystem；FileVersion 1.1.19.0。
+现有行为：进程行仅支持左键回填，没有右键菜单、普通进程重启或效能模式命令。
+
+[Panel]
+命令：pnpm exec tsx --test tests/*.test.ts
+输入：完整面板逻辑测试
+字面结果：tests 63；pass 63；fail 0；cancelled 0；skipped 0；todo 0
+退出状态：0
+
+命令：pnpm exec tsc --noEmit
+输入：完整 TypeScript 源码
+字面结果：（无诊断输出）
+退出状态：0
+
+命令：pnpm build
+输入：停止原 dev 进程后的仓库原位源码
+字面结果：Turbopack Compiled successfully；static pages 2/2；/clients dynamic；保留 1 条既有 local-settings-store NFT 动态路径告警
+退出状态：0
+
+[Control server]
+命令：WSL Debian /tmp 隔离副本 npm ci --no-audit --no-fund；npm test；npm run build
+输入：server/package*.json、server/tsconfig.json、server/src
+字面结果：tests 39；pass 39；fail 0；tsc -p tsconfig.json 完成
+退出状态：0
+
+[Windows Agent]
+命令：dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj
+输入：Agent 完整测试工程
+字面结果：通过 223；失败 0；跳过 0；总计 223
+退出状态：0
+
+命令：dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release
+输入：Agent 1.1.20 源码
+字面结果：已成功生成；0 个警告；0 个错误
+退出状态：0
+
+Agent 目标覆盖：PID/路径/启动时间复用；活动/非活动会话；原命令行参数；DPAPI restart intent；未知 launching 阶段不重复启动；EcoQoS 启停；原优先级恢复；Windows API 真实夹具。
+
+[Artifact]
+命令：powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1；Get-FileHash
+字面结果：nacho-agent-1.1.20-win-x64.exe；76463715 bytes；FileVersion 1.1.20.0；SHA-256 c286779441b8a98190c34584a290c4e2b23f9bcf078519617fbf402df4c2ee01；与 latest.json 一致
+退出状态：0
+
+[Deployment and upgrade]
+命令：wsl -d Debian -u root -- bash tmp/deploy-process-actions-1.1.20.sh
+字面结果：DEPLOY_BACKUP=/opt/control-server/backups/process-actions-1.1.20-20260825-174036；SERVICE_STATUS=active；health ok；运行制品 SHA-256 c286779441b8a98190c34584a290c4e2b23f9bcf078519617fbf402df4c2ee01
+退出状态：0
+
+命令：POST /api/panel/agent-updates 并轮询更新命令与心跳
+字面结果：clientId=cl-2e2a5b138515；commandId=cmd-7e81f3e58fd2；commandStatus=success；currentVersion=1.1.20；status=online；connected=true
+退出状态：0
+
+[Real process fixture]
+初始夹具：nacho-agent-test-process.exe；旧 PID 15668；sessionId 1；参数 token restart-token-1-1-20。
+
+命令：POST list-processes
+字面结果：commandId=cmd-efb648cfb919；success；total=336；returned=336；resultBytes=151101；夹具 canTerminate=true、canRestart=true、canSetEfficiency=true、efficiencyMode=false，所有 restriction=null
+退出状态：0
+
+命令：POST set-process-efficiency enabled=true/false
+字面结果：cmd-98b6c08166de success，initialEnabled=false，finalEnabled=true；cmd-6dba5f31d7e7 success，initialEnabled=true，finalEnabled=false，priorityRestored=true
+退出状态：0
+
+命令：POST restart-process
+字面结果：commandId=cmd-0041d7241956；success；old PID 15668；new PID 15908；phase=verified；stopped=true；started=true；durationMs=79
+退出状态：0
+
+命令：Win32_Process 复核新进程
+字面结果：OldExists=False；NewPid=15908；SessionId=1；ExecutablePath 精确匹配；CommandLineHasToken=True
+退出状态：0
+
+[Browser]
+地址：http://localhost:3000/clients
+桌面结果：鼠标右键显示“终止进程 / 重启进程 / 效能模式”；Shift+F10 打开同一菜单；右键启用效能模式显示确认；命令 success 后自动刷新并显示“效能”；关闭操作结果显示“已关闭”。
+移动结果：390x844 下 `…` 菜单显示同样三项；viewportWidth=390、pageScrollWidth=390、bodyScrollWidth=390，无页面级横向溢出。
+控制台结果：warn/error=[]。
+
+[Restore]
+字面结果：测试新 PID 15908 已按路径复核后停止；测试 restart intent cmd-0041d7241956.dat 已移除；浏览器视口恢复；临时标签关闭；Panel dev 恢复并返回 HTTP 200。
+
+[Final runtime]
+PanelHttp=200；AgentState=Running；AgentStartMode=Auto；AgentStartName=LocalSystem；AgentVersion=1.1.20.0；control-server.service=active；health ok。
+Agent、仓库发布制品与 WSL 运行制品 SHA-256 均为 c286779441b8a98190c34584a290c4e2b23f9bcf078519617fbf402df4c2ee01。
+
+[Rollback]
+命令：powershell -NoProfile -ExecutionPolicy Bypass -File rollback.ps1
+字面结果：SERVER_ROLLBACK_VERIFY_OK；VERIFY_ONLY_OK；Agent 1.1.19 SHA-256 651ff062833d182cf5e87bcf3b20e380be3393ece8d4ba0dda9fd12818c97688；WSL backup 完整
+退出状态：0

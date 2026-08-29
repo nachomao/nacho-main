@@ -38,6 +38,7 @@ import { getAvatar } from "./onboarding/avatars"
 import { PixelStardust } from "./pixel-stardust"
 import { useServerData } from "@/components/server-data-context"
 import Link from "next/link"
+import { WindowControls } from "./topbar/window-controls"
 
 
 /**
@@ -1060,6 +1061,9 @@ export function Topbar() {
 
         {/* AI Mode 入口：自然语言操作所有客户端 */}
         <AIModeButton onClick={actions?.openAI} />
+
+        {/* 窗口控制：缩小 / 最大化 / 关闭（桌面壳调用原生接口，浏览器降级为全屏切换） */}
+        <WindowControls />
       </div>
 
     </header>
