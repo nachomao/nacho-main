@@ -551,24 +551,30 @@
   }
 }
 
-/* 閫氱煡鍥炬爣褰㈠彉锛氭寜鎵嬬粯绗旈『鎵ц鎻忚竟鍔ㄧ敾銆傞搩閾涘厛鐢讳富浣撳啀鐢讳笅鏂瑰皬閿わ紝
-   璀﹀憡鍏堢敾涓夎褰紝鍐嶇敾鎰熷徆鍙凤紱鍊掔粯鏃朵弗鏍煎弽鍚戞摝闄ゃ€?*/
+/* 通知图标按手绘笔顺执行描边动画：
+   铃铛为帽罩 → 铃身底边 → 铃舌；警告为三角形 → 竖线 → 圆点；倒绘时严格反向擦除。 */
 .notice-stroke-icon {
   overflow: visible;
 }
 
+/* pathLength="1" 让每条笔画共用归一化的 0–1 进度，因此不能加 non-scaling-stroke，
+   否则虚线长度会退回设备像素，描边动画将几乎不可见。 */
 .notice-stroke {
-  stroke-dasharray: 1;
+  stroke-dasharray: 1 1;
   stroke-dashoffset: 0;
-  vector-effect: non-scaling-stroke;
 }
 
+/* 断线：铃舌 → 铃身 → 帽罩，反向擦掉整个铃铛。 */
 .notice-phase-bell-erasing .notice-bell-clapper {
-  animation: notice-stroke-erase 160ms ease-in both;
+  animation: notice-stroke-erase 140ms ease-in both;
 }
 
 .notice-phase-bell-erasing .notice-bell-body {
-  animation: notice-stroke-erase 380ms cubic-bezier(0.4, 0, 1, 1) 120ms both;
+  animation: notice-stroke-erase 300ms cubic-bezier(0.4, 0, 1, 1) 110ms both;
+}
+
+.notice-phase-bell-erasing .notice-bell-hood {
+  animation: notice-stroke-erase 220ms cubic-bezier(0.4, 0, 1, 1) 380ms both;
 }
 
 .notice-phase-warning-drawing .notice-stroke,
@@ -576,36 +582,43 @@
   stroke-dashoffset: 1;
 }
 
+/* 断线后正绘警告：先一笔画三角形，再落竖线，最后点圆点。 */
 .notice-phase-warning-drawing .notice-warning-triangle {
-  animation: notice-stroke-draw 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: notice-stroke-draw 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .notice-phase-warning-drawing .notice-warning-mark {
-  animation: notice-stroke-draw 200ms ease-out 380ms both;
+  animation: notice-stroke-draw 200ms ease-out 480ms both;
 }
 
 .notice-phase-warning-drawing .notice-warning-dot {
-  animation: notice-stroke-draw 120ms ease-out 540ms both;
+  animation: notice-stroke-draw 130ms ease-out 660ms both;
 }
 
+/* 恢复：圆点 → 竖线 → 三角形，反向擦掉整个警告。 */
 .notice-phase-warning-erasing .notice-warning-dot {
-  animation: notice-stroke-erase 120ms ease-in both;
+  animation: notice-stroke-erase 110ms ease-in both;
 }
 
 .notice-phase-warning-erasing .notice-warning-mark {
-  animation: notice-stroke-erase 180ms ease-in 80ms both;
+  animation: notice-stroke-erase 170ms ease-in 80ms both;
 }
 
 .notice-phase-warning-erasing .notice-warning-triangle {
-  animation: notice-stroke-erase 400ms cubic-bezier(0.4, 0, 1, 1) 200ms both;
+  animation: notice-stroke-erase 420ms cubic-bezier(0.4, 0, 1, 1) 220ms both;
+}
+
+/* 恢复后正绘铃铛：帽罩一笔成型，再画铃身与底边，最后补铃舌。 */
+.notice-phase-bell-drawing .notice-bell-hood {
+  animation: notice-stroke-draw 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .notice-phase-bell-drawing .notice-bell-body {
-  animation: notice-stroke-draw 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: notice-stroke-draw 420ms cubic-bezier(0.22, 1, 0.36, 1) 270ms both;
 }
 
 .notice-phase-bell-drawing .notice-bell-clapper {
-  animation: notice-stroke-draw 180ms ease-out 340ms both;
+  animation: notice-stroke-draw 170ms ease-out 660ms both;
 }
 
 @keyframes notice-stroke-draw {
@@ -613,9 +626,11 @@
   to { stroke-dashoffset: 0; }
 }
 
+/* 擦除必须让最后落笔的笔尾先消失，一直退回起笔点，即 dashoffset 由 0 增至 1；
+   若取 -1 会从起笔处开始吃掉线条，视觉上与倒绘相反。 */
 @keyframes notice-stroke-erase {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -1; }
+  to { stroke-dashoffset: 1; }
 }
 
 @keyframes notice-icon-pulse {
