@@ -13,7 +13,7 @@ test("服务端首次连接失败时也会展开通知灵动岛", () => {
 })
 
 test("自动重试开始时不清空错误并误报服务恢复", () => {
-  assert.match(topbarSource, /!disconnected && overview/)
+  assert.match(topbarSource, /if \(wasDisconnected\.current && overview\)/)
   assert.doesNotMatch(
     serverDataSource,
     /if \(!connectedOnce\.current\) \{\s*setLoading\(true\)\s*setError\(null\)/,
@@ -26,30 +26,37 @@ test("通知灵动岛保持等比例放大的尺寸", () => {
   assert.match(topbarSource, /"3\.25rem"/)
 })
 
-test("错误图标返回铃铛时先绘制再甩动两次", () => {
-  assert.match(topbarSource, /bellReturning \? "bell-return"/)
-  assert.match(topbarSource, /bellReturnRef\.current\.animate/)
-  assert.match(topbarSource, /duration: 700, delay: 560/)
-  assert.match(topbarSource, /rotate\(17deg\)[\s\S]+rotate\(-12deg\)[\s\S]+rotate\(7deg\)[\s\S]+rotate\(-3deg\)/)
-  assert.match(topbarSource, /iconVariant === "warning"/)
-  assert.match(topbarSource, /setIconVariant\("warning"\)/)
-  assert.match(topbarSource, /animate-notice-retract/)
-  assert.match(topbarSource, /pathLength=\{1\}/)
-  assert.match(topbarSource, /setRetracting\(true\)/)
-  assert.doesNotMatch(topbarSource, /iconVariant === "check"|<Check /)
-  assert.match(topbarSource, /expanded \? "error" : bellReturning \? "bell-return"/)
+test("通知图标通过 animationend 推进可逆状态机", () => {
+  assert.match(topbarSource, /type NoticeIconPhase/)
+  assert.match(topbarSource, /onAnimationEnd=/)
+  assert.match(topbarSource, /dataset\.sequenceEnd === "true"/)
+  assert.match(topbarSource, /bell-erasing[\s\S]+warning-drawing/)
+  assert.match(topbarSource, /warning-erasing[\s\S]+bell-drawing/)
+  assert.match(topbarSource, /desiredWarning\.current/)
+  assert.doesNotMatch(topbarSource, /bellReturnRef\.current\.animate|rotate\(17deg\)|animate-notice-retract/)
 })
 
-test("通知图标按落笔顺序分段绘制并反向擦除", () => {
-  assert.match(topbarSource, /notice-icon-\$\{iconVariant\}/)
-  // 铃铛主体（第二条 path）先于下方小锤完成；警告三角形先于感叹号。
-  assert.match(globalCssSource, /notice-icon-bell:not\(\.animate-notice-retract\) path:nth-child\(2\)[\s\S]+animation-delay: 40ms/)
-  assert.match(globalCssSource, /notice-icon-bell\.animate-notice-retract path:nth-child\(1\)[\s\S]+animation-delay: 0ms/)
-  assert.match(globalCssSource, /notice-icon-bell\.animate-notice-retract path:nth-child\(2\)[\s\S]+animation-delay: 180ms/)
-  assert.match(globalCssSource, /notice-icon-warning:not\(\.animate-notice-retract\) path:nth-child\(1\)[\s\S]+animation-delay: 0ms/)
-  assert.match(globalCssSource, /notice-icon-warning:not\(\.animate-notice-retract\) path:nth-child\(2\)[\s\S]+animation-delay: 360ms/)
-  assert.match(globalCssSource, /notice-icon-warning\.animate-notice-retract path:nth-child\(3\)[\s\S]+animation-delay: 0ms/)
-  assert.match(globalCssSource, /stroke-dasharray: 200;\s*stroke-dashoffset: 0;[\s\S]+notice-stroke-retract/)
-  assert.match(globalCssSource, /@keyframes notice-stroke-retract[\s\S]+stroke-dashoffset: 200;/)
-  assert.match(globalCssSource, /\.animate-notice-icon path,[\s\S]+stroke-dasharray: 200;\s*stroke-dashoffset: 200;/)
+test("通知图标按指定笔顺绘制并严格倒序擦除", () => {
+  assert.match(topbarSource, /notice-bell-body/)
+  assert.match(topbarSource, /notice-bell-clapper/)
+  assert.match(topbarSource, /notice-warning-triangle/)
+  assert.match(topbarSource, /notice-warning-mark/)
+  assert.match(topbarSource, /notice-warning-dot/)
+  assert.match(topbarSource, /pathLength="1"/)
+
+  // 断线：铃舌先擦除、主体后擦除；三角先绘制、感叹号后绘制。
+  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-clapper[\s\S]+160ms ease-in both/)
+  assert.match(globalCssSource, /notice-phase-bell-erasing \.notice-bell-body[\s\S]+380ms[\s\S]+120ms both/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-triangle[\s\S]+460ms/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-mark[\s\S]+380ms both/)
+  assert.match(globalCssSource, /notice-phase-warning-drawing \.notice-warning-dot[\s\S]+540ms both/)
+
+  // 恢复：感叹号先擦除、三角后擦除；铃铛主体先绘制、铃舌后绘制。
+  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-dot[\s\S]+120ms ease-in both/)
+  assert.match(globalCssSource, /notice-phase-warning-erasing \.notice-warning-triangle[\s\S]+200ms both/)
+  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-body[\s\S]+420ms/)
+  assert.match(globalCssSource, /notice-phase-bell-drawing \.notice-bell-clapper[\s\S]+340ms both/)
+  assert.match(globalCssSource, /stroke-dasharray: 1;/)
+  assert.match(globalCssSource, /@keyframes notice-stroke-erase[\s\S]+stroke-dashoffset: -1;/)
+  assert.match(globalCssSource, /prefers-reduced-motion: reduce/)
 })

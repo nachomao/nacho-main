@@ -11,8 +11,6 @@ import {
   Database,
   SquareTerminal,
   Sparkles,
-  Bell,
-  AlertTriangle,
   Search,
   DownloadCloud,
   FolderInput,
@@ -444,78 +442,95 @@ function IconButton({
   )
 }
 
-/** 顶栏通知灵动岛：铃铛退画后重绘警告图标，再由右向左弹性展开错误正文。 */
+type NoticeIconPhase =
+  | "bell-idle"
+  | "bell-erasing"
+  | "warning-drawing"
+  | "warning-idle"
+  | "warning-erasing"
+  | "bell-drawing"
+
+function NoticeStrokeIcon({ phase, onSequenceEnd }: { phase: NoticeIconPhase; onSequenceEnd: () => void }) {
+  const warning = phase.startsWith("warning")
+
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={cn("notice-stroke-icon size-[1.375rem]", `notice-phase-${phase}`)}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      onAnimationEnd={(event) => {
+        if ((event.target as SVGElement).dataset.sequenceEnd === "true") onSequenceEnd()
+      }}
+    >
+      {warning ? (
+        <>
+          <path className="notice-stroke notice-warning-triangle" pathLength="1" d="M10.3 3.6 2.7 17a2 2 0 0 0 1.75 3h15.1a2 2 0 0 0 1.75-3L13.7 3.6a2 2 0 0 0-3.4 0Z" data-sequence-end={phase === "warning-erasing" ? "true" : undefined} />
+          <path className="notice-stroke notice-warning-mark" pathLength="1" d="M12 9v4" />
+          <circle className="notice-stroke notice-warning-dot" pathLength="1" cx="12" cy="17" r=".45" data-sequence-end={phase === "warning-drawing" ? "true" : undefined} />
+        </>
+      ) : (
+        <>
+          <path className="notice-stroke notice-bell-body" pathLength="1" d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" data-sequence-end={phase === "bell-erasing" ? "true" : undefined} />
+          <path className="notice-stroke notice-bell-clapper" pathLength="1" d="M9.7 20a2.6 2.6 0 0 0 4.6 0" data-sequence-end={phase === "bell-drawing" ? "true" : undefined} />
+        </>
+      )}
+    </svg>
+  )
+}
+
+/** 顶栏通知灵动岛：断线时倒绘铃铛再正绘警告，恢复时严格反向播放。 */
 function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () => void }) {
   const { overview, error, refreshing, refresh } = useServerData()
   const [recovered, setRecovered] = useState(false)
-  const [bellReturning, setBellReturning] = useState(false)
-  const [iconVariant, setIconVariant] = useState<"bell" | "warning">("bell")
-  const [iconCycle, setIconCycle] = useState(0)
-  const [retracting, setRetracting] = useState(false)
+  const [iconPhase, setIconPhase] = useState<NoticeIconPhase>("bell-idle")
+  const desiredWarning = useRef(false)
   const wasDisconnected = useRef(false)
-  const bellReturnRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     // 首次打开面板时服务端可能已经离线，此时 overview 尚未生成，但错误同样需要展示。
     const disconnected = Boolean(error)
-    if (disconnected && !wasDisconnected.current) {
+    desiredWarning.current = disconnected
+
+    if (disconnected) {
       setRecovered(false)
-      setBellReturning(false)
-      // 首次进入告警：先按铃铛的反向落笔顺序擦除，再替换为警告图标正绘。
-      setRetracting(true)
       wasDisconnected.current = true
-      const drawWarningTimer = window.setTimeout(() => {
-        setRetracting(false)
-        setIconVariant("warning")
-        setIconCycle((cycle) => cycle + 1)
-      }, 760)
-      return () => window.clearTimeout(drawWarningTimer)
+      setIconPhase((phase) => (phase === "warning-idle" || phase === "warning-drawing" ? phase : "bell-erasing"))
+      return
     }
+
     // 只有服务端真实返回 overview 后才算恢复；重试开始时的中间态不得冒充成功。
-    if (wasDisconnected.current && !disconnected && overview) {
+    if (wasDisconnected.current && overview) {
       setRecovered(true)
-      setBellReturning(false)
-      // 恢复连接：先按警告图标的反向落笔顺序擦除，再创建铃铛节点开始正绘。
-      setRetracting(true)
       wasDisconnected.current = false
-      const drawBellTimer = window.setTimeout(() => {
-        setRetracting(false)
-        setIconVariant("bell")
-        setIconCycle((cycle) => cycle + 1)
-        setBellReturning(true)
-      }, 600)
-      const settleRecoveryTimer = window.setTimeout(() => setRecovered(false), 1500)
-      const settleBellTimer = window.setTimeout(() => setBellReturning(false), 1500)
-      return () => {
-        window.clearTimeout(drawBellTimer)
-        window.clearTimeout(settleRecoveryTimer)
-        window.clearTimeout(settleBellTimer)
-      }
+      setIconPhase((phase) => (phase === "bell-idle" || phase === "bell-drawing" ? phase : "warning-erasing"))
     }
   }, [error, overview])
 
-  useEffect(() => {
-    if (!bellReturning || !bellReturnRef.current) return
-    // 内层先用 560ms 完成铃铛描边；随后外层只执行一轮衰减双甩。
-    const animation = bellReturnRef.current.animate(
-      [
-        { transform: "rotate(0deg)", offset: 0 },
-        { transform: "rotate(17deg)", offset: 0.18 },
-        { transform: "rotate(-12deg)", offset: 0.38 },
-        { transform: "rotate(7deg)", offset: 0.62 },
-        { transform: "rotate(-3deg)", offset: 0.82 },
-        { transform: "rotate(0deg)", offset: 1 },
-      ],
-      { duration: 700, delay: 560, easing: "cubic-bezier(0.36, 0.07, 0.19, 0.97)", fill: "both" },
-    )
-    return () => animation.cancel()
-  }, [bellReturning])
+  const advanceIconSequence = () => {
+    setIconPhase((phase) => {
+      if (phase === "bell-erasing") return desiredWarning.current ? "warning-drawing" : "bell-drawing"
+      if (phase === "warning-drawing") return desiredWarning.current ? "warning-idle" : "warning-erasing"
+      if (phase === "warning-erasing") return desiredWarning.current ? "warning-drawing" : "bell-drawing"
+      if (phase === "bell-drawing") {
+        if (desiredWarning.current) return "bell-erasing"
+        setRecovered(false)
+        return "bell-idle"
+      }
+      return phase
+    })
+  }
 
   const expanded = Boolean(error)
   return (
     <div
       role={expanded ? "alert" : undefined}
-      data-notification-state={expanded ? "error" : bellReturning ? "bell-return" : recovered ? "recovered" : "idle"}
+      data-notification-state={expanded ? "error" : recovered ? "recovered" : "idle"}
+      data-icon-phase={iconPhase}
       aria-live="polite"
       className={cn(
         "relative flex h-13 flex-row-reverse items-center overflow-hidden rounded-full border transition-[width,background-color,border-color,box-shadow] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
@@ -533,15 +548,8 @@ function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () =>
         className={cn("relative z-10 flex h-13 w-13 shrink-0 items-center justify-center rounded-full", expanded ? "text-negative" : recovered ? "text-positive" : "text-foreground")}
         aria-label={expanded ? "服务端连接已断开" : "通知中心"}
       >
-        <span
-          ref={bellReturnRef}
-          key={`${iconVariant}-${iconCycle}`}
-          className={cn("inline-flex", `notice-icon-${iconVariant}`, retracting && "animate-notice-retract")}
-          style={{ transformOrigin: "50% 12%" }}
-        >
-          <span className={cn("animate-notice-icon inline-flex", `notice-icon-${iconVariant}`, retracting && "animate-notice-retract")}>
-            {iconVariant === "warning" ? <AlertTriangle pathLength={1} className="h-[1.375rem] w-[1.375rem]" strokeWidth={2.2} /> : <Bell pathLength={1} className="h-[1.375rem] w-[1.375rem]" />}
-          </span>
+        <span className="inline-flex">
+          <NoticeStrokeIcon phase={iconPhase} onSequenceEnd={advanceIconSequence} />
         </span>
         {expanded && <span className="absolute inset-1 rounded-full border border-negative/30 animate-notice-pulse" />}
         {!expanded && unread > 0 && (
