@@ -14,16 +14,16 @@
 
 ### 2.1 面板（Windows）
 
-- 工作目录：仓库根目录。
+- 工作目录：`nacho-panel/`。
 - 技术栈：Next.js 16 App Router、React 19、TypeScript 5.7、Tailwind CSS 4。
 - 主要目录：
-  - `app/`：页面和面板本地 API Route。
-  - `components/`：业务视图、上下文、交互和 UI 组件。
-  - `lib/`：本地设置、命令结果解析、服务端地址和通用工具。
-  - `tests/`：面板侧纯逻辑与本地设置测试。
+  - `nacho-panel/app/`：页面和面板本地 API Route。
+  - `nacho-panel/components/`：业务视图、上下文、交互和 UI 组件。
+  - `nacho-panel/lib/`：本地设置、命令结果解析、服务端地址和通用工具。
+  - `nacho-panel/tests/`：面板侧纯逻辑与本地设置测试。
 - 本机开发地址：`http://localhost:3000`，客户端管理页为 `/clients`。
-- `components/server-data-context.tsx` 统一访问控制服务端的 `/api/panel/*`，使用 `Authorization: Bearer <PANEL_API_KEY>`。
-- `app/api/local-settings/route.ts` 与 `app/api/settings/test-email/route.ts` 属于面板本机 API；它们与 WSL 控制服务端不是同一进程。
+- `nacho-panel/components/server-data-context.tsx` 统一访问控制服务端的 `/api/panel/*`，使用 `Authorization: Bearer <PANEL_API_KEY>`。
+- `nacho-panel/app/api/local-settings/route.ts` 与 `nacho-panel/app/api/settings/test-email/route.ts` 属于面板本机 API；它们与 WSL 控制服务端不是同一进程。
 - 本地面板设置默认写入 `%LOCALAPPDATA%/NachoPanel/panel-settings.json`，测试可用 `NACHO_PANEL_SETTINGS_PATH` 指向临时文件。
 
 ### 2.2 控制服务端（WSL2 Debian）
@@ -76,7 +76,7 @@
 - 请求包含加载、空数据、错误、重试、重复点击和终态刷新处理。
 - 保留桌面和移动端布局；至少核对窄屏 `390x844` 无页面级横向溢出。
 - `next.config.mjs` 当前设置 `typescript.ignoreBuildErrors: true`，因此 `pnpm build` 与独立的 `pnpm exec tsc --noEmit` 两项均需执行。
-- 根首页组件名和 `app/layout.tsx` metadata 仍带有早期 v0/加密仪表盘遗留命名；业务卡片已部分接入真实 overview。相关任务应以渲染数据链路为准，并逐步清理命名，而非据文件名判断功能。
+- 根首页组件名和 `nacho-panel/app/layout.tsx` metadata 仍带有早期 v0/加密仪表盘遗留命名；业务卡片已部分接入真实 overview。相关任务应以渲染数据链路为准，并逐步清理命名，而非据文件名判断功能。
 
 ### 4.2 服务端改动
 
@@ -110,37 +110,39 @@
 
 - 已接通真实链路：客户端注册与心跳、客户端列表、Panel API、WebSocket/HTTP 命令投递、Agent journal、程序执行、服务控制、进程终止、系统重启、受限日志采集、Agent 手动升级与回滚。
 - 服务端已提供任务、插件、健康、日志和设置 CRUD/API，但面板是否真正调用这些接口需要按具体组件核对。
-- `components/tasks/tasks-view.tsx` 当前只在 React 本地状态中创建、编辑、启停和删除任务，尚未接入服务端 `/tasks`。
-- `components/plugins/plugins-context.tsx` 当前只维护 React 本地状态，导入、下载、批量安装等交互尚未形成服务端 + Agent 完整闭环。
-- `components/health/health-view.tsx` 的发现项、日志包、主动采集和重新分析目前是空初值加本地定时模拟，尚未接入已有 health API。
-- `components/ai-mode/ai-workspace.tsx` 是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
-- `components/topbar/webssh-dialog.tsx` 与 `webssh-files-panel.tsx` 是本地模拟终端和模拟文件系统。
-- `components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/install.ps1`。
+- `nacho-panel/components/tasks/tasks-view.tsx` 当前只在 React 本地状态中创建、编辑、启停和删除任务，尚未接入服务端 `/tasks`。
+- `nacho-panel/components/plugins/plugins-context.tsx` 当前只维护 React 本地状态，导入、下载、批量安装等交互尚未形成服务端 + Agent 完整闭环。
+- `nacho-panel/components/health/health-view.tsx` 的发现项、日志包、主动采集和重新分析目前是空初值加本地定时模拟，尚未接入已有 health API。
+- `nacho-panel/components/ai-mode/ai-workspace.tsx` 是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
+- `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 是本地模拟终端和模拟文件系统。
+- `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/install.ps1`。
 - `server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
 - 发现“注释宣称真实、实现仍为本地 state 或定时模拟”的情况时，以代码行为为准，并在相关任务中修正注释。
 
 ## 6. 文件与依赖管理
 
-- 根项目使用 `pnpm-lock.yaml` 与 pnpm；`server/` 使用 `package-lock.json` 与 npm；Agent 使用 dotnet/NuGet。各层保持各自包管理器。
-- 业务源码修改范围通常为 `app/`、`components/`、`lib/`、`server/src/`、`server/client/src/` 和对应测试。
-- 生成目录和运行数据保持只读：`.next/`、各级 `node_modules/`、`server/dist/`、`server/data/`、`server/tmp-*`、`**/bin/`、`**/obj/`。
+- 面板使用 `nacho-panel/pnpm-lock.yaml` 与 pnpm；`server/` 使用 `package-lock.json` 与 npm；Agent 使用 dotnet/NuGet。各层保持各自包管理器。
+- 业务源码修改范围通常为 `nacho-panel/app/`、`nacho-panel/components/`、`nacho-panel/lib/`、`server/src/`、`server/client/src/` 和对应测试。
+- 生成目录和运行数据保持只读：`nacho-panel/.next/`、各级 `node_modules/`、`server/dist/`、`server/data/`、`server/tmp-*`、`**/bin/`、`**/obj/`。
 - `server/artifacts/windows/*.exe` 是发布制品；源码任务不直接编辑二进制文件。
 - 当前仓库基线可能尚未建立 tracked files。每次检查 `git ls-files`；当结果为空时，`git diff` 的覆盖范围并不完整，需要同时核对文件清单和内容。清理、重置、暂存、提交与推送均以用户明确要求为触发条件。
 - 保留用户已有的未提交文件和运行数据；修改聚焦当前任务涉及的文件。
 
 ## 7. 分层验证命令
 
-### 7.1 面板：在当前 Windows 工作区运行
+### 7.1 面板：在当前 Windows 工作区的 `nacho-panel/` 中运行
 
 ```powershell
+Push-Location nacho-panel
 pnpm exec tsx --test tests/*.test.ts
 pnpm exec tsc --noEmit
 pnpm build
+Pop-Location
 ```
 
 - 小范围修改先运行对应测试，再运行全量测试与 TypeScript 检查。
 - UI 变更还需在真实浏览器访问 `http://localhost:3000`，核对目标页面、控制台、网络请求、桌面和 `390x844` 视口。
-- 已有 dev 服务运行时，构建可能改写 `.next/`；先确认运行进程，必要时在独立副本构建并保持原 dev 服务状态。
+- 已有 dev 服务运行时，构建可能改写 `nacho-panel/.next/`；先确认运行进程，必要时在独立副本构建并保持原 dev 服务状态。
 
 ### 7.2 服务端：在 WSL2 Debian 中运行
 

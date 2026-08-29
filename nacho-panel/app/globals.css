@@ -1,0 +1,690 @@
+﻿@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: var(--font-geist-sans), 'Geist Fallback';
+  --font-mono: var(--font-geist-mono), 'Geist Mono Fallback';
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
+  --color-surface: var(--surface);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+}
+
+:root {
+  color-scheme: dark;
+  /* crypto dashboard theme锛堥粯璁や富棰橈細娣辨捣钃濓級 */
+  --background: oklch(0.13 0 0);
+  --foreground: oklch(0.97 0.01 250);
+  --card: oklch(0.2 0.01 255);
+  --card-foreground: oklch(0.97 0.01 250);
+  --surface: oklch(0.26 0.01 255);
+  --muted: oklch(0.28 0.01 255);
+  --muted-foreground: oklch(0.68 0.02 255);
+  --border: oklch(1 0 0 / 8%);
+  --primary: oklch(0.75 0.15 245);
+  --primary-foreground: oklch(0.2 0.05 255);
+  --accent: oklch(0.8 0.13 225);
+  --accent-foreground: oklch(0.2 0.05 255);
+  --positive: oklch(0.78 0.18 150);
+  --negative: oklch(0.65 0.2 25);
+  --warning: oklch(0.8 0.15 75);
+  --radius: 0.75rem;
+}
+
+/* ---------- 涓婚鑹诧細閫氳繃 <html data-theme="..."> 鍒囨崲 ----------
+   榛樿锛堟棤 data-theme锛変负銆屾繁娴疯摑銆嶏紝浠ヤ笅姣忓涓婚淇濇寔鐩稿悓鐨勬槑搴︾粨鏋勶紝
+   浠呰皟鏁磋壊鐩革紝纭繚瀵规瘮搴︿笌鍙鎬т竴鑷淬€?*/
+
+[data-theme='green'] {
+  --background: oklch(0.13 0 0);
+  --card: oklch(0.2 0.01 150);
+  --surface: oklch(0.26 0.01 150);
+  --muted: oklch(0.28 0.01 150);
+  --muted-foreground: oklch(0.68 0.02 150);
+  --foreground: oklch(0.97 0.01 140);
+  --card-foreground: oklch(0.97 0.01 140);
+  --primary: oklch(0.82 0.19 145);
+  --primary-foreground: oklch(0.22 0.05 150);
+  --accent: oklch(0.88 0.18 130);
+  --accent-foreground: oklch(0.22 0.05 150);
+}
+
+[data-theme='cyan'] {
+  --background: oklch(0.13 0 0);
+  --card: oklch(0.2 0.01 215);
+  --surface: oklch(0.26 0.01 215);
+  --muted: oklch(0.28 0.01 215);
+  --muted-foreground: oklch(0.68 0.02 215);
+  --foreground: oklch(0.97 0.01 210);
+  --card-foreground: oklch(0.97 0.01 210);
+  --primary: oklch(0.8 0.13 200);
+  --primary-foreground: oklch(0.2 0.05 215);
+  --accent: oklch(0.85 0.12 185);
+  --accent-foreground: oklch(0.2 0.05 215);
+}
+
+[data-theme='orange'] {
+  --background: oklch(0.13 0 0);
+  --card: oklch(0.2 0.01 55);
+  --surface: oklch(0.26 0.01 55);
+  --muted: oklch(0.28 0.01 55);
+  --muted-foreground: oklch(0.68 0.02 55);
+  --foreground: oklch(0.97 0.01 60);
+  --card-foreground: oklch(0.97 0.01 60);
+  --primary: oklch(0.8 0.16 60);
+  --primary-foreground: oklch(0.22 0.05 55);
+  --accent: oklch(0.85 0.14 80);
+  --accent-foreground: oklch(0.22 0.05 55);
+}
+
+[data-theme='rose'] {
+  --background: oklch(0.13 0 0);
+  --card: oklch(0.2 0.01 355);
+  --surface: oklch(0.26 0.01 355);
+  --muted: oklch(0.28 0.01 355);
+  --muted-foreground: oklch(0.68 0.02 355);
+  --foreground: oklch(0.97 0.01 350);
+  --card-foreground: oklch(0.97 0.01 350);
+  --primary: oklch(0.78 0.15 5);
+  --primary-foreground: oklch(0.2 0.05 355);
+  --accent: oklch(0.82 0.13 20);
+  --accent-foreground: oklch(0.2 0.05 355);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html, body {
+    @apply bg-background text-foreground font-sans;
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.35 0.02 150) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: oklch(0.35 0.02 150);
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: oklch(0.5 0.05 150);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* 瀹㈡埛绔潰鏉垮垏鎹㈠姩鐢汇€?   娉ㄦ剰锛氳繖浜涚被蹇呴』鏀惧湪 @layer utilities 涔嬪鐨勬櫘閫?CSS 涓€?   鍦?Tailwind v4 閲岋紝鍐欒繘 @layer utilities 鐨勮嚜瀹氫箟绫讳細琚綋浣滃伐鍏风被鍋氭寜闇€鐢熸垚锛?   鏈鍙潬妫€娴嬪埌鏃朵細琚墧闄わ紝瀵艰嚧鍔ㄧ敾閫€鍖栨垚鐬棿闂幇銆?*/
+
+/* 寰€鍚庡垏锛氬綋鍓嶅崱鐗囧悜涓婂钩绉荤鍦猴紝涓嬩竴寮犱粠涓嬫柟鍚戜笂骞崇Щ杩涘満 */
+@keyframes panel-enter-up {
+  0% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes panel-exit-up {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+/* 寰€鍓嶅垏锛氫笅涓€寮犱粠涓婃柟鍚戜笅骞崇Щ杩涘満锛屽綋鍓嶅崱鐗囧悜涓嬪钩绉荤鍦?*/
+@keyframes panel-enter-down {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes panel-exit-down {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+/* 鏍囬鍒囨崲锛氭柊鏂囧瓧浠庢ā绯?涓嬬Щ娓愬叆锛屾棫鏂囧瓧妯＄硦+涓婄Щ娓愬嚭锛屽舰鎴愪氦鍙夎繃娓?*/
+@keyframes title-blur-in {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes title-blur-out {
+  0% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(-6px);
+  }
+}
+
+/* AI 杈撳叆妗嗗井鍏夛細涓€閬撴煍鍏夊懆鏈熸€т粠宸︽壂鍒板彸 */
+@keyframes input-sheen {
+  0%,
+  55% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(500%);
+  }
+}
+
+.animate-input-sheen {
+  animation: input-sheen 5s ease-in-out infinite;
+}
+
+/* 娉ㄥ唽娴佸厜棰滆壊鍙橀噺涓?<color> 绫诲瀷锛岃娓愬彉绔偣棰滆壊鍙互骞虫粦杩囨浮锛堟櫘閫?CSS 鍙橀噺鏃犳硶鎻掑€硷級 */
+@property --beam-from {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
+@property --beam-to {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
+/* Border beam锛氬僵鑹插厜鏉熸部鍏冪礌杈规娴佸姩锛坥ffset-path 鐜粫鐭╁舰涓€鍛級 */
+@keyframes border-beam {
+  0% {
+    offset-distance: 0%;
+  }
+  100% {
+    offset-distance: 100%;
+  }
+}
+
+.border-beam-track {
+  /* 鍙屽眰 mask 鍙繚鐣欒竟妗嗙幆锛氬唴瀹瑰尯琚鎺夛紝鍏夋潫鍙湪杈圭紭鍙 */
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid transparent;
+  mask-image: linear-gradient(transparent, transparent), linear-gradient(#000, #000);
+  mask-clip: padding-box, border-box;
+  mask-composite: intersect;
+  -webkit-mask-image: linear-gradient(transparent, transparent), linear-gradient(#000, #000);
+  -webkit-mask-clip: padding-box, border-box;
+  -webkit-mask-composite: source-in;
+}
+
+.border-beam-spot {
+  position: absolute;
+  aspect-ratio: 1;
+  offset-anchor: 90% 50%;
+  animation: border-beam linear infinite;
+}
+
+/* 寮ユ暎鍏夋檿灞傦細瑁佸壀鍦ㄥ鍣ㄥ唴锛屽緞鍚戞笎鍙橀伄缃╄鍏夐浘鍙繚鐣欏湪杈圭紭銆佷腑蹇冮€忔槑锛屽舰鎴愯创杈规祦鍔ㄧ殑闆剧姸鏋佸厜 */
+.border-beam-glow-track {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(ellipse 75% 68% at 50% 50%, transparent 52%, #000 96%);
+  mask-image: radial-gradient(ellipse 75% 68% at 50% 50%, transparent 52%, #000 96%);
+}
+
+.border-beam-glow-spot {
+  position: absolute;
+  aspect-ratio: 5 / 2;
+  offset-anchor: 50% 50%;
+  animation: border-beam linear infinite;
+  filter: blur(22px) saturate(1.4);
+  border-radius: 9999px;
+}
+
+/* AI Mode 鏋佸厜鍏夋檿锛氬褰╄壊鏂戠紦鎱㈡紓绉伙紙鍙傝€?border beam 灞曠ず椤电殑搴曢儴姘涘洿鍏夛級 */
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.55;
+  }
+  33% {
+    transform: translate(6%, -4%) scale(1.08);
+    opacity: 0.8;
+  }
+  66% {
+    transform: translate(-5%, 3%) scale(0.95);
+    opacity: 0.6;
+  }
+}
+
+.animate-aurora {
+  animation: aurora-drift 14s ease-in-out infinite;
+}
+
+/* iOS 椋庢牸閫愯瘝娴幇锛氭瘡涓瘝浠庢ā绯?+ 杞诲井涓嬬Щ + 缂╁皬涓笎鏄撅紙Apple Intelligence 璐ㄦ劅锛?*/
+@keyframes word-blur-in {
+  0% {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(4px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-word-in {
+  display: inline-block;
+  animation: word-blur-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-title-in {
+  animation: title-blur-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-title-out {
+  animation: title-blur-out 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-panel-enter {
+  animation: panel-enter-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-panel-exit {
+  animation: panel-exit-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-panel-enter-down {
+  animation: panel-enter-down 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-panel-exit-down {
+  animation: panel-exit-down 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 鍒嗘鍒囨崲锛氬唴瀹硅窡闅忚嵂涓告粦鍔ㄦ柟鍚戞按骞冲钩绉昏繘鍦猴紝
+   涓庢粦鍧楃殑骞崇Щ褰㈡垚鍚屽悜鑱斿姩锛屽垏鎹㈡洿椤烘粦銆?*/
+@keyframes panel-slide-in-right {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes panel-slide-in-left {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: panel-slide-in-right 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-slide-in-left {
+  animation: panel-slide-in-left 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 澶村儚閫変腑鏃剁殑寮瑰叆锛氫粠缂╁皬 + 妯＄硦鍒颁綅锛屽甫杞诲井鍥炲脊 */
+@keyframes avatar-pop {
+  0% {
+    transform: scale(0.6);
+    filter: blur(10px);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+    filter: blur(0);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-avatar-pop {
+  animation: avatar-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 鍗＄墖灞曞紑 / 鏀惰捣鏃舵帹鍔ㄦ爣棰樼粍锛屽舰鎴?鍗＄墖鍏堝姩銆佹枃瀛楃揣鎺ョ潃璺熶笂"鐨勯敊浣嶈窡闅忥細
+   鐗堥潰閲嶆帓锛堝眳涓噸鎺掞級浼氶殢闈㈡澘楂樺害杩囨浮鎶婃枃瀛楁暣浣撲笂绉绘垨涓嬬Щ锛?   鍔ㄧ敾璁╂枃瀛楃粍鍏堝仠鐣欏湪鍋忕Щ澶勪竴灏忔锛堢瓑鍗＄墖鍏堣蛋锛夛紝鍐嶆儻鎬ц拷涓婏紝鑰岄潪涓庡崱鐗囧悓姝ョ‖绉汇€?   璧峰鐨勫仠椤挎鏄叧閿€斺€斿畠鍒堕€犲嚭鏂囧瓧"绱ф帴鍏跺悗"钀戒綅鐨勫眰娆℃劅銆?*/
+@keyframes text-push-up {
+  0% {
+    transform: translateY(20px);
+  }
+  22% {
+    transform: translateY(20px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes text-push-down {
+  0% {
+    transform: translateY(-18px);
+  }
+  22% {
+    transform: translateY(-18px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.animate-text-push-up {
+  animation: text-push-up 0.66s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-text-push-down {
+  animation: text-push-down 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 鏈湴閮ㄧ讲缁堢锛氭棩蹇楄閫愭潯浠庢ā绯?+ 杞诲井涓嬬Щ涓笎鏄?*/
+@keyframes deploy-line-in {
+  0% {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.animate-deploy-line {
+  animation: deploy-line-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 閿佸睆瀵嗛挜/瀵嗙爜杈撳叆閿欒鏃剁殑姘村钩鎶栧姩 */
+@keyframes lock-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  60% {
+    transform: translateX(-5px);
+  }
+  80% {
+    transform: translateX(5px);
+  }
+}
+
+.animate-lock-shake {
+  animation: lock-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* 妯″瀷閫夋嫨寮圭獥锛氫粠瑙﹀彂鎸夐挳涓婃柟杞诲井涓嬫矇+缂╂斁娓愬叆/娓愬嚭 */
+@keyframes dropdown-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dropdown-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+.animate-dropdown-in {
+  animation: dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: bottom center;
+}
+
+.animate-dropdown-out {
+  animation: dropdown-out 0.14s cubic-bezier(0.4, 0, 1, 1) both;
+  transform-origin: bottom center;
+}
+
+@layer utilities {
+  /* 璺敱绾ч〉闈㈠垏鎹㈢殑绂诲満/杩涘満鍔ㄧ敾鐢?components/page-transition.tsx
+     浣跨敤 Web Animations API 鍛戒护寮忛┍鍔紝鏃犻渶鍦ㄦ瀹氫箟 CSS 鍏抽敭甯с€?*/
+
+  .card-glow {
+    box-shadow:
+      inset 0 1.5px 0 0 oklch(1 0 0 / 22%),
+      inset 1px 0 0 0 oklch(1 0 0 / 12%),
+      inset -1px 0 0 0 oklch(1 0 0 / 6%),
+      inset 0 -1px 0 0 oklch(1 0 0 / 4%),
+      0 0 0 1px color-mix(in oklch, var(--primary) 20%, transparent),
+      0 0 20px 0px color-mix(in oklch, var(--primary) 15%, transparent),
+      0 8px 32px -4px oklch(0 0 0 / 40%);
+  }
+}
+
+/* 閫氱煡鍥炬爣褰㈠彉锛氭寜鎵嬬粯绗旈『鎵ц鎻忚竟鍔ㄧ敾銆傞搩閾涘厛鐢讳富浣撳啀鐢讳笅鏂瑰皬閿わ紝
+   璀﹀憡鍏堢敾涓夎褰紝鍐嶇敾鎰熷徆鍙凤紱鍊掔粯鏃朵弗鏍煎弽鍚戞摝闄ゃ€?*/
+@keyframes notice-icon-draw {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) rotate(-18deg);
+    filter: blur(5px);
+  }
+  55% {
+    opacity: 0.75;
+    transform: scale(1.12) rotate(5deg);
+    filter: blur(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+    filter: blur(0);
+  }
+}
+
+.animate-notice-retract {
+  /* 澶栧眰淇濇寔鍘熶綅锛屽€掔粯鍙綔鐢ㄤ簬 SVG 鎻忚竟锛岄伩鍏嶅彉鎴愭ā绯婃贰鍑恒€?*/
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.animate-notice-retract .animate-notice-icon,
+.animate-notice-icon.animate-notice-retract {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/* 鍊掔粯闃舵锛氭瘡鏉?SVG 绾夸粠瀹屾暣鐘舵€侀€€鍥炰笉鍙銆俻athLength=1 璁╄繘搴︿笌鍥炬爣鍑犱綍闀垮害鏃犲叧銆?*/
+.animate-notice-retract path,
+.animate-notice-retract circle,
+.animate-notice-retract line,
+.animate-notice-retract polyline,
+.animate-notice-retract polygon,
+.animate-notice-icon.animate-notice-retract path,
+.animate-notice-icon.animate-notice-retract circle,
+.animate-notice-icon.animate-notice-retract line,
+.animate-notice-icon.animate-notice-retract polyline,
+.animate-notice-icon.animate-notice-retract polygon {
+  /* 浣跨敤澶т簬 24px 鍥炬爣鍛ㄩ暱鐨勫崟浣嶏紝鍏煎 pathLength 浠呮寕鍦?svg 鏍硅妭鐐圭殑 Lucide 瀹炵幇銆?*/
+  stroke-dasharray: 200;
+  stroke-dashoffset: 0;
+  animation: notice-stroke-retract 320ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* 姣忎釜鍥炬爣鐙珛鐨勮惤绗旈『搴忋€侺ucide Bell 鐨勭浜屾潯 path 鏄搩閾涗富浣擄紝
+   绗竴鏉?path 鏄笅鏂瑰皬閿わ紱TriangleAlert 鐨勪笁鏉?path 渚濇涓轰笁瑙掑舰銆?   鎰熷徆鍙风珫绾裤€佸渾鐐广€?*/
+.animate-notice-icon.notice-icon-bell:not(.animate-notice-retract) path:nth-child(2) {
+  animation-delay: 40ms;
+}
+.animate-notice-icon.notice-icon-bell:not(.animate-notice-retract) path:nth-child(1) {
+  animation-delay: 420ms;
+}
+.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(1) {
+  animation-duration: 460ms;
+  animation-delay: 0ms;
+}
+.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(2) {
+  animation-duration: 220ms;
+  animation-delay: 360ms;
+}
+.animate-notice-icon.notice-icon-warning:not(.animate-notice-retract) path:nth-child(3) {
+  animation-duration: 140ms;
+  animation-delay: 540ms;
+}
+
+/* 鍊掔粯涓ユ牸浠庢渶鍚庤惤绗旂殑閮ㄥ垎寮€濮嬶細閾冮摏灏忛敜鈫掍富浣擄紝璀﹀憡鍦嗙偣鈫掔珫绾库啋涓夎褰€?*/
+.animate-notice-icon.notice-icon-bell.animate-notice-retract path:nth-child(2) {
+  animation-delay: 180ms;
+}
+.animate-notice-icon.notice-icon-bell.animate-notice-retract path:nth-child(1) {
+  animation-delay: 0ms;
+}
+.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(3) {
+  animation-delay: 0ms;
+}
+.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(2) {
+  animation-delay: 120ms;
+}
+.animate-notice-icon.notice-icon-warning.animate-notice-retract path:nth-child(1) {
+  animation-delay: 240ms;
+}
+
+@keyframes notice-stroke-retract {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 200;
+  }
+}
+
+@keyframes notice-icon-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(1.22);
+  }
+}
+
+.animate-notice-icon {
+  animation: notice-icon-draw 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-notice-icon path,
+.animate-notice-icon circle,
+.animate-notice-icon line,
+.animate-notice-icon polyline,
+.animate-notice-icon polygon {
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  animation: notice-stroke-draw 520ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
+}
+
+@keyframes notice-stroke-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-notice-pulse {
+  animation: notice-icon-pulse 1.8s ease-out infinite;
+}
+
+
+
