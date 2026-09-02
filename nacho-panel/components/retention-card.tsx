@@ -3,6 +3,7 @@
 import { AlertTriangle, CheckCircle2, Clock, XCircle } from "lucide-react"
 import { AnimatedNumber } from "@/components/animated-number"
 import { useServerData, type LogEntry } from "@/components/server-data-context"
+import { formatLogDateTime } from "@/lib/formatters"
 
 type AlertLevel = "critical" | "warning" | "info" | "resolved"
 
@@ -20,7 +21,7 @@ function toAlert(log: LogEntry): Alert {
     level: log.level === "error" ? "critical" : log.level === "warn" ? "warning" : "info",
     device: log.source,
     message: log.message,
-    time: new Date(log.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+    time: formatLogDateTime(log.ts),
   }
 }
 

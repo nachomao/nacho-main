@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useServerData } from "@/components/server-data-context"
+import { formatLogDateTime } from "@/lib/formatters"
 import { useLogs } from "./logs-context"
 
 /* 通用面板外壳：与健康/脚本/任务面板保持一致 */
@@ -102,11 +103,9 @@ type LogEntry = {
   detail?: string
 }
 
-/* 时间格式化 HH:MM:SS.mmm */
+/* 系统日志时间格式化为 yyyy-MM-dd HH:mm（使用浏览器本地时区） */
 function fmt(ts: number) {
-  const d = new Date(ts)
-  const p = (n: number, l = 2) => String(n).padStart(l, "0")
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+  return formatLogDateTime(ts)
 }
 
 /* ---------- 服务端 /logs 的行结构，time 由前端按本地时区派生 ---------- */

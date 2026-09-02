@@ -14,6 +14,9 @@ node_modules
 .next/
 .DS_Store
 .codex/
+**/tsconfig.tsbuildinfo
+nacho-panel/tmp/
+tmp-*.ps1
 
 # Desktop (Electron) build artifacts
 desktop/app/

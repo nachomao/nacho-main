@@ -1,0 +1,3 @@
+.orb-container { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.orb-container.absolute { position: absolute; width: auto; height: auto; }
+.orb-container canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }

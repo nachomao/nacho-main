@@ -1,0 +1,25 @@
+DEVICE_ID_DEDUPE_VERIFICATION
+timestamp=2026-08-31
+
+Local baseline:
+  npm test (server) -> 45 passed, 0 failed
+  dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj -> 224 passed, 0 failed
+  dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release -> 0 warnings, 0 errors
+
+Remote deployment:
+  host=10.11.32.200
+  service=control-server.service active
+  health={"ok":true,"service":"nacho-server"}
+  latest-agent=nacho-agent-1.1.20-win-x64.exe
+  sha256=86b54c6150db89cabb627b6541bdc6d7101b3ba16b86065f3ff746b374d75655
+  sizeBytes=76467811
+
+Before dedupe:
+  cl-fe803b504a94 status=online ip=10.11.54.221
+  cl-36d529d64114 status=unregistered ip=10.11.54.221
+After dedupe:
+  cl-fe803b504a94 status=online ip=10.11.54.221
+
+Remote database backup:
+  /var/lib/control-server/control.db.bak-20260831-device-dedupe
+  sha256=c93a018d23b5064dfd1f74c07584fb96eaa296965004292b3a607be0eedba762

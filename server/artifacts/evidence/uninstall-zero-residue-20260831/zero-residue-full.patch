@@ -1,0 +1,251 @@
+﻿diff --git server/artifacts/evidence/uninstall-zero-residue-20260831/original/uninstall.ps1 server/artifacts/evidence/uninstall-zero-residue-20260831/modified/uninstall.ps1
+index 9a3953e..624a8e0 100644
+--- server/artifacts/evidence/uninstall-zero-residue-20260831/original/uninstall.ps1
++++ server/artifacts/evidence/uninstall-zero-residue-20260831/modified/uninstall.ps1
+@@ -2,8 +2,10 @@ param([switch]$Purge)
+ $ErrorActionPreference = 'Stop'
+ $ServerUrl = '__NACHO_BASE_URL__'
+ $ServiceName = 'NachoAgent'
++$VendorDir = Join-Path $env:ProgramFiles 'Nacho'
+ $InstallDir = Join-Path $env:ProgramFiles 'Nacho\Agent'
+ $DataDir = Join-Path $env:ProgramData 'Nacho'
++$HistoricalBackupDir = Join-Path $env:ProgramFiles 'NachoAgentBackups'
+ $AgentPath = Join-Path $InstallDir 'nacho-agent.exe'
+ 
+ function Test-Administrator {
+@@ -19,24 +21,61 @@ if (-not (Test-Administrator)) {
+     $elevatedCommand = "& { irm '$ServerUrl/uninstall.ps1' | iex }"
+   }
+   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($elevatedCommand))
+-  Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+-  exit $LASTEXITCODE
++  $elevated = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
++  exit $elevated.ExitCode
+ }
+ 
+ if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+-  Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
++  Stop-Service -Name $ServiceName -Force -ErrorAction Stop
++  $service = Get-Service -Name $ServiceName -ErrorAction Stop
++  $service.WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(30))
++  $service.Dispose()
+ }
+ if ($Purge -and (Test-Path $AgentPath) -and (Test-Path (Join-Path $DataDir 'agent.json')) -and (Test-Path (Join-Path $DataDir 'state.dat'))) {
+-  try {
+-    $unregister = Start-Process -FilePath $AgentPath -ArgumentList '--unregister' -Wait -PassThru -WindowStyle Hidden
+-    if ($unregister.ExitCode -ne 0) { Write-Warning "Server client record was not removed (exit $($unregister.ExitCode))." }
+-  } catch {
+-    Write-Warning "Server client record removal failed: $($_.Exception.Message)"
++  $unregister = Start-Process -FilePath $AgentPath -ArgumentList '--unregister' -PassThru -WindowStyle Hidden
++  if (-not $unregister.WaitForExit(30000)) {
++    Stop-Process -Id $unregister.Id -Force -ErrorAction SilentlyContinue
++    throw 'Server client record removal timed out; local data was preserved for retry.'
++  }
++  if ($unregister.ExitCode -ne 0) {
++    throw "Server client record removal failed (exit $($unregister.ExitCode)); local data was preserved for retry."
+   }
+ }
+ if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+-  & sc.exe delete $ServiceName | Out-Null
++  $deleteOutput = & sc.exe delete $ServiceName 2>&1
++  if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060) {
++    throw "Failed to delete Windows service (sc.exe exit $LASTEXITCODE): $deleteOutput"
++  }
++
++  $deadline = [DateTime]::UtcNow.AddSeconds(30)
++  while ((Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -and [DateTime]::UtcNow -lt $deadline) {
++    Start-Sleep -Milliseconds 250
++  }
++  if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
++    throw "Windows service '$ServiceName' is still registered after deletion."
++  }
+ }
+ if (Test-Path $InstallDir) { Remove-Item -LiteralPath $InstallDir -Recurse -Force }
+-if ($Purge -and (Test-Path $DataDir)) { Remove-Item -LiteralPath $DataDir -Recurse -Force }
+-Write-Host 'Nacho Agent removed.'
++if ($Purge) {
++  foreach ($path in @($DataDir, $HistoricalBackupDir)) {
++    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
++  }
++  if ((Test-Path -LiteralPath $VendorDir) -and -not (Get-ChildItem -LiteralPath $VendorDir -Force | Select-Object -First 1)) {
++    Remove-Item -LiteralPath $VendorDir -Force
++  }
++}
++
++$residue = @()
++if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { $residue += "service:$ServiceName" }
++if (Test-Path -LiteralPath $InstallDir) { $residue += $InstallDir }
++if ($Purge) {
++  foreach ($path in @($DataDir, $HistoricalBackupDir)) {
++    if (Test-Path -LiteralPath $path) { $residue += $path }
++  }
++  if ((Test-Path -LiteralPath $VendorDir) -and -not (Get-ChildItem -LiteralPath $VendorDir -Force | Select-Object -First 1)) {
++    $residue += $VendorDir
++  }
++}
++if ($residue.Count -gt 0) { throw "Nacho Agent uninstall left residue: $($residue -join ', ')" }
++
++Write-Host $(if ($Purge) { 'Nacho Agent removed with no managed local data remaining.' } else { 'Nacho Agent removed; data preserved.' })
+diff --git server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/services/clients.ts server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/services/clients.ts
+index 08a66f3..91914a0 100644
+--- server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/services/clients.ts
++++ server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/services/clients.ts
+@@ -1,9 +1,11 @@
++import fs from "node:fs"
++import path from "node:path"
+ import { config } from "../config"
+ import { db } from "../db"
+ import { makeToken, shortId } from "../lib/ids"
+ import type { Client, ClientMetrics, ClientOS, ClientStatus } from "../types"
+ import { recordLog } from "./logs"
+-import { isClientConnected } from "./realtime"
++import { isClientConnected, removeConnection } from "./realtime"
+ 
+ type ClientRow = {
+   id: string
+@@ -185,14 +187,40 @@ export function deleteClient(id: string): boolean {
+   return info.changes > 0
+ }
+ 
+-/** 标记客户端已注销并撤销设备令牌，保留历史卡片供面板审计查看。 */
++/** 彻底注销客户端，并删除所有直接关联的服务端数据。 */
+ export function unregisterClient(id: string): boolean {
+-  const info = db.prepare("UPDATE clients SET status='unregistered', token='', last_seen=0 WHERE id=?").run(id)
+-  if (info.changes > 0) {
++  if (!db.prepare("SELECT 1 FROM clients WHERE id=?").get(id)) return false
++
++  const packages = db.prepare("SELECT id, storage_name FROM log_packages WHERE client_id=?").all(id) as Array<{ id: string; storage_name: string | null }>
++  const deploymentBatchIds = db.prepare("SELECT DISTINCT batch_id FROM deployment_items WHERE client_id=?").all(id) as Array<{ batch_id: string }>
++  const tasks = db.prepare("SELECT id, client_ids FROM tasks").all() as Array<{ id: string; client_ids: string }>
++  db.exec("BEGIN IMMEDIATE")
++  try {
++    for (const item of tasks) {
++      const ids = parseArr(item.client_ids)
++      if (ids.includes(id)) db.prepare("UPDATE tasks SET client_ids=?, updated_at=? WHERE id=?").run(JSON.stringify(ids.filter((value) => value !== id)), Date.now(), item.id)
++    }
++    for (const item of packages) db.prepare("DELETE FROM health_findings WHERE package_id=?").run(item.id)
++    db.prepare("DELETE FROM log_packages WHERE client_id=?").run(id)
++    db.prepare("DELETE FROM deployment_items WHERE client_id=?").run(id)
+     db.prepare("DELETE FROM commands WHERE client_id = ?").run(id)
+-    return true
++    for (const item of deploymentBatchIds) {
++      db.prepare("DELETE FROM deployment_batches WHERE id=? AND NOT EXISTS (SELECT 1 FROM deployment_items WHERE deployment_items.batch_id=deployment_batches.id)").run(item.batch_id)
++    }
++    db.prepare("DELETE FROM logs WHERE instr(COALESCE(message, ''), ?) > 0 OR instr(COALESCE(detail, ''), ?) > 0").run(id, id)
++    db.prepare("DELETE FROM clients WHERE id=?").run(id)
++    db.exec("COMMIT")
++  } catch (error) {
++    db.exec("ROLLBACK")
++    throw error
++  }
++
++  for (const item of packages) {
++    if (!item.storage_name || !/^p-[a-z0-9-]+\.json$/i.test(item.storage_name)) continue
++    fs.rmSync(path.join(config.healthArtifactsPath, item.storage_name), { force: true })
+   }
+-  return false
++  removeConnection(id)
++  return true
+ }
+ 
+ /** 附加实时连接标记（是否有活跃 WebSocket） */
+diff --git server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/routes/agent.ts server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/routes/agent.ts
+index 4f39679..83326f6 100644
+--- server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/routes/agent.ts
++++ server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/routes/agent.ts
+@@ -64,7 +64,7 @@ agentRouter.post(
+ agentRouter.use(agentAuth)
+ 
+ /**
+- * Agent 自注销：彻底卸载时由本机脚本携带设备令牌调用，删除服务端设备记录。
++ * Agent 自注销：彻底卸载时由本机脚本携带设备令牌调用，删除服务端设备及关联数据。
+  * 普通卸载（保留数据）不调用此接口，因此设备仍会以 offline 状态保留在面板中。
+  */
+ agentRouter.delete(
+@@ -72,7 +72,7 @@ agentRouter.delete(
+   asyncHandler((req, res) => {
+     const clientId = (req as Request & { clientId: string }).clientId
+     if (!clients.unregisterClient(clientId)) return fail(res, "客户端不存在", 404)
+-    recordLog("info", "client", "客户端通过卸载流程注销", `id=${clientId}`)
++    recordLog("info", "client", "客户端通过卸载流程完成彻底清理")
+     return ok(res, { id: clientId, deleted: true })
+   }),
+ )
+diff --git server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/tests/commands.test.ts server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/tests/commands.test.ts
+index 15c0d7c..cda2d42 100644
+--- server/artifacts/evidence/uninstall-zero-residue-20260831/original-workspace/server/src/tests/commands.test.ts
++++ server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/tests/commands.test.ts
+@@ -71,7 +71,7 @@ test("open enrollment bypasses the shared key only when configured", () => {
+   assert.equal(canEnroll("integration-enroll-key", false), true)
+ })
+ 
+-test("agent unregister removes the server-side client record", async () => {
++test("agent unregister purges the server-side client record and related data", async () => {
+   db.exec("DELETE FROM commands; DELETE FROM clients; DELETE FROM logs")
+   const app = express()
+   app.use(express.json())
+@@ -88,12 +88,31 @@ test("agent unregister removes the server-side client record", async () => {
+     })
+     assert.equal(enrolled.status, 201)
+     const envelope = (await enrolled.json()) as { data: { token: string; client: { id: string } } }
++    const clientId = envelope.data.client.id
++    const command = commands.dispatchCommand({ clientId, type: "run-program", payload: { program: "hostname.exe", args: [] } })
++    db.prepare(`INSERT INTO tasks (id,name,client_ids,created_at,updated_at) VALUES (?,?,?,?,?)`)
++      .run("task-unregister", "unregister task", JSON.stringify([clientId, "other-client"]), Date.now(), Date.now())
++    db.prepare(`INSERT INTO log_packages (id,client_id,command_id,host,ts,storage_name) VALUES (?,?,?,?,?,?)`)
++      .run("p-unregister", clientId, command.id, "fixture-host", Date.now(), "p-unregister.json")
++    db.prepare(`INSERT INTO health_findings (id,package_id,host,title,ts) VALUES (?,?,?,?,?)`)
++      .run("finding-unregister", "p-unregister", "fixture-host", "fixture finding", Date.now())
++    const healthDirectory = path.join(artifactsPath, "health")
++    fs.mkdirSync(healthDirectory, { recursive: true })
++    const healthArtifact = path.join(healthDirectory, "p-unregister.json")
++    fs.writeFileSync(healthArtifact, "fixture")
++    logs.recordLog("info", "client", "fixture client log", `id=${clientId}`)
+     const removed = await fetch(`http://127.0.0.1:${address.port}/agent/client`, {
+       method: "DELETE",
+       headers: { authorization: `Bearer ${envelope.data.token}` },
+     })
+     assert.equal(removed.status, 200)
+-    assert.equal(clients.getClient(envelope.data.client.id)?.status, "unregistered")
++    assert.equal(clients.getClient(clientId), null)
++    assert.equal(commands.listCommands(clientId).length, 0)
++    assert.equal(db.prepare("SELECT 1 FROM log_packages WHERE client_id=?").get(clientId), undefined)
++    assert.equal(db.prepare("SELECT 1 FROM health_findings WHERE package_id='p-unregister'").get(), undefined)
++    assert.deepEqual(JSON.parse((db.prepare("SELECT client_ids FROM tasks WHERE id='task-unregister'").get() as { client_ids: string }).client_ids), ["other-client"])
++    assert.equal(db.prepare("SELECT 1 FROM logs WHERE instr(COALESCE(detail,''),?)>0").get(clientId), undefined)
++    assert.equal(fs.existsSync(healthArtifact), false)
+   } finally {
+     server.close()
+     await new Promise<void>((resolve) => server.once("close", resolve))
+diff --git server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/tests/uninstall-script.test.ts server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/tests/uninstall-script.test.ts
+new file mode 100644
+index 0000000..5812c57
+--- /dev/null
++++ server/artifacts/evidence/uninstall-zero-residue-20260831/modified-workspace/server/src/tests/uninstall-script.test.ts
+@@ -0,0 +1,26 @@
++import assert from "node:assert/strict"
++import fs from "node:fs"
++import path from "node:path"
++import test from "node:test"
++
++const script = fs.readFileSync(path.resolve("deploy/windows/uninstall.ps1"), "utf8")
++
++test("purge removes every Agent-owned local path and verifies no residue", () => {
++  assert.match(script, /Stop-Service[\s\S]*WaitForStatus/)
++  assert.match(script, /sc\.exe delete[\s\S]*Get-Service[\s\S]*still registered/)
++  assert.match(script, /DataDir, \$HistoricalBackupDir/)
++  assert.match(script, /Remove-Item -LiteralPath \$VendorDir -Force/)
++  assert.match(script, /uninstall left residue/)
++})
++
++test("purge preserves retry data when server unregister fails", () => {
++  assert.match(script, /--unregister/)
++  assert.match(script, /WaitForExit\(30000\)/)
++  assert.match(script, /local data was preserved for retry/)
++  assert.ok(script.indexOf("local data was preserved for retry") < script.indexOf("Remove-Item -LiteralPath $InstallDir"))
++})
++
++test("elevated uninstall returns the child process exit code", () => {
++  assert.match(script, /Start-Process powershell\.exe[\s\S]*-PassThru/)
++  assert.match(script, /exit \$elevated\.ExitCode/)
++})

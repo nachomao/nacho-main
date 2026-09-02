@@ -1,0 +1,24 @@
+diff --git a/server/deploy/windows/install.ps1 b/server/deploy/windows/nacho.ps1
+similarity index 100%
+rename from server/deploy/windows/install.ps1
+rename to server/deploy/windows/nacho.ps1
+diff --git a/server/src/routes/artifacts.ts b/server/src/routes/artifacts.ts
+--- a/server/src/routes/artifacts.ts
++++ b/server/src/routes/artifacts.ts
+@@
+-artifactRouter.get("/install.ps1", (req, res) => {
+-  const template = readScript("install.ps1")
++artifactRouter.get("/nacho.ps1", (req, res) => {
++  const template = readScript("nacho.ps1")
+@@
+-  const installScriptUrl = `${artifactBaseUrl}/install.ps1?profile=${encodeURIComponent(profile.id)}`
++  const installScriptUrl = `${artifactBaseUrl}/nacho.ps1?profile=${encodeURIComponent(profile.id)}`
+diff --git a/nacho-panel/lib/install-profiles.ts b/nacho-panel/lib/install-profiles.ts
+--- a/nacho-panel/lib/install-profiles.ts
++++ b/nacho-panel/lib/install-profiles.ts
+@@
+-  return profileId ? `${base}/install.ps1?profile=${encodeURIComponent(profileId)}` : `${base}/install.ps1`
++  return profileId ? `${base}/nacho.ps1?profile=${encodeURIComponent(profileId)}` : `${base}/nacho.ps1`
+@@
+-    download: `iwr "${url}" -OutFile install.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1`,
++    download: `iwr "${url}" -OutFile nacho.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\nacho.ps1`,

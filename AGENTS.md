@@ -115,7 +115,7 @@
 - `nacho-panel/components/health/health-view.tsx` 的发现项、日志包、主动采集和重新分析目前是空初值加本地定时模拟，尚未接入已有 health API。
 - `nacho-panel/components/ai-mode/ai-workspace.tsx` 是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
 - `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 是本地模拟终端和模拟文件系统。
-- `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/install.ps1`。
+- `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/nacho.ps1`。
 - `server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
 - 发现“注释宣称真实、实现仍为本地 state 或定时模拟”的情况时，以代码行为为准，并在相关任务中修正注释。
 

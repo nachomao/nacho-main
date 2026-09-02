@@ -1,0 +1,25 @@
+﻿baseline command: powershell Parser::ParseFile + managed-path contract checks
+baseline input: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\uninstall-zero-residue-20260831\original\uninstall.ps1
+baseline output: parse=PASS; zeroResidueContract=False; checks={"historicalBackupCleanup":false,"serviceDeletionWait":false,"finalResidueAssertion":false}
+baseline exit: 0
+modified command: powershell Parser::ParseFile + managed-path contract checks
+modified input: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\deploy\windows\uninstall.ps1
+modified output: parse=PASS; zeroResidueContract=True; checks={"historicalBackupCleanup":true,"serviceDeletionWait":true,"finalResidueAssertion":true}
+modified exit: 0
+server test command: npm exec -- tsx --test src/tests/commands.test.ts src/tests/uninstall-script.test.ts
+server test input: synthetic enrolled client with command, task reference, health package, finding, archive file, and identifying log
+server test output: tests=27; pass=27; fail=0; purge client row=absent; related rows=absent; task reference=absent; archive file=absent
+server test exit: 0
+full test command: npm test
+full test output: tests=44; pass=44; fail=0
+full test exit: 0
+build command: npm run build
+build output: tsc -p tsconfig.json
+build exit: 0
+runtime command: systemctl is-active control-server.service; curl http://localhost:8443/health; endpoint contract checks
+runtime output: service=active; health=200; deployed-contract=PASS
+runtime exit: 0
+live fixture command: node verify-live.mjs (WSL root; deployment environment loaded in-process)
+live fixture input: one temporary Windows client enrollment
+live fixture output: enroll=201; purge=200; panelRecord=absent
+live fixture exit: 0

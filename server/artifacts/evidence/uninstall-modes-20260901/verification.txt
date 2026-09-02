@@ -1,0 +1,15 @@
+UNINSTALL_MODE_VERIFICATION
+date=2026-09-01
+
+Behavior:
+  Uninstall client (keep data) -> Agent --mark-unregistered -> POST /agent/client/unregister -> card retained with status=unregistered and token/history preserved.
+  Uninstall client and purge all data -> Agent --unregister -> DELETE /agent/client -> card and directly associated server data removed.
+
+Checks:
+  server npm test: 47 passed, 0 failed
+  server npm run build: passed
+  Agent dotnet test: 224 passed, 0 failed
+  uninstall.ps1 parser: passed
+  control-server.service: active
+  health: {"ok":true,"service":"nacho-server"}
+  remote artifact sha256: b23e1df5cee2af097e21190cab521537245c4f2cbd43e9af4dc8f96b2d1b46ff

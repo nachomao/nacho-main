@@ -1,0 +1,3 @@
+server rollback output: restored=/opt/control-server/deploy/windows/uninstall.ps1; sha256=93bd1d8c5641306d7c86af4284ea50f1313d6c31286ae12192803e5a15fd0e8e
+server rollback output: source/dist restored; service=active; health=200
+server rollback exit: 0

@@ -1,4 +1,4 @@
-export type ClientStatus = "online" | "offline" | "warning"
+export type ClientStatus = "online" | "offline" | "warning" | "unregistered"
 
 export type Client = {
   id: string
@@ -16,6 +16,13 @@ export type Client = {
   registeredAt: number
   metrics: { cpu: number; memory: number; disk: number; uptime: number } | null
   connected: boolean
+}
+
+/** 面板百分比统一格式，避免长浮点值导致 Disk/CPU/Memory 列互相粘连。 */
+export function formatMetricPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "0"
+  const normalized = Math.min(100, Math.max(0, value))
+  return normalized.toFixed(2).replace(/\.?(0+)$/, "")
 }
 
 /* 状态色固定使用语义令牌（positive/warning/negative），不随 data-theme 主色改变：
@@ -40,5 +47,10 @@ export const statusMeta: Record<ClientStatus, { label: string; dot: string; text
     text: "text-negative",
     ring: "shadow-[0_0_0_3px_color-mix(in_oklab,var(--negative)_20%,transparent)]",
   },
+  unregistered: {
+    label: "已注销",
+    dot: "bg-muted-foreground",
+    text: "text-muted-foreground",
+    ring: "shadow-[0_0_0_3px_color-mix(in_oklab,var(--muted-foreground)_20%,transparent)]",
+  },
 }
-

@@ -92,6 +92,7 @@ function NoteStep({ index, children }: { index: number; children: React.ReactNod
 
 export function InstallDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [serverInput, setServerInput] = useState(defaultServerBaseUrl)
+  const [enrollmentKey, setEnrollmentKey] = useState("")
   const [savedFlash, setSavedFlash] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   // 入场 / 退场动画：mounted 在退场期间保持挂载，shown 驱动模糊缩放渐显 / 渐隐
@@ -127,18 +128,18 @@ export function InstallDialog({ open, onClose }: { open: boolean; onClose: () =>
   if (!mounted || typeof document === "undefined") return null
 
   const server = normalizeServer(serverInput)
-  const scriptUrl = `${server}/install.ps1`
+  const scriptUrl = `${server}/nacho.ps1`
 
   const flash = () => {
     setSavedFlash(true)
     setTimeout(() => setSavedFlash(false), 1600)
   }
 
-  /* 下载控制服务端动态生成的真实 install.ps1。 */
+  /* 下载控制服务端动态生成的真实 nacho.ps1。 */
   const handleDownload = () => {
     const a = document.createElement("a")
     a.href = scriptUrl
-    a.download = "install.ps1"
+    a.download = "nacho.ps1"
     a.target = "_blank"
     a.rel = "noreferrer"
     a.click()
@@ -151,9 +152,10 @@ export function InstallDialog({ open, onClose }: { open: boolean; onClose: () =>
     setTimeout(() => setLinkCopied(false), 1600)
   }
 
-  const cmdInstall = `irm "${scriptUrl}" | iex`
-  const cmdWget = `iwr "${scriptUrl}" -OutFile install.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1`
-  const cmdBoot = `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${scriptUrl}' | iex"`
+  const keyPrefix = enrollmentKey.trim() ? `$env:NACHO_ENROLLMENT_KEY='${enrollmentKey.trim().replaceAll("'", "''")}'; ` : ""
+  const cmdInstall = `${keyPrefix}irm "${scriptUrl}" | iex`
+  const cmdWget = `iwr "${scriptUrl}" -OutFile nacho.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\nacho.ps1${enrollmentKey.trim() ? ` -EnrollmentKey '${enrollmentKey.trim().replaceAll("'", "''")}'` : ""}`
+  const cmdBoot = `powershell -NoProfile -ExecutionPolicy Bypass -Command "${keyPrefix}irm '${scriptUrl}' | iex"`
 
   // 通过 Portal 渲染到 body，脱离带 transform 的祖先（页面过渡容器），
   // 否则 fixed 会相对该祖先定位，导致弹窗底部超出视口被裁剪。
@@ -262,6 +264,8 @@ export function InstallDialog({ open, onClose }: { open: boolean; onClose: () =>
               <NoteStep index={1}>打开 PowerShell（脚本会自动弹 UAC 请求管理员权限）</NoteStep>
 
               <CommandBlock title="2. PowerShell 一键部署" command={cmdInstall} />
+
+              <CommandBlock title="2a. 强制 menu 菜单模式" command={`& { $env:NACHO_INSTALL_MODE='menu'; ${cmdInstall} }`} />
 
               <CommandBlock title="3. 下载后执行" command={cmdWget} />
 

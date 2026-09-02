@@ -341,7 +341,7 @@ function WindowsInstall({ base }: { base: string }) {
         <div className="flex items-center gap-2">
           <a
             href={scriptUrl}
-            download="install.ps1"
+            download="nacho.ps1"
             target="_blank"
             rel="noreferrer"
             className="flex h-9 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95"

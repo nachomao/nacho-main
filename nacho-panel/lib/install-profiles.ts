@@ -47,16 +47,22 @@ export const defaultInstallProfileValues: InstallProfileValues = {
 
 export function installScriptUrl(serverBaseUrl: string, profileId?: string): string {
   const base = normalizeServerBaseUrl(serverBaseUrl)
-  return profileId ? `${base}/install.ps1?profile=${encodeURIComponent(profileId)}` : `${base}/install.ps1`
+  return profileId ? `${base}/nacho.ps1?profile=${encodeURIComponent(profileId)}` : `${base}/nacho.ps1`
 }
 
-export function installCommands(serverBaseUrl: string, profileId?: string) {
+function psSingleQuoted(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+export function installCommands(serverBaseUrl: string, profileId?: string, enrollmentKey?: string) {
   const url = installScriptUrl(serverBaseUrl, profileId)
+  const key = enrollmentKey?.trim() || ""
+  const prefix = key ? `$env:NACHO_ENROLLMENT_KEY=${psSingleQuoted(key)}; ` : ""
   return {
-    standard: `irm "${url}" | iex`,
-    menu: `& { $env:NACHO_INSTALL_MODE='menu'; irm "${url}" | iex }`,
-    silent: `& { $env:NACHO_INSTALL_MODE='silent'; irm "${url}" | iex }`,
-    download: `iwr "${url}" -OutFile install.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1`,
-    boot: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${url}' | iex"`,
+    standard: `${prefix}irm "${url}" | iex`,
+    menu: `& { ${prefix}$env:NACHO_INSTALL_MODE='menu'; irm "${url}" | iex }`,
+    silent: `& { ${prefix}$env:NACHO_INSTALL_MODE='silent'; irm "${url}" | iex }`,
+    download: `iwr "${url}" -OutFile nacho.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\\nacho.ps1${key ? ` -EnrollmentKey ${psSingleQuoted(key)}` : ""}`,
+    boot: `powershell -NoProfile -ExecutionPolicy Bypass -Command "${prefix.replaceAll('"', '`"')}irm '${url}' | iex"`,
   }
 }

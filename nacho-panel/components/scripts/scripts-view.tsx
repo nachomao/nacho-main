@@ -83,7 +83,7 @@ function Toggle({ checked, onChange, label, description }: {
   )
 }
 
-function Command({ label, value }: { label: string; value: string }) {
+function Command({ label, value, secret }: { label: string; value: string; secret?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     await navigator.clipboard.writeText(value)
@@ -94,7 +94,7 @@ function Command({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-border bg-background/40 p-3">
       <p className="mb-2 text-xs font-medium text-muted-foreground">{label}</p>
       <div className="flex items-start gap-2 rounded-xl bg-surface/60 p-3">
-        <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed">{value}</code>
+        <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed">{secret ? value.replaceAll(secret, "••••••••") : value}</code>
         <button type="button" onClick={copy} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs text-muted-foreground hover:text-foreground">
           {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "已复制" : "复制"}
@@ -130,10 +130,12 @@ export function ScriptsView() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [enrollmentEnabled, setEnrollmentEnabled] = useState(false)
+  const [enrollmentKey, setEnrollmentKey] = useState("")
 
   const selected = profiles.find((profile) => profile.id === selectedId) || null
   const scriptUrl = installScriptUrl(serverBaseUrl, selected?.id)
-  const commands = useMemo(() => installCommands(serverBaseUrl, selected?.id), [serverBaseUrl, selected?.id])
+  const commands = useMemo(() => installCommands(serverBaseUrl, selected?.id, enrollmentEnabled ? enrollmentKey : undefined), [serverBaseUrl, selected?.id, enrollmentEnabled, enrollmentKey])
 
   const loadRevisions = useCallback(async (profileId: string) => {
     const next = await apiRequest<InstallProfileRevision[]>(`/install-profiles/${encodeURIComponent(profileId)}/revisions`)
@@ -298,7 +300,7 @@ export function ScriptsView() {
       <div className="flex min-w-0 flex-col gap-4">
         <Panel
           title="安装档案"
-          description="保存后，档案链接和默认 install.ps1 会由控制服务端实时渲染。"
+          description="保存后，档案链接和默认 nacho.ps1 会由控制服务端实时渲染。"
           action={<span className="rounded-full bg-primary/12 px-3 py-1.5 text-xs font-medium text-primary">Agent {artifactVersion}</span>}
         >
           {error ? <div className="mb-4 rounded-xl border border-negative/30 bg-negative/10 px-4 py-3 text-sm text-negative">{error}</div> : null}
@@ -369,6 +371,13 @@ export function ScriptsView() {
                 <Toggle checked={form.reEnrollOnServerChange} onChange={(value) => setForm({ ...form, reEnrollOnServerChange: value })} label="服务端地址变化时重新入网" description="备份旧 state.dat 并在新服务端注册；关闭开放入网时需通过 NACHO_ENROLLMENT_KEY 提供密钥。" />
               </div>
 
+                <Toggle checked={enrollmentEnabled} onChange={(value) => { setEnrollmentEnabled(value); if (!value) setEnrollmentKey("") }} label="本次安装使用入网验证" description="可选提供 Enrollment Key；密钥仅保存在当前页面内存中。" />
+                {enrollmentEnabled ? (
+                  <Field label="Enrollment Key" hint="仅用于本次生成的安装命令">
+                    <input type="password" autoComplete="off" className={cn(inputClass, "font-mono")} value={enrollmentKey} placeholder="输入服务端 ENROLLMENT_KEY（可选）" onChange={(event) => setEnrollmentKey(event.target.value)} />
+                  </Field>
+                ) : null}
+
               <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4 sm:col-span-2">
                 <button type="button" disabled={saving || selected.isDefault} onClick={() => void setDefault()} className="flex h-10 items-center gap-2 rounded-xl border border-border px-4 text-sm disabled:opacity-40"><Star className="h-4 w-4" />设为默认</button>
                 <button type="button" disabled={saving || profiles.length <= 1} title={profiles.length <= 1 ? "至少需要保留一个安装档案" : undefined} onClick={() => void remove()} className="flex h-10 items-center gap-2 rounded-xl border border-negative/30 px-4 text-sm text-negative disabled:opacity-40"><Trash2 className="h-4 w-4" />删除</button>
@@ -386,7 +395,7 @@ export function ScriptsView() {
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
             <code className="min-w-0 break-all font-mono text-xs text-muted-foreground">{scriptUrl}</code>
-            <a href={scriptUrl} download="install.ps1" className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Download className="h-4 w-4" />下载真实脚本</a>
+            <a href={scriptUrl} download="nacho.ps1" className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Download className="h-4 w-4" />下载真实脚本</a>
           </div>
         </Panel>
       </div>

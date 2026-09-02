@@ -1,0 +1,5 @@
+$ErrorActionPreference = 'Stop'
+Write-Host 'Rollback uses the dated backups on the control server:'
+Write-Host '/opt/control-server/dist/services/clients.js.bak-20260901'
+Write-Host '/opt/control-server/dist/routes/agent.js.bak-20260901'
+Write-Host 'Restore those files and restart control-server.service if required.'

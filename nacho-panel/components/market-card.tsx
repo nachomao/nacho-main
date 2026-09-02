@@ -2,6 +2,7 @@
 
 import { Monitor } from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
+import { formatMetricPercent } from "@/components/clients/client-data"
 
 export function MarketCard() {
   const { clients } = useServerData()
@@ -43,9 +44,9 @@ export function MarketCard() {
                 <p className="text-xs text-muted-foreground">{client.hostname || client.ip}</p>
               </div>
             </div>
-            <span className="text-right text-sm font-medium">{client.metrics?.disk ?? 0}%</span>
-            <span className="text-right text-sm font-medium">{client.metrics?.cpu ?? 0}%</span>
-            <span className="text-right text-sm font-medium">{client.metrics?.memory ?? 0}%</span>
+            <span className="whitespace-nowrap text-right text-sm font-medium tabular-nums">{formatMetricPercent(client.metrics?.disk)}%</span>
+            <span className="whitespace-nowrap text-right text-sm font-medium tabular-nums">{formatMetricPercent(client.metrics?.cpu)}%</span>
+            <span className="whitespace-nowrap text-right text-sm font-medium tabular-nums">{formatMetricPercent(client.metrics?.memory)}%</span>
           </div>
         ))}
       </div>

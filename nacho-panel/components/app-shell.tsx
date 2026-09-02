@@ -17,6 +17,7 @@ import { ServerDataProvider } from "@/components/server-data-context"
 import { StartupSplash } from "@/components/startup-splash"
 import { StartupMotionProvider, useStartupMotion } from "@/components/startup-motion-context"
 import { ConnectionGuard } from "@/components/connection-guard"
+import { Orb } from "@/components/orb"
 
 /**
  * 主页载入：引导覆盖层上滑离场时，下方主页以 iOS 解锁的姿态浮现——
@@ -43,23 +44,33 @@ function ShellContent({ children }: { children: ReactNode }) {
       }}
       aria-hidden={covered || shellRecessed}
     >
-      <div className="flex h-full gap-2 rounded-[2rem] bg-background p-3 sm:p-4">
-        <Sidebar />
+      <div className="relative isolate flex h-full gap-2 overflow-hidden rounded-[2rem] bg-background/92 p-3 sm:p-4">
+        <Orb
+          className="pointer-events-none absolute inset-0 z-0 rounded-[2rem] opacity-[0.35]"
+          hoverIntensity={0}
+          rotateOnHover
+          hue={0}
+          forceHoverState={false}
+          backgroundColor="#000000"
+        />
+        <div className="relative z-10 flex min-h-0 flex-1 gap-2">
+          <Sidebar />
 
-        <ClientTabsProvider>
-          <PluginsProvider>
-            <TasksProvider>
-              <LogsProvider>
-                <TopbarActionsProvider>
-                  <main className="flex flex-1 flex-col gap-4 overflow-hidden pr-1 pt-2">
-                    <Topbar />
-                    <PageTransition>{children}</PageTransition>
-                  </main>
-                </TopbarActionsProvider>
-              </LogsProvider>
-            </TasksProvider>
-          </PluginsProvider>
-        </ClientTabsProvider>
+          <ClientTabsProvider>
+            <PluginsProvider>
+              <TasksProvider>
+                <LogsProvider>
+                  <TopbarActionsProvider>
+                    <main className="flex flex-1 flex-col gap-4 overflow-hidden pr-1 pt-2">
+                      <Topbar />
+                      <PageTransition>{children}</PageTransition>
+                    </main>
+                  </TopbarActionsProvider>
+                </LogsProvider>
+              </TasksProvider>
+            </PluginsProvider>
+          </ClientTabsProvider>
+        </div>
       </div>
     </div>
   )

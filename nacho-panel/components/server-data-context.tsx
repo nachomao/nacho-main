@@ -213,7 +213,9 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh()
     if (!connection) return
-    const timer = window.setInterval(() => void refresh(), 10_000)
+    // 客户端状态（尤其是卸载后的“已注销”）需要尽快反映到卡片；
+    // 3 秒轮询仍可避免请求风暴，同时把可见延迟控制在一个交互节拍内。
+    const timer = window.setInterval(() => void refresh(), 3_000)
     return () => window.clearInterval(timer)
   }, [connection, refresh])
 

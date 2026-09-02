@@ -1,0 +1,39 @@
+Install script rename verification, 2026-09-01
+
+Modified artifact:
+  server/deploy/windows/nacho.ps1
+  SHA-256: A4229FFA005F221B78B38231A745D045F069D526C2E37B8EB4EAEB8F3470AA9E
+
+Panel commands and literal results:
+  pnpm exec tsx --test tests/*.test.ts
+  tests 69; pass 69; fail 0; exit 0
+  pnpm exec tsc --noEmit
+  exit 0
+  pnpm build
+  compiled successfully; exit 0
+
+Server commands and literal results:
+  npm test
+  tests 47; pass 47; fail 0; exit 0
+  npm run build
+  exit 0
+
+Remote baseline before deployment:
+  GET http://10.11.32.200:8443/nacho.ps1 -> 404
+  GET http://10.11.32.200:8443/install.ps1 -> 200
+
+Remote modified behavior after deployment:
+  systemctl is-active control-server.service -> active
+  GET http://10.11.32.200:8443/health -> 200
+  GET http://10.11.32.200:8443/nacho.ps1 -> 200; UTF-8 bytes 14759; starts with param(
+  GET http://10.11.32.200:8443/install.ps1 -> 404
+
+Browser verification:
+  http://localhost:3000/scripts -> 200
+  Visible commands and download URL use /nacho.ps1
+  Console errors: []
+  390x844: innerWidth=390; document scrollWidth=390; body scrollWidth=390
+
+Current-device Agent observation:
+  client_service_present=False
+  client_exe_present=False
