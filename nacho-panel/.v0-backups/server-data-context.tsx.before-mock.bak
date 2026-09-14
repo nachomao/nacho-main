@@ -86,93 +86,6 @@ type ServerDataContextValue = {
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
 
-// 临时预览开关：真实服务端接入后，将备份文件直接覆盖本文件即可完整恢复。
-const USE_MOCK_SERVER_DATA = true
-
-function getMockServerResponse(path: string): unknown {
-  const now = Date.now()
-
-  if (path === "/overview") {
-    return {
-      clients: { total: 3, online: 3, warning: 0, offline: 0, realtimeConnections: 3 },
-      tasks: { total: 0, enabled: 0 },
-      plugins: { installed: 0 },
-      commands: { pending: 0 },
-      resources: { cpu: 18.6, memory: 42.3, disk: 31.8 },
-      health: { unread: 0, critical: 0, error: 0, packages: 0 },
-      updatedAt: now,
-    } satisfies Overview
-  }
-
-  if (path === "/clients") {
-    return [
-      {
-        id: "mock-shanghai-core",
-        name: "上海主节点",
-        hostname: "nacho-sh-core-01",
-        ip: "10.24.0.12",
-        os: "Linux",
-        osName: "Ubuntu 24.04 LTS",
-        status: "online",
-        tags: ["核心", "生产"],
-        group: "生产环境",
-        version: "1.8.2",
-        lastSeen: now - 8_000,
-        registeredAt: now - 1000 * 60 * 60 * 24 * 86,
-        metrics: { cpu: 14.8, memory: 38.2, disk: 29.4, uptime: 1000 * 60 * 60 * 24 * 19 },
-        connected: true,
-      },
-      {
-        id: "mock-beijing-edge",
-        name: "北京边缘节点",
-        hostname: "nacho-bj-edge-02",
-        ip: "10.18.4.27",
-        os: "Windows",
-        osName: "Windows Server 2025",
-        status: "online",
-        tags: ["边缘", "业务"],
-        group: "边缘节点",
-        version: "1.8.2",
-        lastSeen: now - 13_000,
-        registeredAt: now - 1000 * 60 * 60 * 24 * 42,
-        metrics: { cpu: 22.1, memory: 47.6, disk: 36.9, uptime: 1000 * 60 * 60 * 24 * 8 },
-        connected: true,
-      },
-      {
-        id: "mock-shenzhen-build",
-        name: "深圳构建节点",
-        hostname: "nacho-sz-build-03",
-        ip: "10.31.2.8",
-        os: "macOS",
-        osName: "macOS 26",
-        status: "online",
-        tags: ["构建", "测试"],
-        group: "生产环境",
-        version: "1.8.1",
-        lastSeen: now - 19_000,
-        registeredAt: now - 1000 * 60 * 60 * 24 * 21,
-        metrics: { cpu: 18.9, memory: 41.1, disk: 29.1, uptime: 1000 * 60 * 60 * 24 * 5 },
-        connected: true,
-      },
-    ] satisfies Client[]
-  }
-
-  if (path === "/groups") return ["生产环境", "边缘节点"]
-  if (path === "/logs/sources") return ["nacho-server", "agent"]
-  if (path.startsWith("/logs")) {
-    return [
-      { id: "mock-log-1", ts: now - 12_000, level: "info", source: "nacho-server", message: "服务端运行正常", detail: "模拟连接已建立，3 个客户端保持在线" },
-      { id: "mock-log-2", ts: now - 38_000, level: "info", source: "agent", message: "客户端状态同步完成", detail: null },
-      { id: "mock-log-3", ts: now - 72_000, level: "debug", source: "nacho-server", message: "资源指标采集完成", detail: null },
-    ] satisfies LogEntry[]
-  }
-  if (path.startsWith("/notifications")) return [] satisfies ServerNotification[]
-  if (path === "/health/findings" || path === "/health/packages") return []
-  if (path === "/tasks" || path === "/plugins" || path === "/install-profiles") return []
-
-  return []
-}
-
 export function ServerDataProvider({ children }: { children: ReactNode }) {
   const { settings: localSettings } = useLocalSettings()
   const { serverSource } = useOnboarding()
@@ -193,7 +106,6 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [localSettings.notificationCenter])
 
   const connection = useMemo(() => {
-    if (USE_MOCK_SERVER_DATA) return { baseUrl: "mock://nacho-server", key: "mock-preview-key" }
     // 未完成引导时不构造连接，由上层展示引导/错误态，避免伪造可用连接
     if (!serverSource) return null
     if (serverSource?.mode === "cloud") {
@@ -208,7 +120,6 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
 
   const apiRequest = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
-      if (USE_MOCK_SERVER_DATA) return getMockServerResponse(path) as T
       if (!connection) throw new Error("尚未配置服务端连接")
       let response: Response
       try {
