@@ -209,12 +209,15 @@ function NotificationCard({
       ref={cardRef}
       data-notification-stage={visibleStage}
       className={cn(
-        "relative overflow-hidden rounded-3xl border bg-card/75 shadow-xl shadow-background/30 backdrop-blur-2xl transition-[border-color,box-shadow,filter,opacity] duration-500",
+        "relative isolate overflow-hidden rounded-3xl border shadow-xl shadow-background/30 transition-[border-color,box-shadow,filter] duration-500",
         severityBorder[notice.severity],
-        notice.read && "opacity-75",
         visibleStage !== "compact" && "shadow-2xl shadow-background/40",
       )}
     >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 bg-card/[0.94] backdrop-blur-[36px] backdrop-saturate-150"
+      />
       <button
         type="button"
         onClick={advanceCard}
@@ -222,7 +225,7 @@ function NotificationCard({
         aria-expanded={onExpandStack ? false : visibleStage !== "compact"}
         aria-label={`${notice.title}，${nextAction}`}
         className={cn(
-          "flex w-full items-start gap-3.5 text-left disabled:pointer-events-none",
+          "relative z-10 flex w-full items-start gap-3.5 text-left disabled:pointer-events-none",
           visibleStage === "compact" ? "min-h-24 p-4" : "p-4 pb-3",
         )}
       >
@@ -245,7 +248,7 @@ function NotificationCard({
       </button>
 
       {visibleStage !== "compact" ? (
-        <div ref={panelRef}>
+        <div ref={panelRef} className="relative z-10">
           {visibleStage === "full" ? (
             <div className="border-t border-border/60 px-4 py-3 text-sm leading-6 text-muted-foreground">
               <p>{notice.detail}</p>

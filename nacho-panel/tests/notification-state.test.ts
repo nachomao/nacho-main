@@ -40,6 +40,12 @@ test("单张通知依次展开完整内容和详细日志", () => {
   assert.match(drawerSource, /事件详细日志/)
 })
 
+test("通知卡片使用独立高遮蔽玻璃层阻止后层文字透出", () => {
+  assert.match(drawerSource, /bg-card\/\[0\.94\] backdrop-blur-\[36px\] backdrop-saturate-150/)
+  assert.match(drawerSource, /relative z-10 flex w-full/)
+  assert.doesNotMatch(drawerSource, /notice\.read && "opacity-75"/)
+})
+
 test("通知中心预置一组堆叠通知和两条独立通知", () => {
   assert.match(serverDataSource, /createMockNotifications/)
   assert.match(serverDataSource, /count: infrastructureItems\.length, items: infrastructureItems/)
