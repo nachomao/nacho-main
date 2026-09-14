@@ -89,7 +89,109 @@ const ServerDataContext = createContext<ServerDataContextValue | null>(null)
 // 临时预览开关：真实服务端接入后，将备份文件直接覆盖本文件即可完整恢复。
 const USE_MOCK_SERVER_DATA = true
 
-function getMockServerResponse(path: string): unknown {
+function createMockNotifications(now: number): ServerNotification[] {
+  const formatTime = (timestamp: number) => new Date(timestamp).toLocaleString("zh-CN", { hour12: false })
+  const infrastructureItems: NonNullable<ServerNotification["items"]> = [
+    {
+      id: "mock-notice-heartbeat",
+      type: "offline",
+      severity: "error",
+      title: "心跳延迟",
+      desc: "北京边缘节点连续两次心跳超时",
+      detail: "当前延迟 46 秒，实时通道正在自动重连。",
+      code: "HEARTBEAT_DELAY",
+      source: "clients",
+      deviceId: "mock-beijing-edge",
+      time: formatTime(now - 2 * 60_000),
+      ts: now - 2 * 60_000,
+      read: false,
+      snoozedUntil: null,
+      groupKey: "mock:infrastructure",
+    },
+    {
+      id: "mock-notice-disk",
+      type: "health",
+      severity: "warning",
+      title: "磁盘空间预警",
+      desc: "深圳构建节点的缓存分区达到 82%",
+      detail: "建议在下一次构建前清理过期制品缓存。",
+      code: "DISK_USAGE_HIGH",
+      source: "health",
+      deviceId: "mock-shenzhen-build",
+      time: formatTime(now - 8 * 60_000),
+      ts: now - 8 * 60_000,
+      read: false,
+      snoozedUntil: null,
+      groupKey: "mock:infrastructure",
+    },
+    {
+      id: "mock-notice-certificate",
+      type: "health",
+      severity: "warning",
+      title: "证书即将到期",
+      desc: "上海主节点的内网证书将在 12 天后到期",
+      detail: "续签任务已经创建，等待维护窗口执行。",
+      code: "CERT_EXPIRING",
+      source: "health",
+      deviceId: "mock-shanghai-core",
+      time: formatTime(now - 17 * 60_000),
+      ts: now - 17 * 60_000,
+      read: true,
+      snoozedUntil: null,
+      groupKey: "mock:infrastructure",
+    },
+  ]
+  const top = infrastructureItems[0]
+
+  return [
+    { ...top, count: infrastructureItems.length, items: infrastructureItems },
+    {
+      id: "mock-notice-task",
+      type: "task",
+      severity: "error",
+      title: "巡检任务执行失败",
+      desc: "生产环境夜间巡检未能完成",
+      detail: "脚本在验证服务状态时返回退出码 2，请检查目标服务权限。",
+      code: "EXIT_2",
+      source: "tasks",
+      deviceId: "mock-shanghai-core",
+      time: formatTime(now - 26 * 60_000),
+      ts: now - 26 * 60_000,
+      read: false,
+      snoozedUntil: null,
+      groupKey: "mock:task:nightly-check",
+      count: 1,
+    },
+    {
+      id: "mock-notice-recovered",
+      type: "offline",
+      severity: "warning",
+      title: "实时连接已恢复",
+      desc: "北京边缘节点重新建立 WebSocket 通道",
+      detail: "离线期间的命令队列已完成同步，没有发现丢失任务。",
+      code: "CONNECTION_RECOVERED",
+      source: "clients",
+      deviceId: "mock-beijing-edge",
+      time: formatTime(now - 41 * 60_000),
+      ts: now - 41 * 60_000,
+      read: true,
+      snoozedUntil: null,
+      groupKey: "mock:connection:recovered",
+      count: 1,
+    },
+  ]
+}
+
+let mockNotifications = createMockNotifications(Date.now())
+
+function cloneMockNotifications(): ServerNotification[] {
+  return mockNotifications.map((notice) => ({
+    ...notice,
+    items: notice.items?.map((item) => ({ ...item })),
+  }))
+}
+
+function getMockServerResponse(path: string, init?: RequestInit): unknown {
   const now = Date.now()
 
   if (path === "/overview") {
@@ -166,7 +268,60 @@ function getMockServerResponse(path: string): unknown {
       { id: "mock-log-3", ts: now - 72_000, level: "debug", source: "nacho-server", message: "资源指标采集完成", detail: null },
     ] satisfies LogEntry[]
   }
-  if (path.startsWith("/notifications")) return [] satisfies ServerNotification[]
+  if (path.startsWith("/notifications")) {
+    const method = init?.method?.toUpperCase() || "GET"
+    if (path === "/notifications" && method === "DELETE") {
+      mockNotifications = []
+      return { cleared: true }
+    }
+    if (path === "/notifications/read-all" && method === "POST") {
+      mockNotifications = mockNotifications.map((notice) => ({
+        ...notice,
+        read: true,
+        items: notice.items?.map((item) => ({ ...item, read: true })),
+      }))
+      return { updated: true }
+    }
+
+    const groupMatch = path.match(/^\/notifications\/group\/([^/]+)\/(read|snooze)$/)
+    if (groupMatch && method === "POST") {
+      const groupKey = decodeURIComponent(groupMatch[1])
+      if (groupMatch[2] === "snooze") {
+        mockNotifications = mockNotifications.filter((notice) => notice.groupKey !== groupKey)
+      } else {
+        mockNotifications = mockNotifications.map((notice) => notice.groupKey === groupKey ? {
+          ...notice,
+          read: true,
+          items: notice.items?.map((item) => ({ ...item, read: true })),
+        } : notice)
+      }
+      return { updated: true }
+    }
+
+    const itemMatch = path.match(/^\/notifications\/([^/]+)\/(read|snooze)$/)
+    if (itemMatch && method === "POST") {
+      const id = decodeURIComponent(itemMatch[1])
+      if (itemMatch[2] === "snooze") {
+        mockNotifications = mockNotifications.flatMap((notice) => {
+          if (!notice.items?.length) return notice.id === id ? [] : [notice]
+          const items = notice.items.filter((item) => item.id !== id)
+          if (items.length === notice.items.length) return [notice]
+          if (items.length === 0) return []
+          if (items.length === 1) return [{ ...items[0], count: 1 }]
+          return [{ ...items[0], count: items.length, items }]
+        })
+      } else {
+        mockNotifications = mockNotifications.map((notice) => {
+          if (!notice.items?.length) return notice.id === id ? { ...notice, read: true } : notice
+          const items = notice.items.map((item) => item.id === id ? { ...item, read: true } : item)
+          return { ...notice, ...items[0], count: items.length, items }
+        })
+      }
+      return { updated: true }
+    }
+
+    return cloneMockNotifications()
+  }
   if (path === "/health/findings" || path === "/health/packages") return []
   if (path === "/tasks" || path === "/plugins" || path === "/install-profiles") return []
 
@@ -208,7 +363,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
 
   const apiRequest = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
-      if (USE_MOCK_SERVER_DATA) return getMockServerResponse(path) as T
+      if (USE_MOCK_SERVER_DATA) return getMockServerResponse(path, init) as T
       if (!connection) throw new Error("尚未配置服务端连接")
       let response: Response
       try {
