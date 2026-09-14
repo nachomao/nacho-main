@@ -209,15 +209,11 @@ function NotificationCard({
       ref={cardRef}
       data-notification-stage={visibleStage}
       className={cn(
-        "relative isolate overflow-hidden rounded-3xl border shadow-xl shadow-background/30 transition-[border-color,box-shadow,filter] duration-500",
+        "relative isolate overflow-hidden rounded-3xl border bg-card/[0.94] bg-clip-padding shadow-xl shadow-background/30 backdrop-blur-[36px] backdrop-saturate-150 transition-[border-color,box-shadow,filter] duration-500",
         severityBorder[notice.severity],
         visibleStage !== "compact" && "shadow-2xl shadow-background/40",
       )}
     >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-0 bg-card/[0.94] backdrop-blur-[36px] backdrop-saturate-150"
-      />
       <button
         type="button"
         onClick={advanceCard}

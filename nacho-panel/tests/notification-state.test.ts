@@ -40,9 +40,11 @@ test("单张通知依次展开完整内容和详细日志", () => {
   assert.match(drawerSource, /事件详细日志/)
 })
 
-test("通知卡片使用独立高遮蔽玻璃层阻止后层文字透出", () => {
-  assert.match(drawerSource, /bg-card\/\[0\.94\] backdrop-blur-\[36px\] backdrop-saturate-150/)
+test("通知卡片的圆角、描边和高遮蔽玻璃共用同一裁切层", () => {
+  assert.match(drawerSource, /rounded-3xl border bg-card\/\[0\.94\] bg-clip-padding/)
+  assert.match(drawerSource, /backdrop-blur-\[36px\] backdrop-saturate-150/)
   assert.match(drawerSource, /relative z-10 flex w-full/)
+  assert.doesNotMatch(drawerSource, /absolute inset-0 z-0 bg-card/)
   assert.doesNotMatch(drawerSource, /notice\.read && "opacity-75"/)
 })
 
