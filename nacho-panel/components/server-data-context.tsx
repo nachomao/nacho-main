@@ -13,6 +13,8 @@ import {
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import type { Client } from "@/components/clients/client-data"
 import { defaultServerBaseUrl, normalizeServerBaseUrl } from "@/lib/server-connection"
+import { canApplyNotificationSnapshot } from "@/lib/notification-state"
+import { useLocalSettings } from "@/components/local-settings-provider"
 
 export type Overview = {
   clients: {
@@ -39,6 +41,25 @@ export type LogEntry = {
   detail: string | null
 }
 
+export type ServerNotification = {
+  id: string
+  type: "offline" | "health" | "task"
+  severity: "warning" | "error" | "critical"
+  title: string
+  desc: string
+  detail: string
+  code: string | null
+  source: string
+  deviceId: string | null
+  time: string
+  ts: number
+  read: boolean
+  snoozedUntil: number | null
+  groupKey: string
+  count?: number
+  items?: ServerNotification[]
+}
+
 type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; message?: string; error?: string }
 
 type ServerDataContextValue = {
@@ -47,6 +68,13 @@ type ServerDataContextValue = {
   clients: Client[]
   groups: string[]
   logs: LogEntry[]
+  notifications: ServerNotification[]
+  markNotificationRead: (id: string) => Promise<void>
+  markAllNotificationsRead: () => Promise<void>
+  clearNotifications: () => Promise<void>
+  snoozeNotification: (id: string, until: number) => Promise<void>
+  snoozeNotificationGroup: (groupKey: string, until: number) => Promise<void>
+  markNotificationGroupRead: (groupKey: string) => Promise<void>
   loading: boolean
   refreshing: boolean
   error: string | null
@@ -59,16 +87,23 @@ type ServerDataContextValue = {
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
 
 export function ServerDataProvider({ children }: { children: ReactNode }) {
+  const { settings: localSettings } = useLocalSettings()
   const { serverSource } = useOnboarding()
   const [overview, setOverview] = useState<Overview | null>(null)
   const [clients, setClients] = useState<Client[]>([])
   const [groups, setGroups] = useState<string[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [notifications, setNotifications] = useState<ServerNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestSequence = useRef(0)
+  const notificationMutationEpoch = useRef(0)
   const connectedOnce = useRef(false)
+  const notificationQuery = useMemo(() => {
+    const n = localSettings.notificationCenter
+    return `limit=${n.maxItems}&grouped=true&retentionDays=${n.retentionDays}&maxItems=${n.maxItems}&autoPurge=${n.autoPurge}`
+  }, [localSettings.notificationCenter])
 
   const connection = useMemo(() => {
     // 未完成引导时不构造连接，由上层展示引导/错误态，避免伪造可用连接
@@ -174,6 +209,34 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     }
   }, [connection])
 
+  const mutateNotifications = useCallback(async (path: string, init: RequestInit) => {
+    const epoch = ++notificationMutationEpoch.current
+    await apiRequest(path, init)
+    const next = await apiRequest<ServerNotification[]>(`/notifications?${notificationQuery}`)
+    if (canApplyNotificationSnapshot(epoch, notificationMutationEpoch.current)) setNotifications(next)
+  }, [apiRequest, notificationQuery])
+
+  const markNotificationRead = useCallback(async (id: string) => {
+    await mutateNotifications(`/notifications/${encodeURIComponent(id)}/read`, { method: "POST" })
+  }, [mutateNotifications])
+
+  const markAllNotificationsRead = useCallback(async () => {
+    await mutateNotifications("/notifications/read-all", { method: "POST" })
+  }, [mutateNotifications])
+
+  const clearNotifications = useCallback(async () => {
+    await mutateNotifications("/notifications", { method: "DELETE" })
+  }, [mutateNotifications])
+  const snoozeNotification = useCallback(async (id: string, until: number) => {
+    await mutateNotifications(`/notifications/${encodeURIComponent(id)}/snooze`, { method: "POST", body: JSON.stringify({ until }) })
+  }, [mutateNotifications])
+  const snoozeNotificationGroup = useCallback(async (groupKey: string, until: number) => {
+    await mutateNotifications(`/notifications/group/${encodeURIComponent(groupKey)}/snooze`, { method: "POST", body: JSON.stringify({ until }) })
+  }, [mutateNotifications])
+  const markNotificationGroupRead = useCallback(async (groupKey: string) => {
+    await mutateNotifications(`/notifications/group/${encodeURIComponent(groupKey)}/read`, { method: "POST" })
+  }, [mutateNotifications])
+
   const refresh = useCallback(async () => {
     if (!connection) {
       setError("尚未配置服务端连接")
@@ -181,22 +244,33 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
       return
     }
     const sequence = ++requestSequence.current
+    const notificationEpoch = notificationMutationEpoch.current
     if (!connectedOnce.current) {
       setLoading(true)
     }
     setRefreshing(true)
     try {
-      const [nextOverview, nextClients, nextGroups, nextLogs] = await Promise.all([
+      // 仅概览接口作为连接判定依据；其它业务接口缺失或暂时失败时保留已有数据，
+      // 避免某个旧版路由的 404 被误报为整面板断线。
+      const [overviewResult, clientsResult, groupsResult, logsResult] = await Promise.allSettled([
         apiRequest<Overview>("/overview"),
         apiRequest<Client[]>("/clients"),
         apiRequest<string[]>("/groups"),
         apiRequest<LogEntry[]>("/logs?limit=30"),
       ])
+      if (overviewResult.status === "rejected") throw overviewResult.reason
       if (sequence !== requestSequence.current) return
-      setOverview(nextOverview)
-      setClients(nextClients)
-      setGroups(nextGroups)
-      setLogs(nextLogs)
+      setOverview(overviewResult.value)
+      if (clientsResult.status === "fulfilled") setClients(clientsResult.value)
+      if (groupsResult.status === "fulfilled") setGroups(groupsResult.value)
+      if (logsResult.status === "fulfilled") setLogs(logsResult.value)
+      try {
+        const nextNotifications = await apiRequest<ServerNotification[]>(`/notifications?${notificationQuery}`)
+        if (canApplyNotificationSnapshot(notificationEpoch, notificationMutationEpoch.current)) setNotifications(nextNotifications)
+      } catch {
+        // 兼容尚未升级通知路由的服务端；核心连接已经确认成功。
+        if (canApplyNotificationSnapshot(notificationEpoch, notificationMutationEpoch.current)) setNotifications([])
+      }
       connectedOnce.current = true
       setError(null)
     } catch (caught) {
@@ -208,7 +282,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
         setRefreshing(false)
       }
     }
-  }, [apiRequest, connection])
+  }, [apiRequest, connection, notificationQuery])
 
   useEffect(() => {
     void refresh()
@@ -220,8 +294,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, refresh])
 
   const value = useMemo(
-    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
-    [connection, overview, clients, groups, logs, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
+    [connection, overview, clients, groups, logs, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

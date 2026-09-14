@@ -14,10 +14,13 @@ import {
   MemoryStick,
   HardDrive,
   MoonStar,
+  Download,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SettingCard, SettingRow, Toggle, TextField, NumberStepper, ThresholdSlider } from "./primitives"
 import type { EmailSettings, NotifyConditions } from "./settings-data"
+import type { NotificationCenterSettings } from "@/lib/local-settings-schema"
+import { useServerData } from "@/components/server-data-context"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -372,14 +375,28 @@ export function NotificationsPanel({
   conditions,
   onEmailChange,
   onConditionsChange,
+  notificationCenter,
+  onNotificationCenterChange,
 }: {
   email: EmailSettings
   conditions: NotifyConditions
   onEmailChange: (patch: Partial<EmailSettings>) => void
   onConditionsChange: (patch: Partial<NotifyConditions>) => void
+  notificationCenter: NotificationCenterSettings
+  onNotificationCenterChange: (patch: Partial<NotificationCenterSettings>) => void
 }) {
+  const { downloadRequest, apiRequest } = useServerData()
   return (
     <div className="flex flex-col gap-4">
+      <SettingCard title="通知中心" desc="告警保留、稍后提醒和导出设置保存在当前面板" icon={<BellRing className="h-5 w-5" />}>
+        <SettingRow label="最大保存条目" hint="优先清理最旧的已读通知" htmlFor="notification-max-items"><NumberStepper id="notification-max-items" value={notificationCenter.maxItems} onChange={(v) => onNotificationCenterChange({ maxItems: v })} min={100} max={1000} step={50} unit="条" /></SettingRow>
+        <SettingRow label="保存时长" htmlFor="notification-retention-days"><NumberStepper id="notification-retention-days" value={notificationCenter.retentionDays} onChange={(v) => onNotificationCenterChange({ retentionDays: v })} min={1} max={90} unit="天" /></SettingRow>
+        <SettingRow label="自动清理已读/过期通知"><Toggle checked={notificationCenter.autoPurge} onChange={(v) => onNotificationCenterChange({ autoPurge: v })} label="自动清理" /></SettingRow>
+        <SettingRow label="默认稍后提醒" htmlFor="notification-snooze"><NumberStepper id="notification-snooze" value={notificationCenter.defaultSnoozeMinutes} onChange={(v) => onNotificationCenterChange({ defaultSnoozeMinutes: v })} min={1} max={1440} unit="分钟" /></SettingRow>
+        <SettingRow label="导出格式"><div className="flex gap-1 rounded-full border border-border p-1">{(["json", "csv"] as const).map((format) => <button key={format} type="button" onClick={() => onNotificationCenterChange({ exportFormat: format })} className={cn("rounded-full px-3 py-1.5 text-xs", notificationCenter.exportFormat === format ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>{format.toUpperCase()}</button>)}</div></SettingRow>
+        <SettingRow label="严重错误同时弹出"><Toggle checked={notificationCenter.showCriticalAsToast} onChange={(v) => onNotificationCenterChange({ showCriticalAsToast: v })} label="严重错误弹窗" /></SettingRow>
+        <div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" onClick={() => void downloadRequest(`/notifications?export=true&format=${notificationCenter.exportFormat}&retentionDays=${notificationCenter.retentionDays}&maxItems=${notificationCenter.maxItems}&autoPurge=${notificationCenter.autoPurge}`, `notifications.${notificationCenter.exportFormat}`)} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground"><Download className="h-4 w-4" />立即导出</button><button type="button" onClick={() => void apiRequest("/notifications/purge", { method: "POST", body: JSON.stringify({ retentionDays: notificationCenter.retentionDays }) })} className="h-9 rounded-xl border border-border px-3 text-xs">清理已读/过期通知</button></div>
+      </SettingCard>
       <EmailBlock value={email} onChange={onEmailChange} />
       <ConditionsBlock value={conditions} onChange={onConditionsChange} />
     </div>

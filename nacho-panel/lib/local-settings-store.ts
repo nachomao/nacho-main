@@ -9,6 +9,7 @@ import {
   LOCAL_THEME_IDS,
   MAX_CUSTOM_AVATAR_LENGTH,
   MAX_USER_NAME_LENGTH,
+  NOTIFICATION_EXPORT_FORMATS,
   defaultLocalSettings,
   type LocalAvatarId,
   type LocalProfileSettings,
@@ -16,11 +17,14 @@ import {
   type LocalSettingsPatch,
   type LocalSettingsSnapshot,
   type LocalThemeId,
+  type NotificationCenterSettings,
+  type NotificationExportFormat,
 } from "./local-settings-schema"
 
-const TOP_LEVEL_PATCH_KEYS = new Set(["profile", "theme", "onboardingCompleted"])
+const TOP_LEVEL_PATCH_KEYS = new Set(["profile", "theme", "onboardingCompleted", "notificationCenter"])
 const PROFILE_PATCH_KEYS = new Set(["userName", "avatarId", "customAvatar"])
-const STORED_KEYS = new Set(["version", "legacyMigrationVersion", "profile", "theme", "onboardingCompleted"])
+const NOTIFICATION_CENTER_PATCH_KEYS = new Set(["maxItems", "retentionDays", "autoPurge", "defaultSnoozeMinutes", "autoExport", "exportFormat", "showCriticalAsToast"])
+const STORED_KEYS = new Set(["version", "legacyMigrationVersion", "profile", "theme", "onboardingCompleted", "notificationCenter"])
 
 export class LocalSettingsValidationError extends Error {}
 
@@ -71,6 +75,44 @@ function validateTheme(value: unknown): LocalThemeId {
   return value as LocalThemeId
 }
 
+function validateNotificationCenter(value: unknown): NotificationCenterSettings {
+  if (!isRecord(value)) throw new LocalSettingsValidationError("notificationCenter 必须是对象")
+  assertOnlyKeys(value, NOTIFICATION_CENTER_PATCH_KEYS, "notificationCenter")
+  
+  const maxItems = value.maxItems
+  if (typeof maxItems !== "number" || !Number.isInteger(maxItems) || maxItems < 100 || maxItems > 1000) {
+    throw new LocalSettingsValidationError("maxItems 必须是 100-1000 之间的整数")
+  }
+  
+  const retentionDays = value.retentionDays
+  if (typeof retentionDays !== "number" || !Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 90) {
+    throw new LocalSettingsValidationError("retentionDays 必须是 1-90 之间的整数")
+  }
+  const autoPurge = value.autoPurge
+  if (typeof autoPurge !== "boolean") throw new LocalSettingsValidationError("autoPurge 必须是布尔值")
+  const defaultSnoozeMinutes = value.defaultSnoozeMinutes
+  if (typeof defaultSnoozeMinutes !== "number" || !Number.isInteger(defaultSnoozeMinutes) || defaultSnoozeMinutes < 1 || defaultSnoozeMinutes > 1440) throw new LocalSettingsValidationError("defaultSnoozeMinutes 必须是 1-1440 之间的整数")
+  
+  if (typeof value.autoExport !== "boolean") {
+    throw new LocalSettingsValidationError("autoExport 必须是布尔值")
+  }
+  if (typeof value.showCriticalAsToast !== "boolean") throw new LocalSettingsValidationError("showCriticalAsToast 必须是布尔值")
+  
+  if (typeof value.exportFormat !== "string" || !NOTIFICATION_EXPORT_FORMATS.includes(value.exportFormat as NotificationExportFormat)) {
+    throw new LocalSettingsValidationError("exportFormat 必须是 json 或 csv")
+  }
+  
+  return {
+    maxItems,
+    retentionDays,
+    autoPurge,
+    defaultSnoozeMinutes,
+    autoExport: value.autoExport,
+    exportFormat: value.exportFormat as NotificationExportFormat,
+    showCriticalAsToast: value.showCriticalAsToast,
+  }
+}
+
 function validateProfile(value: unknown): LocalProfileSettings {
   if (!isRecord(value)) throw new LocalSettingsValidationError("profile 必须是对象")
   assertOnlyKeys(value, PROFILE_PATCH_KEYS, "profile")
@@ -103,6 +145,7 @@ export function validateStoredSettings(value: unknown): LocalSettings {
     profile: validateProfile(value.profile),
     theme: validateTheme(value.theme),
     onboardingCompleted: value.onboardingCompleted,
+    notificationCenter: validateNotificationCenter({ ...defaultLocalSettings().notificationCenter, ...(isRecord(value.notificationCenter) ? value.notificationCenter : {}) }),
   }
 }
 
@@ -129,6 +172,42 @@ export function validateSettingsPatch(value: unknown): LocalSettingsPatch {
     }
     patch.onboardingCompleted = value.onboardingCompleted
   }
+  if (Object.hasOwn(value, "notificationCenter")) {
+    if (!isRecord(value.notificationCenter)) throw new LocalSettingsValidationError("notificationCenter 必须是对象")
+    assertOnlyKeys(value.notificationCenter, NOTIFICATION_CENTER_PATCH_KEYS, "notificationCenter")
+    const nc: Partial<NotificationCenterSettings> = {}
+    if (Object.hasOwn(value.notificationCenter, "maxItems")) {
+      const maxItems = value.notificationCenter.maxItems
+      if (typeof maxItems !== "number" || !Number.isInteger(maxItems) || maxItems < 100 || maxItems > 1000) {
+        throw new LocalSettingsValidationError("maxItems 必须是 100-1000 之间的整数")
+      }
+      nc.maxItems = maxItems
+    }
+    if (Object.hasOwn(value.notificationCenter, "retentionDays")) {
+      const retentionDays = value.notificationCenter.retentionDays
+      if (typeof retentionDays !== "number" || !Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 90) {
+        throw new LocalSettingsValidationError("retentionDays 必须是 1-90 之间的整数")
+      }
+      nc.retentionDays = retentionDays
+    }
+    if (Object.hasOwn(value.notificationCenter, "autoPurge")) { if (typeof value.notificationCenter.autoPurge !== "boolean") throw new LocalSettingsValidationError("autoPurge 必须是布尔值"); nc.autoPurge = value.notificationCenter.autoPurge }
+    if (Object.hasOwn(value.notificationCenter, "defaultSnoozeMinutes")) { const v=value.notificationCenter.defaultSnoozeMinutes; if (typeof v !== "number" || !Number.isInteger(v) || v<1 || v>1440) throw new LocalSettingsValidationError("defaultSnoozeMinutes 必须是 1-1440 之间的整数"); nc.defaultSnoozeMinutes=v }
+    if (Object.hasOwn(value.notificationCenter, "autoExport")) {
+      if (typeof value.notificationCenter.autoExport !== "boolean") {
+        throw new LocalSettingsValidationError("autoExport 必须是布尔值")
+      }
+      nc.autoExport = value.notificationCenter.autoExport
+    }
+    if (Object.hasOwn(value.notificationCenter, "exportFormat")) {
+      const exportFormat = value.notificationCenter.exportFormat
+      if (typeof exportFormat !== "string" || !NOTIFICATION_EXPORT_FORMATS.includes(exportFormat as NotificationExportFormat)) {
+        throw new LocalSettingsValidationError("exportFormat 必须是 json 或 csv")
+      }
+      nc.exportFormat = exportFormat as NotificationExportFormat
+    }
+    if (Object.hasOwn(value.notificationCenter, "showCriticalAsToast")) { if (typeof value.notificationCenter.showCriticalAsToast !== "boolean") throw new LocalSettingsValidationError("showCriticalAsToast 必须是布尔值"); nc.showCriticalAsToast = value.notificationCenter.showCriticalAsToast }
+    patch.notificationCenter = nc
+  }
   return patch
 }
 
@@ -144,6 +223,10 @@ function mergeSettings(current: LocalSettings, patch: LocalSettingsPatch): Local
     profile: {
       ...current.profile,
       ...patch.profile,
+    },
+    notificationCenter: {
+      ...current.notificationCenter,
+      ...patch.notificationCenter,
     },
   }
   return validateStoredSettings(merged)

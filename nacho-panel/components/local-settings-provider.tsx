@@ -53,6 +53,7 @@ function mergeClientSettings(current: LocalSettings, patch: LocalSettingsPatch):
       ? { onboardingCompleted: patch.onboardingCompleted }
       : {}),
     profile: { ...current.profile, ...patch.profile },
+    notificationCenter: { ...current.notificationCenter, ...patch.notificationCenter },
   }
 }
 

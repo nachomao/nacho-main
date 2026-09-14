@@ -6,8 +6,10 @@ import { AddClientDialog } from "./add-client-dialog"
 import { WebSSHDialog } from "./webssh-dialog"
 import { useAIMode } from "@/components/ai-mode/ai-mode-context"
 import { CommandPalette } from "./command-palette"
-import { NotificationsDrawer, initialNotices, type Notice } from "./notifications-drawer"
+import { NotificationsDrawer, type NoticePending } from "./notifications-drawer"
 import { FilterPopover, countActiveFilters, defaultFilters, type HomeFilters } from "./filter-popover"
+import { useLocalSettings } from "@/components/local-settings-provider"
+import { notificationUnreadCount } from "@/lib/notification-state"
 
 type TopbarActionsContextValue = {
   /** 打开添加客户端向导 */
@@ -25,6 +27,7 @@ type TopbarActionsContextValue = {
   filterCount: number
   /** 未读通知数 */
   unread: number
+  criticalAttention: boolean
   /** 打开 AI Mode 操作面板 */
   openAI: () => void
   onlineCount: number
@@ -45,13 +48,15 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
   const [addOpen, setAddOpen] = useState(false)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [noticesOpen, setNoticesOpen] = useState(false)
+  const [noticePending, setNoticePending] = useState<NoticePending>(null)
+  const [noticeError, setNoticeError] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [filterAnchor, setFilterAnchor] = useState<{ top: number; left: number } | null>(null)
   const [filterOpen, setFilterOpen] = useState(false)
   const [filters, setFilters] = useState<HomeFilters>(defaultFilters)
-  const [notices, setNotices] = useState<Notice[]>(initialNotices)
   const aiMode = useAIMode()
-  const { clients } = useServerData()
+  const { settings: localSettings } = useLocalSettings()
+  const { clients, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead } = useServerData()
 
   // 全局快捷键 Ctrl/Cmd + K 呼出搜索
   useEffect(() => {
@@ -71,8 +76,22 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
     setFilterOpen(true)
   }, [])
 
-  const unread = notices.filter((n) => !n.read).length
+  const unread = notificationUnreadCount(notifications)
   const onlineCount = clients.filter((c) => c.status === "online").length
+  const criticalAttention = localSettings.notificationCenter.showCriticalAsToast && notifications.some((n) => n.severity === "critical" && !n.read)
+
+  const runNoticeAction = useCallback(async (next: Exclude<NoticePending, null>, action: () => Promise<void>) => {
+    if (noticePending) return
+    setNoticePending(next)
+    setNoticeError(null)
+    try {
+      await action()
+    } catch (caught) {
+      setNoticeError(caught instanceof Error ? caught.message : "通知操作失败")
+    } finally {
+      setNoticePending(null)
+    }
+  }, [noticePending])
 
   const value = useMemo<TopbarActionsContextValue>(
     () => ({
@@ -84,11 +103,12 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
       filters,
       filterCount: countActiveFilters(filters),
       unread,
+      criticalAttention,
       openAI: aiMode.enter,
       onlineCount,
       totalCount: clients.length,
     }),
-    [openFilter, filters, unread, onlineCount, clients.length, aiMode.enter],
+    [openFilter, filters, unread, criticalAttention, onlineCount, clients.length, aiMode.enter],
   )
 
   return (
@@ -101,10 +121,15 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
       <NotificationsDrawer
         open={noticesOpen}
         onClose={() => setNoticesOpen(false)}
-        notices={notices}
-        onRead={(id) => setNotices((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))}
-        onReadAll={() => setNotices((prev) => prev.map((n) => ({ ...n, read: true })))}
-        onClear={() => setNotices([])}
+        notices={notifications.map((n) => ({ ...n, count: n.count ?? 1 }))}
+        pending={noticePending}
+        error={noticeError}
+        onRead={(id) => void runNoticeAction({ action: "read", id }, () => markNotificationRead(id))}
+        onReadAll={() => void runNoticeAction({ action: "readAll" }, markAllNotificationsRead)}
+        onClear={() => void runNoticeAction({ action: "clear" }, clearNotifications)}
+        onSnooze={(id, until) => void runNoticeAction({ action: "snooze", id }, () => snoozeNotification(id, until))}
+        onSnoozeGroup={(groupKey, until) => void runNoticeAction({ action: "snoozeGroup", groupKey }, () => snoozeNotificationGroup(groupKey, until))}
+        onReadGroup={(groupKey) => void runNoticeAction({ action: "readGroup", groupKey }, () => markNotificationGroupRead(groupKey))}
       />
       <FilterPopover
         open={filterOpen}

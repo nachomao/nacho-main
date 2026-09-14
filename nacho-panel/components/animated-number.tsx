@@ -1,11 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-
-// iOS 风格缓动：起步快、尾部柔和收住
-function easeOutCubic(t: number) {
-  return 1 - Math.pow(1 - t, 3)
-}
+import { RollingNumber } from "@/components/rolling-number"
 
 interface AnimatedNumberProps {
   /** 目标数值 */
@@ -18,7 +14,7 @@ interface AnimatedNumberProps {
   decimals?: number
   /** 启动延迟（毫秒），用于错落进场 */
   delay?: number
-  /** 数值变化时是否从上一个数值滚动到新数值（iOS 风格） */
+  /** @deprecated 数值更新现在始终从上一个值滚动，以保持统一的 iOS 风格。 */
   animateFromPrevious?: boolean
   prefix?: string
   suffix?: string
@@ -28,73 +24,63 @@ interface AnimatedNumberProps {
 export function AnimatedNumber({
   value,
   from = 0,
-  duration = 1400,
+  duration = 650,
   decimals = 0,
   delay = 0,
-  animateFromPrevious = false,
   prefix = "",
   suffix = "",
   className,
 }: AnimatedNumberProps) {
-  const [display, setDisplay] = useState(from)
-  const [progress, setProgress] = useState(0) // 0 → 1
-  const rafRef = useRef<number | null>(null)
-  // 记录上一次的目标值，用于 iOS 风格的「从上一个数值滚动到新数值」
-  const prevValueRef = useRef(from)
+  const [entered, setEntered] = useState(false)
+  const [rollingValue, setRollingValue] = useState(from)
+  const initializedRef = useRef(false)
 
+  // 整块数值的上移、渐显和去模糊只在组件首次挂载时执行一次。
+  // 后续服务端轮询只会更新 RollingNumber，不会重新触发进场效果。
   useEffect(() => {
-    // 起始值：可从上一次的目标值滚动，或从固定 from 进场
-    const start = animateFromPrevious ? prevValueRef.current : from
-    let startTime: number | null = null
-    let timer: ReturnType<typeof setTimeout>
-
-    const tick = (now: number) => {
-      if (startTime === null) startTime = now
-      const t = Math.min(1, (now - startTime) / duration)
-      const eased = easeOutCubic(t)
-      setDisplay(start + (value - start) * eased)
-      setProgress(t)
-      if (t < 1) {
-        rafRef.current = requestAnimationFrame(tick)
-      }
-    }
-
-    timer = setTimeout(() => {
-      rafRef.current = requestAnimationFrame(tick)
-    }, delay)
-
-    prevValueRef.current = value
-
+    const timer = window.setTimeout(() => setEntered(true), delay)
     return () => {
-      clearTimeout(timer)
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      window.clearTimeout(timer)
     }
-  }, [value, from, duration, delay, animateFromPrevious])
+  }, [delay])
 
-  // 增大则从下方滚上来，减小则从上方滚下来
-  const increasing = value >= (animateFromPrevious ? prevValueRef.current : from)
-  const remaining = 1 - progress
-  const blur = remaining * 6 // 进场模糊，逐渐清晰
-  const translateY = (increasing ? 1 : -1) * remaining * 16 // 纵向滚动位移
-  const opacity = 0.35 + 0.65 * progress
+  // 首帧保留 from，挂载后再交给逐位滚动组件前往真实值。
+  // value 此后发生任何增减，都只更新目标值而不重置外层进场状态。
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true
+      const timer = window.setTimeout(() => setRollingValue(value), delay)
+      return () => window.clearTimeout(timer)
+    }
+    setRollingValue(value)
+  }, [delay, value])
 
-  // 外层不加 overflow:hidden：否则进场时内层的模糊光晕会被盒子边界硬裁成矩形。
-  // 进场靠 translateY 上移就位 + 渐显 + 由模糊到清晰来呈现，无需裁剪遮罩。
   return (
-    <span className={className} style={{ display: "inline-block", verticalAlign: "bottom" }}>
+    <span
+      className={className}
+      style={{ display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}
+    >
       <span
+        data-number-entered={entered}
         style={{
-          display: "inline-block",
-          filter: `blur(${blur}px)`,
-          transform: `translateY(${translateY}px)`,
-          opacity,
+          display: "inline-flex",
+          alignItems: "center",
+          lineHeight: "inherit",
+          filter: entered ? "blur(0)" : "blur(6px)",
+          transform: entered ? "translateY(0)" : "translateY(16px)",
+          opacity: entered ? 1 : 0.35,
           fontVariantNumeric: "tabular-nums",
+          transition: `transform ${duration}ms cubic-bezier(0.22, 1, 0.36, 1), filter ${duration}ms ease-out, opacity ${Math.min(duration, 450)}ms ease-out`,
           willChange: "transform, filter, opacity",
         }}
       >
-        {prefix}
-        {display.toFixed(decimals)}
-        {suffix}
+        <RollingNumber
+          value={rollingValue}
+          decimals={decimals}
+          duration={duration}
+          prefix={prefix}
+          suffix={suffix}
+        />
       </span>
     </span>
   )

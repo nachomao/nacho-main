@@ -487,7 +487,7 @@ function NoticeStrokeIcon({ phase, onSequenceEnd }: { phase: NoticeIconPhase; on
 }
 
 /** 顶栏通知灵动岛：断线时倒绘铃铛再正绘警告，恢复时严格反向播放。 */
-function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () => void }) {
+function NotificationIsland({ unread, criticalAttention, onOpen }: { unread: number; criticalAttention?: boolean; onOpen?: () => void }) {
   const { overview, error, refreshing, refresh } = useServerData()
   const [recovered, setRecovered] = useState(false)
   const [iconPhase, setIconPhase] = useState<NoticeIconPhase>("bell-idle")
@@ -561,7 +561,7 @@ function NotificationIsland({ unread, onOpen }: { unread: number; onOpen?: () =>
         </span>
         {expanded && iconWarning && <span className="absolute inset-1 rounded-full border border-negative/30 animate-notice-pulse" />}
         {!expanded && unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-semibold text-primary-foreground">
+          <span className={cn("absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-semibold text-primary-foreground", criticalAttention && "animate-pulse ring-4 ring-negative/20")}>
             {unread > 9 ? "9+" : unread}
           </span>
         )}
@@ -1070,7 +1070,7 @@ export function Topbar() {
 
       {/* 常驻右侧控件：不管切换到哪个页面都始终显示 */}
       <div className="ml-auto flex items-center gap-4">
-        <NotificationIsland unread={actions?.unread ?? 0} onOpen={actions?.openNotices} />
+        <NotificationIsland unread={actions?.unread ?? 0} criticalAttention={actions?.criticalAttention} onOpen={actions?.openNotices} />
         <IconButton label="全局搜索" expandLabel="Ctrl K" onClick={actions?.openSearch}>
           <Search className="h-5 w-5" />
         </IconButton>
@@ -1085,5 +1085,4 @@ export function Topbar() {
     </header>
   )
 }
-
 

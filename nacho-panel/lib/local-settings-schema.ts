@@ -6,6 +6,9 @@ export type LocalThemeId = (typeof LOCAL_THEME_IDS)[number]
 export const LOCAL_AVATAR_IDS = ["cat", "ghost", "bird", "rabbit", "fish", "bot", "custom"] as const
 export type LocalAvatarId = (typeof LOCAL_AVATAR_IDS)[number]
 
+export const NOTIFICATION_EXPORT_FORMATS = ["json", "csv"] as const
+export type NotificationExportFormat = (typeof NOTIFICATION_EXPORT_FORMATS)[number]
+
 export const MAX_USER_NAME_LENGTH = 80
 export const MAX_CUSTOM_AVATAR_LENGTH = 512_000
 export const MAX_LOCAL_SETTINGS_REQUEST_LENGTH = 600_000
@@ -16,18 +19,30 @@ export type LocalProfileSettings = {
   customAvatar: string | null
 }
 
+export type NotificationCenterSettings = {
+  maxItems: number
+  retentionDays: number
+  autoPurge: boolean
+  defaultSnoozeMinutes: number
+  autoExport: boolean
+  exportFormat: NotificationExportFormat
+  showCriticalAsToast: boolean
+}
+
 export type LocalSettings = {
   version: typeof LOCAL_SETTINGS_VERSION
   legacyMigrationVersion: number
   profile: LocalProfileSettings
   theme: LocalThemeId
   onboardingCompleted: boolean
+  notificationCenter: NotificationCenterSettings
 }
 
 export type LocalSettingsPatch = {
   profile?: Partial<LocalProfileSettings>
   theme?: LocalThemeId
   onboardingCompleted?: boolean
+  notificationCenter?: Partial<NotificationCenterSettings>
 }
 
 export type LocalSettingsSnapshot = {
@@ -47,5 +62,14 @@ export function defaultLocalSettings(): LocalSettings {
     },
     theme: "blue",
     onboardingCompleted: false,
+    notificationCenter: {
+      maxItems: 500,
+      retentionDays: 30,
+      autoPurge: true,
+      defaultSnoozeMinutes: 60,
+      autoExport: false,
+      exportFormat: "json",
+      showCriticalAsToast: true,
+    },
   }
 }

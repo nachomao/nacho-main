@@ -82,3 +82,44 @@ test("reset persists defaults and prevents legacy remigration", async () => {
   const snapshot = await readLocalSettings()
   assert.deepEqual(snapshot, { settings: resetDefaults, exists: true, recovered: false })
 })
+
+test("notificationCenter patches are validated and persisted", async () => {
+  const saved = await patchLocalSettings({
+    notificationCenter: { maxItems: 200, retentionDays: 7 },
+  })
+  assert.equal(saved.notificationCenter.maxItems, 200)
+  assert.equal(saved.notificationCenter.retentionDays, 7)
+  assert.equal(saved.notificationCenter.autoExport, false)
+  assert.equal(saved.notificationCenter.exportFormat, "json")
+
+  const disk = JSON.parse(await readFile(getLocalSettingsPath(), "utf8"))
+  assert.equal(disk.notificationCenter.maxItems, 200)
+  assert.equal(disk.notificationCenter.retentionDays, 7)
+
+  const second = await patchLocalSettings({ notificationCenter: { exportFormat: "csv" } })
+  assert.equal(second.notificationCenter.maxItems, 200)
+  assert.equal(second.notificationCenter.exportFormat, "csv")
+})
+
+test("notificationCenter rejects invalid ranges", async () => {
+  await assert.rejects(
+    () => patchLocalSettings({ notificationCenter: { maxItems: 50 } }),
+    LocalSettingsValidationError,
+  )
+  await assert.rejects(
+    () => patchLocalSettings({ notificationCenter: { maxItems: 1500 } }),
+    LocalSettingsValidationError,
+  )
+  await assert.rejects(
+    () => patchLocalSettings({ notificationCenter: { retentionDays: 0 } }),
+    LocalSettingsValidationError,
+  )
+  await assert.rejects(
+    () => patchLocalSettings({ notificationCenter: { retentionDays: 100 } }),
+    LocalSettingsValidationError,
+  )
+  await assert.rejects(
+    () => patchLocalSettings({ notificationCenter: { exportFormat: "xml" } }),
+    LocalSettingsValidationError,
+  )
+})

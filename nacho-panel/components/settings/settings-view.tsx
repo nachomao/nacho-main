@@ -11,6 +11,7 @@ import { AIPanel } from "./ai-panel"
 import { ConnectionPanel } from "./connection-panel"
 import { defaultSettings, type SettingsState } from "./settings-data"
 import { cn } from "@/lib/utils"
+import { useLocalSettings } from "@/components/local-settings-provider"
 
 type TabId = "general" | "connection" | "notifications" | "security" | "ai" | "about"
 
@@ -24,6 +25,7 @@ const tabs: readonly SegmentedOption<TabId>[] = [
 ]
 
 export function SettingsView() {
+  const local = useLocalSettings()
   const [tab, setTab] = useState<TabId>("general")
   // 内容跟随药丸滑动方向水平平移进场
   const [enterAnim, setEnterAnim] = useState("animate-slide-in-right")
@@ -75,6 +77,8 @@ export function SettingsView() {
             conditions={settings.conditions}
             onEmailChange={(p) => patch("email", p)}
             onConditionsChange={(p) => patch("conditions", p)}
+            notificationCenter={local.settings.notificationCenter}
+            onNotificationCenterChange={(p) => void local.update({ notificationCenter: p })}
           />
         )}
         {tab === "security" && (

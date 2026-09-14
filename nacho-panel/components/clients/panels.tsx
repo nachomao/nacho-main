@@ -466,7 +466,7 @@ export function AddGroupPanel() {
             />
           </Field>
           <Field label="标识颜色">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 p-1">
               {groupColors.map((c) => (
                 <button
                   key={c}
@@ -474,7 +474,7 @@ export function AddGroupPanel() {
                   aria-label={`选择颜色 ${c}`}
                   onClick={() => setColor(c)}
                   className={cn(
-                    "h-9 w-9 rounded-full transition-transform duration-200 hover:scale-110",
+                    "h-9 w-9 rounded-full",
                     color === c && "ring-2 ring-foreground ring-offset-2 ring-offset-card",
                   )}
                   style={{ backgroundColor: c }}
