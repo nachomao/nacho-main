@@ -23,21 +23,13 @@ test("稍后提醒和复制详情生成稳定结果", () => {
   assert.equal(notificationCopyText({ title: "失败", detail: "详情", code: "E1" }), "失败\n详情\nCode: E1")
 })
 
-test("通知组以同一批卡片执行 iOS 式弹簧堆叠过渡", () => {
-  assert.match(drawerSource, /data-notification-stack=\{expanded \? "expanded" : "collapsed"\}/)
-  assert.match(drawerSource, /data-stack-card=\{item\.id\}/)
-  assert.match(drawerSource, /layoutSnapshot/)
-  assert.match(drawerSource, /card\.animate/)
-  assert.match(drawerSource, /cubic-bezier\(0\.22, 1, 0\.36, 1\)/)
+test("通知组以真实卡片纵深堆叠并展开为独立卡片", () => {
+  assert.match(drawerSource, /data-notification-stack="collapsed"/)
+  assert.match(drawerSource, /data-notification-stack="expanded"/)
+  assert.match(drawerSource, /aria-expanded=\{stackCount \? expanded/)
+  assert.match(drawerSource, /backCards\.map/)
   assert.match(drawerSource, /items\.map\(\(item, index\)/)
-})
-
-test("单张通知依次展开完整内容和详细日志", () => {
-  assert.match(drawerSource, /type CardStage = "compact" \| "full" \| "log"/)
-  assert.match(drawerSource, /data-notification-stage=\{visibleStage\}/)
-  assert.match(drawerSource, /setStage\("full"\)/)
-  assert.match(drawerSource, /setStage\(stage === "full" \? "log" : "compact"\)/)
-  assert.match(drawerSource, /事件详细日志/)
+  assert.doesNotMatch(drawerSource, /展开的子条目列表/)
 })
 
 test("通知中心预置一组堆叠通知和两条独立通知", () => {
