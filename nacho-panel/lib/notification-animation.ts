@@ -1,13 +1,19 @@
+import { holdForegroundMotion } from "./foreground-motion"
+
 export function playNotificationAnimation(
   element: Element,
   keyframes: Keyframe[],
   options: KeyframeAnimationOptions,
 ) {
   const animation = element.animate(keyframes, { ...options, fill: "both" })
+  const duration = typeof options.duration === "number" ? options.duration : 0
+  const delay = options.delay ?? 0
+  const releaseForeground = holdForegroundMotion(duration + delay + 100)
   let released = false
   const release = () => {
     if (released) return
     released = true
+    releaseForeground()
     animation.removeEventListener("finish", release)
     animation.cancel()
   }

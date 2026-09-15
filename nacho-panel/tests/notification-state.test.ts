@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { canApplyNotificationSnapshot, nextNotificationDayNine, notificationCopyText, notificationUnreadCount } from "../lib/notification-state"
 import { playNotificationAnimation } from "../lib/notification-animation"
+import { holdForegroundMotion, isForegroundMotionActive } from "../lib/foreground-motion"
 
 const drawerSource = readFileSync(new URL("../components/topbar/notifications-drawer.tsx", import.meta.url), "utf8")
 const serverDataSource = readFileSync(new URL("../components/server-data-context.tsx", import.meta.url), "utf8")
+const orbSource = readFileSync(new URL("../components/orb.tsx", import.meta.url), "utf8")
+const overlaySource = readFileSync(new URL("../components/topbar/overlay.tsx", import.meta.url), "utf8")
 
 test("通知轮询快照仅在 mutation epoch 未变化时生效", () => {
   assert.equal(canApplyNotificationSnapshot(3, 3), true)
@@ -86,6 +89,39 @@ test("快速反向时旧动画只取消一次且迟到的 finish 不会重复清
   fixture.animation.dispatchEvent(new Event("finish"))
   cancel()
   assert.equal(fixture.animation.cancellations, 1)
+})
+
+test("前台过渡持有可叠加、可重复释放，并带超时兜底", async () => {
+  assert.equal(isForegroundMotionActive(), false)
+  const releaseA = holdForegroundMotion(1000)
+  const releaseB = holdForegroundMotion(30)
+  assert.equal(isForegroundMotionActive(), true)
+  releaseA()
+  releaseA()
+  assert.equal(isForegroundMotionActive(), true)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(isForegroundMotionActive(), false)
+  releaseB()
+})
+
+test("通知动画播放期间持有前台优先，结束或取消后释放", () => {
+  const fixture = animationFixture(100)
+  const cancel = playNotificationAnimation(fixture.element, [{ height: "98px" }, { height: "236px" }], { duration: 620, delay: 48 })
+  assert.equal(isForegroundMotionActive(), true)
+  fixture.animation.dispatchEvent(new Event("finish"))
+  assert.equal(isForegroundMotionActive(), false)
+  const second = playNotificationAnimation(fixture.element, [{ opacity: 0 }, { opacity: 1 }], { duration: 340 })
+  assert.equal(isForegroundMotionActive(), true)
+  second()
+  assert.equal(isForegroundMotionActive(), false)
+  cancel()
+})
+
+test("Orb 在前台过渡期间暂停出帧且时钟同步暂停，弹层过渡登记持有", () => {
+  assert.match(orbSource, /if \(isForegroundMotionActive\(\)\) return/)
+  assert.match(orbSource, /elapsed \+= dt\s*\n\s*uniforms\.iTime\.value = elapsed/)
+  assert.doesNotMatch(orbSource, /uniforms\.iTime\.value = time \* 0\.001/)
+  assert.match(overlaySource, /holdForegroundMotion\(overlayTransitionMs \+ 40\)/)
 })
 
 test("时间线尚未激活时保留浏览器原生自动播放而非暂停", () => {

@@ -3,6 +3,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { X } from "lucide-react"
+import { holdForegroundMotion } from "@/lib/foreground-motion"
+
+/** 弹层入场 460ms / 退场 420ms，取较长者作为前台动效优先期 */
+const overlayTransitionMs = 460
 
 /**
  * 高度动画容器：用 ResizeObserver 监听内容自然高度，
@@ -78,6 +82,17 @@ export function useOverlayTransition(open: boolean, onClose?: () => void) {
       cancelAnimationFrame(r2)
     }
   }, [mounted, open])
+
+  // 入场（shown 变 true）与退场（shown 变 false）各持有一段前台动效优先期，覆盖 460ms 过渡
+  useEffect(() => {
+    if (!mounted) return
+    const release = holdForegroundMotion(overlayTransitionMs + 40)
+    const timer = setTimeout(release, overlayTransitionMs + 40)
+    return () => {
+      clearTimeout(timer)
+      release()
+    }
+  }, [mounted, shown])
 
   return { mounted, shown }
 }
