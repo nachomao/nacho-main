@@ -1,0 +1,16 @@
+{
+  "purpose": "临时虚拟通知预览，保留通知动画修复后的原始入口",
+  "restore": [
+    {
+      "backup": "backups/notification-preview/nacho-panel/app/layout.tsx.bak",
+      "target": "nacho-panel/app/layout.tsx",
+      "sha256": "c09250466647fbd10587d12f6c2de6b315fd24ecb8b6b971b9f58c4d5ae0857b"
+    }
+  ],
+  "addedFiles": [
+    "nacho-panel/components/topbar/notification-preview.tsx",
+    "nacho-panel/lib/notification-preview.ts",
+    "nacho-panel/tests/notification-preview.test.ts"
+  ],
+  "instructions": "将 backup 文件原样复制覆盖 target 即恢复原入口；addedFiles 为本次新增的演示专用文件，恢复入口后可删除。无需修改通知抽屉、CSS、服务端或 Agent。"
+}

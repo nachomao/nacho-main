@@ -3,7 +3,6 @@ import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono, Outfit } from 'next/font/google'
 import './globals.css'
 import { AppShell } from '@/components/app-shell'
-import { NotificationPreview } from '@/components/topbar/notification-preview'
 import { LocalSettingsProvider } from '@/components/local-settings-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
@@ -58,9 +57,7 @@ export default async function RootLayout({
         <LocalSettingsProvider initialSnapshot={localSettings}>
           <ThemeProvider>
             <ConfirmDialogProvider>
-              <NotificationPreview>
-                <AppShell>{children}</AppShell>
-              </NotificationPreview>
+              <AppShell>{children}</AppShell>
             </ConfirmDialogProvider>
           </ThemeProvider>
         </LocalSettingsProvider>
