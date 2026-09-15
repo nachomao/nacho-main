@@ -153,9 +153,8 @@ test("通知卡片的圆角、描边和高遮蔽玻璃共用同一裁切层", ()
   assert.doesNotMatch(drawerSource, /notice\.read && "opacity-75"/)
 })
 
-test("通知中心预置一组堆叠通知和两条独立通知", () => {
-  assert.match(serverDataSource, /createMockNotifications/)
-  assert.match(serverDataSource, /count: infrastructureItems\.length, items: infrastructureItems/)
-  assert.match(serverDataSource, /mock-notice-task/)
-  assert.match(serverDataSource, /mock-notice-recovered/)
+test("通知中心从真实服务端接口读取数据且不保留临时模拟分支", () => {
+  assert.doesNotMatch(serverDataSource, /USE_MOCK_SERVER_DATA|createMockNotifications|mock-notice-/)
+  assert.match(serverDataSource, /fetch\(`\$\{connection\.baseUrl\}\/api\/panel\$\{path\}`/)
+  assert.match(serverDataSource, /apiRequest<ServerNotification\[\]>\(`\/notifications\?\$\{notificationQuery\}`\)/)
 })
