@@ -1,53 +1,445 @@
 "use client"
 
-import { useState } from "react"
-import { Bell, CalendarClock, CheckCheck, ChevronDown, Copy, HeartPulse, Loader2, ServerOff, Trash2 } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { Bell, Check, ChevronDown, Clock3, Copy, FileText, MoreHorizontal, Trash2, TriangleAlert, WifiOff, CircleAlert } from "lucide-react"
 import { DrawerShell, OverlayHeader } from "./overlay"
-import { nextNotificationDayNine, notificationCopyText, notificationUnreadCount } from "@/lib/notification-state"
+import { cn } from "@/lib/utils"
+import { nextNotificationDayNine, notificationCopyText } from "@/lib/notification-state"
+import { playNotificationAnimation } from "@/lib/notification-animation"
 
-export type NoticeType = "offline" | "health" | "task"
-
-export type Notice = {
+type NoticeItem = {
   id: string
-  type: NoticeType
+  type: "offline" | "health" | "task"
+  severity: "warning" | "error" | "critical"
   title: string
   desc: string
   detail: string
-  severity: "warning" | "error" | "critical"
   code: string | null
   source: string
   deviceId: string | null
+  time: string
+  ts: number
+  read: boolean
   snoozedUntil: number | null
   groupKey: string
-  time: string
-  read: boolean
 }
 
-export type GroupedNotice = Notice & {
+type Notice = NoticeItem & {
   count: number
-  items?: Notice[]
+  items?: NoticeItem[]
 }
+
+type CardStage = "compact" | "full" | "log"
 
 export type NoticePending =
-  | { action: "read"; id: string }
-  | { action: "readAll" }
-  | { action: "clear" }
-  | { action: "snooze"; id: string }
-  | { action: "snoozeGroup"; groupKey: string }
-  | { action: "readGroup"; groupKey: string }
+  | { action: "read" | "snooze"; id: string }
+  | { action: "readAll" | "clear" }
+  | { action: "readGroup" | "snoozeGroup"; groupKey: string }
   | null
 
-/** 通知数据由面板定时从服务端 API 刷新，不再内置模拟数据 */
-export const initialNotices: Notice[] = []
-
-const typeMeta: Record<NoticeType, { icon: React.ReactNode; tone: string }> = {
-  offline: { icon: <ServerOff className="h-4 w-4" />, tone: "bg-negative/12 text-negative" },
-  health: { icon: <HeartPulse className="h-4 w-4" />, tone: "bg-warning/12 text-warning" },
-  task: { icon: <CalendarClock className="h-4 w-4" />, tone: "bg-primary/12 text-primary" },
+type ItemActionProps = {
+  notice: NoticeItem
+  openMenu: string | null
+  pending: NoticePending
+  onOpenMenu: (id: string | null) => void
+  onRead: (id: string) => void
+  onSnooze: (id: string, until: number) => void
 }
 
-/** 通知中心抽屉：聚合客户端离线、健康告警、任务失败与插件更新 */
+const severityTone = {
+  critical: "text-negative bg-negative/10",
+  error: "text-negative bg-negative/10",
+  warning: "text-warning bg-warning/10",
+} as const
+
+const severityBorder = {
+  critical: "border-negative/30",
+  error: "border-negative/25",
+  warning: "border-warning/25",
+} as const
+
+const springTiming = {
+  duration: 620,
+  easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+} as const
+
+function formatRelativeTime(timestamp: number) {
+  const minutes = Math.max(1, Math.round((Date.now() - timestamp) / 60_000))
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.round(hours / 24)} 天前`
+}
+
+function NoticeGlyph({ notice, count }: { notice: NoticeItem; count?: number }) {
+  const Icon = notice.type === "offline" ? WifiOff : notice.type === "task" ? CircleAlert : TriangleAlert
+  return (
+    <span className="relative flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/85 text-foreground shadow-inner shadow-foreground/5">
+      <Icon className={cn("size-5", severityTone[notice.severity].split(" ")[0])} />
+      {count && count > 1 ? (
+        <span className="absolute -right-2 -top-2 flex min-w-6 items-center justify-center rounded-full bg-foreground px-1.5 py-0.5 text-xs font-bold text-background shadow-md">
+          {count}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function ItemActions({ notice, openMenu, pending, onOpenMenu, onRead, onSnooze }: ItemActionProps) {
+  const readPending = pending?.action === "read" && pending.id === notice.id
+  const snoozePending = pending?.action === "snooze" && pending.id === notice.id
+
+  const snooze = (until: number) => {
+    onOpenMenu(null)
+    onSnooze(notice.id, until)
+  }
+
+  return (
+    <div className="relative border-t border-border/60 px-4 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs text-muted-foreground">{notice.source}</span>
+        <div className="flex items-center gap-1">
+          {!notice.read ? (
+            <button
+              type="button"
+              onClick={() => onRead(notice.id)}
+              disabled={Boolean(pending)}
+              className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            >
+              <Check className="size-3.5" />
+              {readPending ? "处理中" : "标为已读"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard.writeText(notificationCopyText(notice))}
+            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label={`复制“${notice.title}”详情`}
+          >
+            <Copy className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenMenu(openMenu === notice.id ? null : notice.id)}
+            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label={`打开“${notice.title}”稍后提醒菜单`}
+            aria-expanded={openMenu === notice.id}
+          >
+            <MoreHorizontal className="size-4" />
+          </button>
+        </div>
+      </div>
+      {openMenu === notice.id ? (
+        <div className="absolute right-3 top-10 z-50 flex min-w-40 flex-col rounded-xl border border-border bg-popover p-1 text-xs text-popover-foreground shadow-xl">
+          <button type="button" onClick={() => snooze(Date.now() + 3_600_000)} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-muted">
+            <Clock3 className="size-3.5" />{snoozePending ? "处理中" : "1 小时后提醒"}
+          </button>
+          <button type="button" onClick={() => snooze(nextNotificationDayNine(Date.now()))} className="rounded-lg px-2.5 py-2 text-left hover:bg-muted">明天 09:00</button>
+          <button
+            type="button"
+            onClick={() => {
+              const raw = window.prompt("输入提醒时间（ISO）")
+              const value = raw ? Date.parse(raw) : Number.NaN
+              if (Number.isFinite(value)) snooze(value)
+            }}
+            className="rounded-lg px-2.5 py-2 text-left hover:bg-muted"
+          >
+            自定义时间
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function NotificationCard({
+  notice,
+  pending,
+  openMenu,
+  stackCount,
+  forceCompact = false,
+  interactive = true,
+  onExpandStack,
+  onOpenMenu,
+  onRead,
+  onSnooze,
+}: ItemActionProps & {
+  stackCount?: number
+  forceCompact?: boolean
+  interactive?: boolean
+  onExpandStack?: () => void
+}) {
+  const [stage, setStage] = useState<CardStage>("compact")
+  const cardRef = useRef<HTMLElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const previousHeight = useRef<number | null>(null)
+  const visibleStage = forceCompact ? "compact" : stage
+
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    const from = previousHeight.current
+    previousHeight.current = null
+    if (!card || from === null) return
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const to = card.getBoundingClientRect().height
+    const cleanups = [
+      playNotificationAnimation(
+        card,
+        reducedMotion
+          ? [{ opacity: 0.6 }, { opacity: 1 }]
+          : [{ height: `${from}px` }, { height: `${to}px` }],
+        reducedMotion ? { duration: 160, easing: "ease-out" } : springTiming,
+      ),
+    ]
+    if (panelRef.current && !reducedMotion) {
+      cleanups.push(playNotificationAnimation(
+        panelRef.current,
+        [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "translateY(0)" }],
+        { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      ))
+    }
+
+    return () => cleanups.forEach((cleanup) => cleanup())
+  }, [visibleStage])
+
+  const advanceCard = () => {
+    if (!interactive || pending) return
+    if (onExpandStack) {
+      onExpandStack()
+      return
+    }
+    previousHeight.current = cardRef.current?.getBoundingClientRect().height ?? null
+    if (stage === "compact") {
+      setStage("full")
+      if (!notice.read) onRead(notice.id)
+      return
+    }
+    setStage(stage === "full" ? "log" : "compact")
+  }
+
+  const nextAction = visibleStage === "compact" ? "展开完整内容" : visibleStage === "full" ? "查看详细日志" : "收起通知"
+
+  return (
+    <article
+      ref={cardRef}
+      data-notification-stage={visibleStage}
+      className={cn(
+        "relative isolate overflow-hidden rounded-3xl border bg-card/[0.94] bg-clip-padding shadow-xl shadow-background/30 backdrop-blur-[36px] backdrop-saturate-150 transition-[border-color,box-shadow,filter] duration-500",
+        severityBorder[notice.severity],
+        visibleStage !== "compact" && "shadow-2xl shadow-background/40",
+      )}
+    >
+      <button
+        type="button"
+        onClick={advanceCard}
+        disabled={!interactive || Boolean(pending)}
+        aria-expanded={onExpandStack ? false : visibleStage !== "compact"}
+        aria-label={`${notice.title}，${nextAction}`}
+        className={cn(
+          "relative z-10 flex w-full items-start gap-3.5 text-left disabled:pointer-events-none",
+          visibleStage === "compact" ? "min-h-24 p-4" : "p-4 pb-3",
+        )}
+      >
+        <NoticeGlyph notice={notice} count={stackCount} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start justify-between gap-3">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-base font-semibold tracking-tight text-foreground">{notice.title}</span>
+              <span className={cn("mt-1 block text-sm leading-5 text-muted-foreground", visibleStage === "compact" && "line-clamp-1")}>{notice.desc}</span>
+            </span>
+            <span className="shrink-0 pt-0.5 text-xs font-medium text-muted-foreground">{formatRelativeTime(notice.ts)}</span>
+          </span>
+          {visibleStage !== "compact" ? (
+            <span className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+              {visibleStage === "full" ? "再次点击查看详细日志" : "点击收起通知"}
+              <ChevronDown className={cn("size-3.5 transition-transform duration-500", visibleStage === "log" && "rotate-180")} />
+            </span>
+          ) : null}
+        </span>
+      </button>
+
+      {visibleStage !== "compact" ? (
+        <div ref={panelRef} className="relative z-10">
+          {visibleStage === "full" ? (
+            <div className="border-t border-border/60 px-4 py-3 text-sm leading-6 text-muted-foreground">
+              <p>{notice.detail}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-xs">
+                <span>{notice.time}</span>
+                {notice.code ? <span className="rounded-md bg-muted px-2 py-0.5">{notice.code}</span> : null}
+              </div>
+            </div>
+          ) : (
+            <div className="border-t border-border/60 px-4 py-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                <FileText className="size-4 text-muted-foreground" />事件详细日志
+              </div>
+              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-2 rounded-2xl bg-muted/60 p-3 font-mono text-xs leading-5">
+                <dt className="text-muted-foreground">时间</dt><dd className="break-all text-foreground">{notice.time}</dd>
+                <dt className="text-muted-foreground">来源</dt><dd className="break-all text-foreground">{notice.source}</dd>
+                <dt className="text-muted-foreground">设备</dt><dd className="break-all text-foreground">{notice.deviceId || "未关联"}</dd>
+                <dt className="text-muted-foreground">事件代码</dt><dd className="break-all text-foreground">{notice.code || "N/A"}</dd>
+                <dt className="text-muted-foreground">分组键</dt><dd className="break-all text-foreground">{notice.groupKey}</dd>
+                <dt className="text-muted-foreground">日志正文</dt><dd className="break-words text-foreground">{notice.detail}</dd>
+              </dl>
+            </div>
+          )}
+          <ItemActions notice={notice} openMenu={openMenu} pending={pending} onOpenMenu={onOpenMenu} onRead={onRead} onSnooze={onSnooze} />
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+function NotificationStack({
+  notice,
+  expanded: requestedExpanded,
+  pending,
+  openMenu,
+  onToggle,
+  onOpenMenu,
+  onRead,
+  onReadGroup,
+  onSnooze,
+}: {
+  notice: Notice
+  expanded: boolean
+  pending: NoticePending
+  openMenu: string | null
+  onToggle: () => void
+  onOpenMenu: (id: string | null) => void
+  onRead: (id: string) => void
+  onReadGroup: (groupKey: string) => void
+  onSnooze: (id: string, until: number) => void
+}) {
+  const items = notice.items?.length ? notice.items : [notice]
+  const [expanded, setExpanded] = useState(requestedExpanded)
+  const groupUnread = items.filter((item) => !item.read).length
+  const containerRef = useRef<HTMLDivElement>(null)
+  const cardRefs = useRef(new Map<string, HTMLDivElement>())
+  const activeAnimations = useRef<Array<() => void>>([])
+  const layoutSnapshot = useRef<{
+    height: number
+    cards: Map<string, { rect: DOMRect; opacity: string }>
+  } | null>(null)
+  const visibleDepth = Math.min(items.length, 4)
+  const collapsedHeight = 98 + (visibleDepth - 1) * 12
+
+  useLayoutEffect(() => {
+    if (requestedExpanded === expanded) return
+    const container = containerRef.current
+    if (!container) return
+    const cards = new Map<string, { rect: DOMRect; opacity: string }>()
+    cardRefs.current.forEach((card, id) => {
+      cards.set(id, { rect: card.getBoundingClientRect(), opacity: getComputedStyle(card).opacity })
+    })
+    layoutSnapshot.current = { height: container.getBoundingClientRect().height, cards }
+    activeAnimations.current.forEach((cancel) => cancel())
+    activeAnimations.current = []
+    setExpanded(requestedExpanded)
+  }, [requestedExpanded, expanded])
+
+  useLayoutEffect(() => {
+    const snapshot = layoutSnapshot.current
+    const container = containerRef.current
+    // 父级切换目标时先采集旧布局，下一次提交才播放新布局，轮询不能清理正在播放的动画。
+    if (!snapshot || !container || expanded !== requestedExpanded) return
+    layoutSnapshot.current = null
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const nextHeight = container.getBoundingClientRect().height
+    const destinations = items.flatMap((item, index) => {
+      const card = cardRefs.current.get(item.id)
+      const before = snapshot.cards.get(item.id)
+      return card && before ? [{ card, before, after: card.getBoundingClientRect(), opacity: getComputedStyle(card).opacity, index }] : []
+    })
+
+    const cleanups = [playNotificationAnimation(
+      container,
+      reducedMotion
+        ? [{ opacity: 0.6 }, { opacity: 1 }]
+        : [{ height: `${snapshot.height}px` }, { height: `${nextHeight}px` }],
+      reducedMotion ? { duration: 160, easing: "ease-out" } : springTiming,
+    )]
+
+    if (!reducedMotion) destinations.forEach(({ card, before, after, opacity, index }) => {
+      const deltaX = before.rect.left - after.left
+      const deltaY = before.rect.top - after.top
+      const scaleX = before.rect.width / Math.max(after.width, 1)
+      const scaleY = before.rect.height / Math.max(after.height, 1)
+      cleanups.push(playNotificationAnimation(
+        card,
+        [
+          { transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`, opacity: before.opacity },
+          { transform: "none", opacity },
+        ],
+        { ...springTiming, delay: expanded ? Math.min(index, 7) * 48 : Math.min(items.length - index - 1, 7) * 24 },
+      ))
+    })
+    activeAnimations.current = cleanups
+  }, [expanded, requestedExpanded, items])
+
+  useLayoutEffect(() => () => {
+    activeAnimations.current.forEach((cancel) => cancel())
+  }, [])
+
+  return (
+    <li data-notification-stack={expanded ? "expanded" : "collapsed"}>
+      <div inert={!expanded} aria-hidden={!expanded} className={cn("grid transition-[grid-template-rows,opacity] duration-500", expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+        <div className="overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-1 pb-2">
+            <span className="text-xs font-medium text-muted-foreground">{items.length} 条通知</span>
+            <div className="flex items-center gap-2">
+              {groupUnread ? <button type="button" onClick={() => onReadGroup(notice.groupKey)} className="rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">全部已读</button> : null}
+              <button type="button" onClick={onToggle} className="rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">收起</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className={cn("relative", expanded && "flex flex-col gap-3")}
+        style={{ height: expanded ? "auto" : `${collapsedHeight}px` }}
+      >
+        {items.map((item, index) => {
+          const depth = Math.min(index, 3)
+          return (
+            <div
+              key={item.id}
+              ref={(node) => { if (node) cardRefs.current.set(item.id, node); else cardRefs.current.delete(item.id) }}
+              data-stack-card={item.id}
+              className={cn("origin-top-left shrink-0", !expanded && "absolute")}
+              style={expanded ? {
+                position: "relative",
+                zIndex: 1,
+              } : {
+                top: `${depth * 12}px`,
+                left: `${depth * 5}px`,
+                right: `${depth * 5}px`,
+                zIndex: items.length - index,
+                opacity: index > 3 ? 0 : 1,
+                pointerEvents: index === 0 ? "auto" : "none",
+              }}
+              aria-hidden={!expanded && index > 0}
+            >
+              <NotificationCard
+                notice={item}
+                pending={pending}
+                openMenu={openMenu}
+                stackCount={!expanded && index === 0 ? items.length : undefined}
+                forceCompact={!expanded}
+                interactive={expanded || index === 0}
+                onExpandStack={!expanded && index === 0 ? onToggle : undefined}
+                onOpenMenu={onOpenMenu}
+                onRead={onRead}
+                onSnooze={onSnooze}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </li>
+  )
+}
+
 export function NotificationsDrawer({
   open,
   onClose,
@@ -56,11 +448,13 @@ export function NotificationsDrawer({
   error,
   onRead,
   onReadAll,
-  onClear, onSnooze, onSnoozeGroup, onReadGroup,
+  onClear,
+  onSnooze,
+  onReadGroup,
 }: {
   open: boolean
   onClose: () => void
-  notices: GroupedNotice[]
+  notices: Notice[]
   pending: NoticePending
   error: string | null
   onRead: (id: string) => void
@@ -70,169 +464,93 @@ export function NotificationsDrawer({
   onSnoozeGroup: (groupKey: string, until: number) => void
   onReadGroup: (groupKey: string) => void
 }) {
-  const [expanded, setExpanded] = useState<Map<string, boolean>>(new Map())
-  const [copied, setCopied] = useState<string | null>(null)
-  const unread = notificationUnreadCount(notices)
-  const totalCount = notices.reduce((sum, n) => sum + n.count, 0)
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null)
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
 
-  const toggleExpand = (id: string) => {
-    setExpanded(prev => {
-      const next = new Map(prev)
-      next.set(id, !prev.get(id))
-      return next
-    })
-  }
-  const snoozeUntil = (kind: "hour" | "tomorrow") => kind === "hour" ? Date.now() + 3600000 : nextNotificationDayNine(Date.now())
-  const copyDetail = async (n: Notice) => { await navigator.clipboard?.writeText(notificationCopyText(n)); setCopied(n.id); window.setTimeout(() => setCopied(null), 1200) }
+  useEffect(() => {
+    if (!open) {
+      setExpandedGroup(null)
+      setOpenMenu(null)
+    }
+  }, [open])
+
+  const { total, unread } = useMemo(() => notices.reduce(
+    (summary, notice) => {
+      const items = notice.items?.length ? notice.items : [notice]
+      return {
+        total: summary.total + items.length,
+        unread: summary.unread + items.filter((item) => !item.read).length,
+      }
+    },
+    { total: 0, unread: 0 },
+  ), [notices])
 
   return (
     <DrawerShell open={open} onClose={onClose} label="通知中心">
       <OverlayHeader
-        icon={<Bell className="h-5 w-5" />}
+        icon={<Bell className="size-5" />}
         title="通知中心"
-        desc={unread > 0 ? `${unread} 条未读 · 共 ${totalCount} 条` : `共 ${totalCount} 条，全部已读`}
+        desc={`共 ${total} 条，${unread === 0 ? "全部已读" : `${unread} 条未读`}`}
         onClose={onClose}
+        extra={notices.length > 0 ? (
+          <button type="button" onClick={onClear} disabled={Boolean(pending)} className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-negative/10 hover:text-negative disabled:opacity-50" aria-label="清空全部通知">
+            <Trash2 className="size-4" />
+          </button>
+        ) : undefined}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {error && (
-          <p role="alert" className="mb-3 rounded-xl border border-negative/30 bg-negative/10 px-4 py-3 text-sm text-negative">
-            {error}
-          </p>
-        )}
+      {error ? <p role="alert" className="mx-4 mt-4 rounded-xl border border-negative/20 bg-negative/10 px-3 py-2 text-sm text-negative">{error}</p> : null}
+
+      {unread > 0 ? (
+        <div className="flex shrink-0 justify-end border-b border-border px-4 py-2.5">
+          <button type="button" onClick={onReadAll} disabled={Boolean(pending)} className="text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
+            {pending?.action === "readAll" ? "处理中…" : "全部标为已读"}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         {notices.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface">
-              <Bell className="h-6 w-6" />
-            </span>
-            <p className="text-sm">暂无通知，一切正常</p>
+          <div className="flex h-full min-h-80 flex-col items-center justify-center gap-4 text-center">
+            <span className="flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bell className="size-6" /></span>
+            <p className="text-sm text-muted-foreground">暂无通知，一切正常</p>
           </div>
         ) : (
-          <ul className="flex flex-col gap-1.5">
-            {notices.map((n) => {
-              const isExpanded = expanded.get(n.id) || false
-              const isStacked = n.count > 1
-              
+          <ul className="flex flex-col gap-3">
+            {notices.map((notice) => {
+              const items = notice.items?.length ? notice.items : [notice]
+              if (items.length > 1) {
+                return (
+                  <NotificationStack
+                    key={notice.groupKey}
+                    notice={notice}
+                    expanded={expandedGroup === notice.groupKey}
+                    pending={pending}
+                    openMenu={openMenu}
+                    onToggle={() => { setOpenMenu(null); setExpandedGroup((current) => current === notice.groupKey ? null : notice.groupKey) }}
+                    onOpenMenu={setOpenMenu}
+                    onRead={onRead}
+                    onReadGroup={onReadGroup}
+                    onSnooze={onSnooze}
+                  />
+                )
+              }
               return (
-                <li key={n.id} className="relative">
-                  {/* 堆叠视觉：底层阴影卡片 */}
-                  {isStacked && !isExpanded && (
-                    <>
-                      <div className="absolute inset-0 translate-y-1 rounded-2xl bg-surface/30 shadow-sm" style={{ zIndex: -2 }} />
-                      <div className="absolute inset-0 translate-y-0.5 rounded-2xl bg-surface/50 shadow-sm" style={{ zIndex: -1 }} />
-                    </>
-                  )}
-                  
-                  {/* 主卡片 */}
-                  <button
-                    type="button"
-                    onClick={() => { if (isStacked) toggleExpand(n.id); else { toggleExpand(n.id); if (!n.read) onRead(n.id) } }}
-                    disabled={Boolean(pending)}
-                    className={cn(
-                      "relative flex w-full items-start gap-3 rounded-2xl p-3 text-left transition-all disabled:pointer-events-none",
-                      n.read && !isStacked ? "opacity-60" : "bg-surface/50 hover:bg-surface shadow-sm",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-                        typeMeta[n.type].tone,
-                      )}
-                    >
-                      {pending?.action === "read" && pending.id === n.id ? <Loader2 className="h-4 w-4 animate-spin" /> : typeMeta[n.type].icon}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium">{n.title}</span>
-                        {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-label="未读" />}
-                      </span>
-                      <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{n.desc}</span>
-                      <span className="mt-1 block text-[11px] text-muted-foreground/70">{n.time} · {n.severity}</span>
-                    </span>
-                    
-                    {/* 堆叠角标 */}
-                    {isStacked && (
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
-                          共 {n.count} 条
-                        </span>
-                        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
-                      </span>
-                    )}
-                  </button>
-                  {isExpanded && (
-                    <div className="mt-1 flex items-center gap-2 px-3 pb-2 text-[11px] text-muted-foreground">
-                      {n.code && <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{n.code}</span>}
-                      <span>{n.source}{n.deviceId ? ` · ${n.deviceId}` : ""}</span>
-                      <pre className="max-w-[55%] whitespace-pre-wrap rounded bg-background/50 p-1.5 font-mono text-[10px]">{n.detail}</pre>
-                      <button type="button" onClick={() => void copyDetail(n)} className="ml-auto inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted"><Copy className="h-3 w-3" />{copied === n.id ? "已复制" : "复制详情"}</button>
-                      <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("hour"))} className="rounded px-2 py-1 hover:bg-muted">1 小时</button>
-                      <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 hover:bg-muted">明天 09:00</button>
-                      <button type="button" onClick={() => { const raw = window.prompt("输入提醒时间（ISO）"); const value = raw ? Date.parse(raw) : NaN; if (Number.isFinite(value)) onSnooze(n.id, value) }} className="rounded px-2 py-1 hover:bg-muted">自定义</button>
-                    </div>
-                  )}
-                  
-                  {/* 展开的子条目列表 */}
-                  {isStacked && isExpanded && n.items && (
-                    <ul className="mt-1.5 flex flex-col gap-1 animate-stack-expand">
-                      {n.items.map((item, idx) => (
-                        <li key={item.id}>
-                          <button
-                            type="button"
-                            onClick={() => onRead(item.id)}
-                            disabled={Boolean(pending) || item.read}
-                            className={cn(
-                              "flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition-colors disabled:pointer-events-none",
-                              item.read ? "opacity-60" : "bg-muted/50 hover:bg-muted",
-                            )}
-                            style={{
-                              animationDelay: `${idx * 50}ms`,
-                            }}
-                          >
-                            <span className="min-w-0 flex-1 pl-12">
-                              <span className="flex items-center gap-2">
-                                <span className="text-xs font-medium">{item.title}</span>
-                                {!item.read && <span className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-label="未读" />}
-                              </span>
-                              <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">{item.desc}</span>
-                              <pre className="mt-1 whitespace-pre-wrap rounded bg-background/50 p-1.5 font-mono text-[10px]">{item.detail}</pre>
-                              <span className="mt-0.5 block text-[10px] text-muted-foreground/70">{item.time}</span>
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {isStacked && isExpanded && <div className="ml-12 mt-1 flex gap-2"><button type="button" onClick={() => onReadGroup(n.groupKey)} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组已读</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("hour"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组 1 小时</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组明天</button></div>}
+                <li key={notice.id}>
+                  <NotificationCard
+                    notice={items[0]}
+                    pending={pending}
+                    openMenu={openMenu}
+                    onOpenMenu={setOpenMenu}
+                    onRead={onRead}
+                    onSnooze={onSnooze}
+                  />
                 </li>
               )
             })}
           </ul>
         )}
       </div>
-
-      {notices.length > 0 && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border p-3 sm:px-4">
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={Boolean(pending)}
-            className="flex h-10 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-negative/12 hover:text-negative disabled:pointer-events-none disabled:opacity-40"
-          >
-            {pending?.action === "clear" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            清空
-          </button>
-          <button
-            type="button"
-            onClick={onReadAll}
-            disabled={unread === 0 || Boolean(pending)}
-            className="flex h-10 items-center gap-1.5 rounded-xl bg-surface px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
-          >
-            {pending?.action === "readAll" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
-            全部已读
-          </button>
-        </div>
-      )}
     </DrawerShell>
   )
 }

@@ -4,6 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.28.2",
   "scripts": {
+    "postinstall": "pnpm --dir nacho-panel install --frozen-lockfile",
     "dev": "pnpm --dir nacho-panel dev",
     "build": "pnpm --dir nacho-panel build",
     "start": "pnpm --dir nacho-panel start",
