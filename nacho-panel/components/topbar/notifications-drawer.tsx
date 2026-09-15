@@ -5,6 +5,7 @@ import { Bell, Check, ChevronDown, Clock3, Copy, FileText, MoreHorizontal, Trash
 import { DrawerShell, OverlayHeader } from "./overlay"
 import { cn } from "@/lib/utils"
 import { nextNotificationDayNine, notificationCopyText } from "@/lib/notification-state"
+import { playNotificationAnimation } from "@/lib/notification-animation"
 
 type NoticeItem = {
   id: string
@@ -61,42 +62,6 @@ const springTiming = {
   duration: 620,
   easing: "cubic-bezier(0.22, 1, 0.36, 1)",
 } as const
-
-function animateAfterPaint(
-  element: Element,
-  keyframes: Keyframe[],
-  options: KeyframeAnimationOptions,
-) {
-  const animation = element.animate(keyframes, { ...options, fill: "both" })
-  animation.pause()
-  animation.currentTime = 0
-
-  let released = false
-  let frame = 0
-  let fallback = 0
-  const play = () => {
-    if (!released && animation.playState === "paused") animation.play()
-  }
-  const release = () => {
-    if (released) return
-    released = true
-    cancelAnimationFrame(frame)
-    window.clearTimeout(fallback)
-    animation.cancel()
-  }
-  frame = requestAnimationFrame(play)
-  fallback = window.setTimeout(play, 80)
-  animation.addEventListener("finish", release, { once: true })
-
-  return release
-}
-
-function naturalOuterHeight(element: HTMLElement) {
-  const styles = getComputedStyle(element)
-  return element.scrollHeight
-    + Number.parseFloat(styles.borderTopWidth)
-    + Number.parseFloat(styles.borderBottomWidth)
-}
 
 function formatRelativeTime(timestamp: number) {
   const minutes = Math.max(1, Math.round((Date.now() - timestamp) / 60_000))
@@ -214,17 +179,20 @@ function NotificationCard({
     const card = cardRef.current
     const from = previousHeight.current
     previousHeight.current = null
-    if (!card || from === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-
+    if (!card || from === null) return
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const to = card.getBoundingClientRect().height
     const cleanups = [
-      animateAfterPaint(
+      playNotificationAnimation(
         card,
-        [{ height: `${from}px` }, { height: `${naturalOuterHeight(card)}px` }],
-        springTiming,
+        reducedMotion
+          ? [{ opacity: 0.6 }, { opacity: 1 }]
+          : [{ height: `${from}px` }, { height: `${to}px` }],
+        reducedMotion ? { duration: 160, easing: "ease-out" } : springTiming,
       ),
     ]
-    if (panelRef.current) {
-      cleanups.push(animateAfterPaint(
+    if (panelRef.current && !reducedMotion) {
+      cleanups.push(playNotificationAnimation(
         panelRef.current,
         [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "translateY(0)" }],
         { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
@@ -240,7 +208,7 @@ function NotificationCard({
       onExpandStack()
       return
     }
-    previousHeight.current = cardRef.current?.offsetHeight ?? null
+    previousHeight.current = cardRef.current?.getBoundingClientRect().height ?? null
     if (stage === "compact") {
       setStage("full")
       if (!notice.read) onRead(notice.id)
@@ -324,7 +292,7 @@ function NotificationCard({
 
 function NotificationStack({
   notice,
-  expanded,
+  expanded: requestedExpanded,
   pending,
   openMenu,
   onToggle,
@@ -344,73 +312,84 @@ function NotificationStack({
   onSnooze: (id: string, until: number) => void
 }) {
   const items = notice.items?.length ? notice.items : [notice]
+  const [expanded, setExpanded] = useState(requestedExpanded)
   const groupUnread = items.filter((item) => !item.read).length
   const containerRef = useRef<HTMLDivElement>(null)
   const cardRefs = useRef(new Map<string, HTMLDivElement>())
-  const layoutSnapshot = useRef<{ height: number; rects: Map<string, DOMRect> } | null>(null)
+  const activeAnimations = useRef<Array<() => void>>([])
+  const layoutSnapshot = useRef<{
+    height: number
+    cards: Map<string, { rect: DOMRect; opacity: string }>
+  } | null>(null)
   const visibleDepth = Math.min(items.length, 4)
-  const collapsedHeight = 96 + (visibleDepth - 1) * 12
+  const collapsedHeight = 98 + (visibleDepth - 1) * 12
 
-  const captureAndToggle = () => {
+  useLayoutEffect(() => {
+    if (requestedExpanded === expanded) return
     const container = containerRef.current
     if (!container) return
-    const rects = new Map<string, DOMRect>()
-    items.forEach((item) => {
-      const card = cardRefs.current.get(item.id)
-      if (card) rects.set(item.id, card.getBoundingClientRect())
+    const cards = new Map<string, { rect: DOMRect; opacity: string }>()
+    cardRefs.current.forEach((card, id) => {
+      cards.set(id, { rect: card.getBoundingClientRect(), opacity: getComputedStyle(card).opacity })
     })
-    layoutSnapshot.current = {
-      height: container.offsetHeight,
-      rects,
-    }
-    onToggle()
-  }
+    layoutSnapshot.current = { height: container.getBoundingClientRect().height, cards }
+    activeAnimations.current.forEach((cancel) => cancel())
+    activeAnimations.current = []
+    setExpanded(requestedExpanded)
+  }, [requestedExpanded, expanded])
 
   useLayoutEffect(() => {
     const snapshot = layoutSnapshot.current
     const container = containerRef.current
+    // 父级切换目标时先采集旧布局，下一次提交才播放新布局，轮询不能清理正在播放的动画。
+    if (!snapshot || !container || expanded !== requestedExpanded) return
     layoutSnapshot.current = null
-    if (!snapshot || !container || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-
-    const cleanups = [
-      animateAfterPaint(
-        container,
-        [{ height: `${snapshot.height}px` }, { height: `${container.scrollHeight}px` }],
-        springTiming,
-      ),
-    ]
-
-    items.forEach((item, index) => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const nextHeight = container.getBoundingClientRect().height
+    const destinations = items.flatMap((item, index) => {
       const card = cardRefs.current.get(item.id)
-      const before = snapshot.rects.get(item.id)
-      if (!card || !before) return
-      const after = card.getBoundingClientRect()
-      const deltaX = before.left - after.left
-      const deltaY = before.top - after.top
-      const scaleX = before.width / Math.max(after.width, 1)
-      const scaleY = before.height / Math.max(after.height, 1)
-      cleanups.push(animateAfterPaint(
-        card,
-        [
-          { transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`, opacity: index > 3 && expanded ? 0 : 1 },
-          { transform: "translate(0, 0) scale(1, 1)", opacity: 1 },
-        ],
-        { ...springTiming, delay: expanded ? index * 48 : (items.length - index - 1) * 24 },
-      ))
+      const before = snapshot.cards.get(item.id)
+      return card && before ? [{ card, before, after: card.getBoundingClientRect(), opacity: getComputedStyle(card).opacity, index }] : []
     })
 
-    return () => cleanups.forEach((cleanup) => cleanup())
-  }, [expanded, items])
+    const cleanups = [playNotificationAnimation(
+      container,
+      reducedMotion
+        ? [{ opacity: 0.6 }, { opacity: 1 }]
+        : [{ height: `${snapshot.height}px` }, { height: `${nextHeight}px` }],
+      reducedMotion ? { duration: 160, easing: "ease-out" } : springTiming,
+    )]
+
+    if (!reducedMotion) destinations.forEach(({ card, before, after, opacity, index }) => {
+      const deltaX = before.rect.left - after.left
+      const deltaY = before.rect.top - after.top
+      const scaleX = before.rect.width / Math.max(after.width, 1)
+      const scaleY = before.rect.height / Math.max(after.height, 1)
+      cleanups.push(playNotificationAnimation(
+        card,
+        [
+          { transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`, opacity: before.opacity },
+          { transform: "none", opacity },
+        ],
+        { ...springTiming, delay: expanded ? Math.min(index, 7) * 48 : Math.min(items.length - index - 1, 7) * 24 },
+      ))
+    })
+    activeAnimations.current = cleanups
+  }, [expanded, requestedExpanded, items])
+
+  useLayoutEffect(() => () => {
+    activeAnimations.current.forEach((cancel) => cancel())
+  }, [])
 
   return (
     <li data-notification-stack={expanded ? "expanded" : "collapsed"}>
-      <div className={cn("grid transition-[grid-template-rows,opacity] duration-500", expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+      <div inert={!expanded} aria-hidden={!expanded} className={cn("grid transition-[grid-template-rows,opacity] duration-500", expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
         <div className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-1 pb-2">
             <span className="text-xs font-medium text-muted-foreground">{items.length} 条通知</span>
             <div className="flex items-center gap-2">
               {groupUnread ? <button type="button" onClick={() => onReadGroup(notice.groupKey)} className="rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">全部已读</button> : null}
-              <button type="button" onClick={captureAndToggle} className="rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">收起</button>
+              <button type="button" onClick={onToggle} className="rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">收起</button>
             </div>
           </div>
         </div>
@@ -427,7 +406,7 @@ function NotificationStack({
               key={item.id}
               ref={(node) => { if (node) cardRefs.current.set(item.id, node); else cardRefs.current.delete(item.id) }}
               data-stack-card={item.id}
-              className={cn("origin-top", !expanded && "absolute")}
+              className={cn("origin-top-left shrink-0", !expanded && "absolute")}
               style={expanded ? {
                 position: "relative",
                 zIndex: 1,
@@ -448,7 +427,7 @@ function NotificationStack({
                 stackCount={!expanded && index === 0 ? items.length : undefined}
                 forceCompact={!expanded}
                 interactive={expanded || index === 0}
-                onExpandStack={!expanded && index === 0 ? captureAndToggle : undefined}
+                onExpandStack={!expanded && index === 0 ? onToggle : undefined}
                 onOpenMenu={onOpenMenu}
                 onRead={onRead}
                 onSnooze={onSnooze}

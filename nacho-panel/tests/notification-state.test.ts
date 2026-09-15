@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { canApplyNotificationSnapshot, nextNotificationDayNine, notificationCopyText, notificationUnreadCount } from "../lib/notification-state"
+import { playNotificationAnimation } from "../lib/notification-animation"
 
 const drawerSource = readFileSync(new URL("../components/topbar/notifications-drawer.tsx", import.meta.url), "utf8")
 const serverDataSource = readFileSync(new URL("../components/server-data-context.tsx", import.meta.url), "utf8")
@@ -27,19 +28,77 @@ test("通知组以同一批卡片执行 iOS 式弹簧堆叠过渡", () => {
   assert.match(drawerSource, /data-notification-stack=\{expanded \? "expanded" : "collapsed"\}/)
   assert.match(drawerSource, /data-stack-card=\{item\.id\}/)
   assert.match(drawerSource, /layoutSnapshot/)
-  assert.match(drawerSource, /animateAfterPaint\(\s*card/)
+  assert.match(drawerSource, /playNotificationAnimation\(\s*card/)
+  assert.match(drawerSource, /origin-top-left shrink-0/)
+  assert.match(drawerSource, /expanded !== requestedExpanded/)
+  assert.match(drawerSource, /activeAnimations\.current = cleanups/)
+  const stackSource = drawerSource.slice(drawerSource.indexOf("function NotificationStack"))
+  assert.doesNotMatch(stackSource, /return \(\) => cleanups\.forEach/)
+  assert.match(stackSource, /useLayoutEffect\(\(\) => \(\) => \{\s*activeAnimations\.current\.forEach\(\(cancel\) => cancel\(\)\)\s*\}, \[\]\)/)
   assert.match(drawerSource, /cubic-bezier\(0\.22, 1, 0\.36, 1\)/)
   assert.match(drawerSource, /items\.map\(\(item, index\)/)
 })
 
-test("通知展开动画先固定首帧再播放，并在完成后释放合成样式", () => {
-  assert.match(drawerSource, /animation\.pause\(\)/)
-  assert.match(drawerSource, /animation\.currentTime = 0/)
-  assert.match(drawerSource, /frame = requestAnimationFrame\(play\)/)
-  assert.match(drawerSource, /fallback = window\.setTimeout\(play, 80\)/)
-  assert.match(drawerSource, /animation\.addEventListener\("finish", release, \{ once: true \}\)/)
-  assert.match(drawerSource, /animation\.cancel\(\)/)
-  assert.match(drawerSource, /fill: "both"/)
+function animationFixture(timelineTime: number | null = 100, now = timelineTime ?? 0) {
+  const animation = Object.assign(new EventTarget(), {
+    timeline: { currentTime: timelineTime },
+    startTime: null as number | null,
+    cancellations: 0,
+    cancel() { this.cancellations += 1 },
+    pause() { assert.fail("展开动画不得暂停后等待下一帧再次播放") },
+  })
+  let received: { keyframes: Keyframe[]; options: KeyframeAnimationOptions } | undefined
+  const element = {
+    ownerDocument: { defaultView: { performance: { now: () => now } } },
+    animate(keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+      received = { keyframes, options }
+      return animation
+    },
+  } as unknown as Element
+  return { animation, element, received: () => received }
+}
+
+test("通知动画立即绑定当前时间线并保留起止帧和错峰参数", () => {
+  const fixture = animationFixture(250)
+  const keyframes = [{ height: "98px" }, { height: "236px" }]
+  const cancel = playNotificationAnimation(fixture.element, keyframes, { duration: 620, delay: 48, easing: "ease-out" })
+  assert.equal(fixture.animation.startTime, 250)
+  assert.deepEqual(fixture.received(), { keyframes, options: { duration: 620, delay: 48, easing: "ease-out", fill: "both" } })
+  assert.equal(fixture.animation.cancellations, 0)
+  fixture.animation.dispatchEvent(new Event("finish"))
+  assert.equal(fixture.animation.cancellations, 1)
+  cancel()
+  assert.equal(fixture.animation.cancellations, 1)
+})
+
+test("上一绘制帧的时间戳滞后时不会跳过动画开头", () => {
+  const fixture = animationFixture(100, 320)
+  const cancel = playNotificationAnimation(fixture.element, [{ height: "98px" }, { height: "236px" }], { duration: 620 })
+  assert.equal(fixture.animation.startTime, 320)
+  cancel()
+})
+
+test("快速反向时旧动画只取消一次且迟到的 finish 不会重复清理", () => {
+  const fixture = animationFixture(0)
+  const cancel = playNotificationAnimation(fixture.element, [{ opacity: 0 }, { opacity: 1 }], { duration: 160 })
+  assert.equal(fixture.animation.startTime, 0)
+  cancel()
+  fixture.animation.dispatchEvent(new Event("finish"))
+  cancel()
+  assert.equal(fixture.animation.cancellations, 1)
+})
+
+test("时间线尚未激活时保留浏览器原生自动播放而非暂停", () => {
+  const fixture = animationFixture(null)
+  const cancel = playNotificationAnimation(fixture.element, [{ opacity: 0.6 }, { opacity: 1 }], { duration: 160 })
+  assert.equal(fixture.animation.startTime, null)
+  assert.equal(fixture.animation.cancellations, 0)
+  cancel()
+})
+
+test("减少动态效果时保留淡入淡出而非完全跳过过渡", () => {
+  assert.match(drawerSource, /reducedMotion\s*\? \[\{ opacity: 0\.6 \}, \{ opacity: 1 \}\]/)
+  assert.doesNotMatch(drawerSource, /matchMedia\([^\n]+\.matches\) return/)
 })
 
 test("单张通知依次展开完整内容和详细日志", () => {
