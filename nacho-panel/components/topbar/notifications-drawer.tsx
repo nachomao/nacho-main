@@ -175,6 +175,14 @@ function NotificationCard({
   const previousHeight = useRef<number | null>(null)
   const visibleStage = forceCompact ? "compact" : stage
 
+  // 堆叠卡片收起时同步重置子卡片阶段，重新展开后从紧凑态开始，避免展开内容残留导致布局抖动。
+  useEffect(() => {
+    if (forceCompact && stage !== "compact") {
+      previousHeight.current = null
+      setStage("compact")
+    }
+  }, [forceCompact, stage])
+
   useLayoutEffect(() => {
     const card = cardRef.current
     const from = previousHeight.current
@@ -368,7 +376,9 @@ function NotificationStack({
       cleanups.push(playNotificationAnimation(
         card,
         [
-          { transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`, opacity: before.opacity },
+          // 收起时首卡可能正处于 full/log 高度，直接做 Y 缩放会把它瞬间放大成巨卡；
+          // 保留位移过渡，让内容先回到 compact 高度，再平滑归位。
+          { transform: `translate(${deltaX}px, ${deltaY}px) scale(${expanded || index !== 0 ? scaleX : 1}, ${expanded || index !== 0 ? scaleY : 1})`, opacity: before.opacity },
           { transform: "none", opacity },
         ],
         { ...springTiming, delay: expanded ? Math.min(index, 7) * 48 : Math.min(items.length - index - 1, 7) * 24 },

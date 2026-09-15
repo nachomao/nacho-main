@@ -145,6 +145,16 @@ test("单张通知依次展开完整内容和详细日志", () => {
   assert.match(drawerSource, /事件详细日志/)
 })
 
+test("收起通知组时同步重置已展开的卡片", () => {
+  assert.match(drawerSource, /if \(forceCompact && stage !== "compact"\)/)
+  assert.match(drawerSource, /setStage\("compact"\)/)
+  assert.match(drawerSource, /previousHeight\.current = null/)
+})
+
+test("收起时首卡不做高度缩放", () => {
+  assert.match(drawerSource, /expanded \|\| index !== 0 \? scaleY : 1/)
+})
+
 test("通知卡片的圆角、描边和高遮蔽玻璃共用同一裁切层", () => {
   assert.match(drawerSource, /rounded-3xl border bg-card\/\[0\.94\] bg-clip-padding/)
   assert.match(drawerSource, /backdrop-blur-\[36px\] backdrop-saturate-150/)
