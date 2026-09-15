@@ -62,6 +62,42 @@ const springTiming = {
   easing: "cubic-bezier(0.22, 1, 0.36, 1)",
 } as const
 
+function animateAfterPaint(
+  element: Element,
+  keyframes: Keyframe[],
+  options: KeyframeAnimationOptions,
+) {
+  const animation = element.animate(keyframes, { ...options, fill: "both" })
+  animation.pause()
+  animation.currentTime = 0
+
+  let released = false
+  let frame = 0
+  let fallback = 0
+  const play = () => {
+    if (!released && animation.playState === "paused") animation.play()
+  }
+  const release = () => {
+    if (released) return
+    released = true
+    cancelAnimationFrame(frame)
+    window.clearTimeout(fallback)
+    animation.cancel()
+  }
+  frame = requestAnimationFrame(play)
+  fallback = window.setTimeout(play, 80)
+  animation.addEventListener("finish", release, { once: true })
+
+  return release
+}
+
+function naturalOuterHeight(element: HTMLElement) {
+  const styles = getComputedStyle(element)
+  return element.scrollHeight
+    + Number.parseFloat(styles.borderTopWidth)
+    + Number.parseFloat(styles.borderBottomWidth)
+}
+
 function formatRelativeTime(timestamp: number) {
   const minutes = Math.max(1, Math.round((Date.now() - timestamp) / 60_000))
   if (minutes < 60) return `${minutes} 分钟前`
@@ -177,14 +213,25 @@ function NotificationCard({
   useLayoutEffect(() => {
     const card = cardRef.current
     const from = previousHeight.current
-    if (!card || from === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
     previousHeight.current = null
-    const to = card.scrollHeight
-    card.animate([{ height: `${from}px` }, { height: `${to}px` }], springTiming)
-    panelRef.current?.animate(
-      [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "translateY(0)" }],
-      { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-    )
+    if (!card || from === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+
+    const cleanups = [
+      animateAfterPaint(
+        card,
+        [{ height: `${from}px` }, { height: `${naturalOuterHeight(card)}px` }],
+        springTiming,
+      ),
+    ]
+    if (panelRef.current) {
+      cleanups.push(animateAfterPaint(
+        panelRef.current,
+        [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "translateY(0)" }],
+        { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      ))
+    }
+
+    return () => cleanups.forEach((cleanup) => cleanup())
   }, [visibleStage])
 
   const advanceCard = () => {
@@ -322,10 +369,16 @@ function NotificationStack({
   useLayoutEffect(() => {
     const snapshot = layoutSnapshot.current
     const container = containerRef.current
-    if (!snapshot || !container || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
     layoutSnapshot.current = null
-    const nextHeight = container.scrollHeight
-    container.animate([{ height: `${snapshot.height}px` }, { height: `${nextHeight}px` }], springTiming)
+    if (!snapshot || !container || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+
+    const cleanups = [
+      animateAfterPaint(
+        container,
+        [{ height: `${snapshot.height}px` }, { height: `${container.scrollHeight}px` }],
+        springTiming,
+      ),
+    ]
 
     items.forEach((item, index) => {
       const card = cardRefs.current.get(item.id)
@@ -336,14 +389,17 @@ function NotificationStack({
       const deltaY = before.top - after.top
       const scaleX = before.width / Math.max(after.width, 1)
       const scaleY = before.height / Math.max(after.height, 1)
-      card.animate(
+      cleanups.push(animateAfterPaint(
+        card,
         [
           { transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`, opacity: index > 3 && expanded ? 0 : 1 },
           { transform: "translate(0, 0) scale(1, 1)", opacity: 1 },
         ],
-        { ...springTiming, delay: expanded ? index * 48 : (items.length - index - 1) * 24, fill: "both" },
-      )
+        { ...springTiming, delay: expanded ? index * 48 : (items.length - index - 1) * 24 },
+      ))
     })
+
+    return () => cleanups.forEach((cleanup) => cleanup())
   }, [expanded, items])
 
   return (

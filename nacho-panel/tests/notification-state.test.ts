@@ -27,9 +27,19 @@ test("通知组以同一批卡片执行 iOS 式弹簧堆叠过渡", () => {
   assert.match(drawerSource, /data-notification-stack=\{expanded \? "expanded" : "collapsed"\}/)
   assert.match(drawerSource, /data-stack-card=\{item\.id\}/)
   assert.match(drawerSource, /layoutSnapshot/)
-  assert.match(drawerSource, /card\.animate/)
+  assert.match(drawerSource, /animateAfterPaint\(\s*card/)
   assert.match(drawerSource, /cubic-bezier\(0\.22, 1, 0\.36, 1\)/)
   assert.match(drawerSource, /items\.map\(\(item, index\)/)
+})
+
+test("通知展开动画先固定首帧再播放，并在完成后释放合成样式", () => {
+  assert.match(drawerSource, /animation\.pause\(\)/)
+  assert.match(drawerSource, /animation\.currentTime = 0/)
+  assert.match(drawerSource, /frame = requestAnimationFrame\(play\)/)
+  assert.match(drawerSource, /fallback = window\.setTimeout\(play, 80\)/)
+  assert.match(drawerSource, /animation\.addEventListener\("finish", release, \{ once: true \}\)/)
+  assert.match(drawerSource, /animation\.cancel\(\)/)
+  assert.match(drawerSource, /fill: "both"/)
 })
 
 test("单张通知依次展开完整内容和详细日志", () => {
