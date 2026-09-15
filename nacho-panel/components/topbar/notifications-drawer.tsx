@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useState, type CSSProperties } from "react"
 import { Bell, CalendarClock, CheckCheck, ChevronDown, Copy, HeartPulse, Loader2, ServerOff, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { DrawerShell, OverlayHeader } from "./overlay"
@@ -70,6 +70,7 @@ export function NotificationsDrawer({
   onSnoozeGroup: (groupKey: string, until: number) => void
   onReadGroup: (groupKey: string) => void
 }) {
+  const drawerId = useId()
   const [expanded, setExpanded] = useState<Map<string, boolean>>(new Map())
   const [copied, setCopied] = useState<string | null>(null)
   const unread = notificationUnreadCount(notices)
@@ -112,14 +113,15 @@ export function NotificationsDrawer({
             {notices.map((n) => {
               const isExpanded = expanded.get(n.id) || false
               const isStacked = n.count > 1
+              const contentId = `${drawerId}-${n.id}-content`
               
               return (
-                <li key={n.id} className="relative">
+                <li key={n.id} className="notification-card relative isolate" data-expanded={isExpanded}>
                   {/* 堆叠视觉：底层阴影卡片 */}
-                  {isStacked && !isExpanded && (
+                  {isStacked && (
                     <>
-                      <div className="absolute inset-0 translate-y-1 rounded-2xl bg-surface/30 shadow-sm" style={{ zIndex: -2 }} />
-                      <div className="absolute inset-0 translate-y-0.5 rounded-2xl bg-surface/50 shadow-sm" style={{ zIndex: -1 }} />
+                      <div aria-hidden="true" className="notification-stack-layer notification-stack-layer-far pointer-events-none absolute inset-0 rounded-2xl bg-surface/30 shadow-sm" style={{ zIndex: -2 }} />
+                      <div aria-hidden="true" className="notification-stack-layer pointer-events-none absolute inset-0 rounded-2xl bg-surface/50 shadow-sm" style={{ zIndex: -1 }} />
                     </>
                   )}
                   
@@ -127,6 +129,8 @@ export function NotificationsDrawer({
                   <button
                     type="button"
                     onClick={() => { if (isStacked) toggleExpand(n.id); else { toggleExpand(n.id); if (!n.read) onRead(n.id) } }}
+                    aria-expanded={isExpanded}
+                    aria-controls={contentId}
                     disabled={Boolean(pending)}
                     className={cn(
                       "relative flex w-full items-start gap-3 rounded-2xl p-3 text-left transition-all disabled:pointer-events-none",
@@ -156,54 +160,54 @@ export function NotificationsDrawer({
                         <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">
                           共 {n.count} 条
                         </span>
-                        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-500 ease-out motion-reduce:transition-none", isExpanded && "rotate-180")} />
                       </span>
                     )}
                   </button>
-                  {isExpanded && (
-                    <div className="mt-1 flex items-center gap-2 px-3 pb-2 text-[11px] text-muted-foreground">
-                      {n.code && <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{n.code}</span>}
-                      <span>{n.source}{n.deviceId ? ` · ${n.deviceId}` : ""}</span>
-                      <pre className="max-w-[55%] whitespace-pre-wrap rounded bg-background/50 p-1.5 font-mono text-[10px]">{n.detail}</pre>
-                      <button type="button" onClick={() => void copyDetail(n)} className="ml-auto inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted"><Copy className="h-3 w-3" />{copied === n.id ? "已复制" : "复制详情"}</button>
-                      <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("hour"))} className="rounded px-2 py-1 hover:bg-muted">1 小时</button>
-                      <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 hover:bg-muted">明天 09:00</button>
-                      <button type="button" onClick={() => { const raw = window.prompt("输入提醒时间（ISO）"); const value = raw ? Date.parse(raw) : NaN; if (Number.isFinite(value)) onSnooze(n.id, value) }} className="rounded px-2 py-1 hover:bg-muted">自定义</button>
+                  {/* 保持内容挂载，让高度和子卡片在展开、收起及中途反向时连续过渡。 */}
+                  <div id={contentId} className="notification-expansion" aria-hidden={!isExpanded} inert={!isExpanded}>
+                    <div className="min-h-0 overflow-hidden">
+                      <div className="notification-reveal mt-1 flex flex-wrap items-center gap-2 px-3 pb-2 text-[11px] text-muted-foreground">
+                        {n.code && <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{n.code}</span>}
+                        <span className="min-w-0 break-all">{n.source}{n.deviceId ? ` · ${n.deviceId}` : ""}</span>
+                        <pre className="w-full min-w-0 whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-[10px]">{n.detail}</pre>
+                        <button type="button" onClick={() => void copyDetail(n)} className="ml-auto inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted"><Copy className="h-3 w-3" />{copied === n.id ? "已复制" : "复制详情"}</button>
+                        <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("hour"))} className="rounded px-2 py-1 hover:bg-muted">1 小时</button>
+                        <button type="button" onClick={() => onSnooze(n.id, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 hover:bg-muted">明天 09:00</button>
+                        <button type="button" onClick={() => { const raw = window.prompt("输入提醒时间（ISO）"); const value = raw ? Date.parse(raw) : NaN; if (Number.isFinite(value)) onSnooze(n.id, value) }} className="rounded px-2 py-1 hover:bg-muted">自定义</button>
+                      </div>
+
+                      {/* 展开的子条目列表 */}
+                      {isStacked && n.items && (
+                        <ul className="mt-1.5 flex flex-col gap-1">
+                          {n.items.map((item, idx) => (
+                            <li key={item.id} className="notification-reveal" style={{ "--notification-delay": `${60 + Math.min(idx, 5) * 45}ms` } as CSSProperties}>
+                              <button
+                                type="button"
+                                onClick={() => onRead(item.id)}
+                                disabled={Boolean(pending) || item.read}
+                                className={cn(
+                                  "flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition-colors disabled:pointer-events-none",
+                                  item.read ? "opacity-60" : "bg-muted/50 hover:bg-muted",
+                                )}
+                              >
+                                <span className="min-w-0 flex-1 pl-12">
+                                  <span className="flex items-center gap-2">
+                                    <span className="text-xs font-medium">{item.title}</span>
+                                    {!item.read && <span className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-label="未读" />}
+                                  </span>
+                                  <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">{item.desc}</span>
+                                  <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-[10px]">{item.detail}</pre>
+                                  <span className="mt-0.5 block text-[10px] text-muted-foreground/70">{item.time}</span>
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {isStacked && <div className="notification-reveal ml-12 mt-1 flex flex-wrap gap-2"><button type="button" onClick={() => onReadGroup(n.groupKey)} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组已读</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("hour"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组 1 小时</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组明天</button></div>}
                     </div>
-                  )}
-                  
-                  {/* 展开的子条目列表 */}
-                  {isStacked && isExpanded && n.items && (
-                    <ul className="mt-1.5 flex flex-col gap-1 animate-stack-expand">
-                      {n.items.map((item, idx) => (
-                        <li key={item.id}>
-                          <button
-                            type="button"
-                            onClick={() => onRead(item.id)}
-                            disabled={Boolean(pending) || item.read}
-                            className={cn(
-                              "flex w-full items-start gap-3 rounded-xl p-2.5 text-left transition-colors disabled:pointer-events-none",
-                              item.read ? "opacity-60" : "bg-muted/50 hover:bg-muted",
-                            )}
-                            style={{
-                              animationDelay: `${idx * 50}ms`,
-                            }}
-                          >
-                            <span className="min-w-0 flex-1 pl-12">
-                              <span className="flex items-center gap-2">
-                                <span className="text-xs font-medium">{item.title}</span>
-                                {!item.read && <span className="h-1 w-1 shrink-0 rounded-full bg-primary" aria-label="未读" />}
-                              </span>
-                              <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">{item.desc}</span>
-                              <pre className="mt-1 whitespace-pre-wrap rounded bg-background/50 p-1.5 font-mono text-[10px]">{item.detail}</pre>
-                              <span className="mt-0.5 block text-[10px] text-muted-foreground/70">{item.time}</span>
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {isStacked && isExpanded && <div className="ml-12 mt-1 flex gap-2"><button type="button" onClick={() => onReadGroup(n.groupKey)} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组已读</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("hour"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组 1 小时</button><button type="button" onClick={() => onSnoozeGroup(n.groupKey, snoozeUntil("tomorrow"))} className="rounded px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted">整组明天</button></div>}
+                  </div>
                 </li>
               )
             })}
