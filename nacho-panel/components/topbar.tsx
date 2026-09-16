@@ -386,6 +386,38 @@ function LogsActions() {
   )
 }
 
+function ExpandableLabel({ expanded, children }: { expanded: boolean; children: string }) {
+  const labelRef = useRef<HTMLSpanElement>(null)
+  const [labelWidth, setLabelWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    const label = labelRef.current
+    if (!label) return
+
+    const updateWidth = () => setLabelWidth(Math.ceil(label.getBoundingClientRect().width))
+    updateWidth()
+
+    const resizeObserver = new ResizeObserver(updateWidth)
+    resizeObserver.observe(label)
+    return () => resizeObserver.disconnect()
+  }, [children])
+
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "shrink-0 overflow-hidden whitespace-nowrap text-sm font-medium leading-none transition-[width,margin-left,opacity,filter] duration-300 ease-linear motion-reduce:transition-none",
+        expanded ? "ml-1.5 opacity-100 blur-0" : "ml-0 opacity-0 blur-[4px]",
+      )}
+      style={{ width: expanded ? `${labelWidth}px` : "0px" }}
+    >
+      <span ref={labelRef} className="inline-block">
+        {children}
+      </span>
+    </span>
+  )
+}
+
 function IconButton({
   children,
   label,
@@ -395,25 +427,26 @@ function IconButton({
 }: {
   children: React.ReactNode
   label: string
-  /** 悬浮时向右展开显示的文字（逐字模糊渐显） */
+  /** 悬浮或键盘聚焦时向右匀速展开显示的文字 */
   expandLabel?: string
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   /** 右上角角标：数字显示计数气泡，true 显示小圆点 */
   badge?: number | boolean
 }) {
   const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const expanded = hovered || focused
 
   return (
     <button
+      type="button"
       aria-label={label}
       onClick={onClick}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className={cn(
-        // 图标用固定左右内边距锁定在 48px 圆形区域内，justify-start 保证不随宽度变化而抖动；
-        // 按钮宽度由内部文字的 max-width 动画驱动，展开/收回都能平滑过渡
-        "relative flex h-12 items-center justify-start rounded-full bg-surface px-3.5 text-foreground transition-colors duration-300 ease-out hover:bg-muted",
-      )}
+      className="relative flex h-12 items-center justify-start rounded-full bg-surface px-3.5 text-foreground transition-colors duration-300 ease-out hover:bg-muted"
     >
       {/* 角标：未读计数气泡或激活小圆点 */}
       {typeof badge === "number" && badge > 0 && (
@@ -423,21 +456,7 @@ function IconButton({
       )}
       {badge === true && <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-primary" />}
       <span className="flex h-5 w-5 shrink-0 items-center justify-center">{children}</span>
-      {expandLabel && (
-        <span
-          className={cn(
-            "overflow-hidden whitespace-nowrap text-sm font-medium leading-none transition-all duration-500 ease-out",
-            hovered ? "ml-1.5 max-w-[200px]" : "ml-0 max-w-0",
-          )}
-          style={{
-            opacity: hovered ? 1 : 0,
-            filter: hovered ? "blur(0px)" : "blur(4px)",
-            transitionDelay: hovered ? "120ms" : "0ms",
-          }}
-        >
-          {expandLabel}
-        </span>
-      )}
+      {expandLabel && <ExpandableLabel expanded={expanded}>{expandLabel}</ExpandableLabel>}
     </button>
   )
 }
@@ -886,12 +905,17 @@ function TopbarTab({
   delay: number
 }) {
   const [hovered, setHovered] = useState(false)
-  const expanded = isActive || hovered
+  const [focused, setFocused] = useState(false)
+  const expanded = isActive || hovered || focused
   const Icon = tab.icon
 
   return (
     <button
+      type="button"
+      aria-label={tab.label}
       onClick={onSelect}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       aria-current={isActive ? "true" : undefined}
@@ -914,19 +938,7 @@ function TopbarTab({
       <span className="flex h-5 w-5 shrink-0 items-center justify-center">
         <Icon className="h-5 w-5" />
       </span>
-      <span
-        className={cn(
-          "overflow-hidden whitespace-nowrap text-sm font-medium leading-none transition-all duration-500 ease-out",
-          expanded ? "ml-1.5 max-w-[160px]" : "ml-0 max-w-0",
-        )}
-        style={{
-          opacity: expanded ? 1 : 0,
-          filter: expanded ? "blur(0px)" : "blur(4px)",
-          transitionDelay: expanded ? "120ms" : "0ms",
-        }}
-      >
-        {tab.label}
-      </span>
+      <ExpandableLabel expanded={expanded}>{tab.label}</ExpandableLabel>
     </button>
   )
 }
