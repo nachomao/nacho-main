@@ -67,12 +67,21 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
   const [leaving, setLeaving] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle")
   const [connectionError, setConnectionError] = useState("")
+  const [push, setPush] = useState<{ dir: "up" | "down"; k: number } | null>(null)
   const cardButtons = useRef<Record<Mode, HTMLButtonElement | null>>({ local: null, cloud: null })
+  const prevOpen = useRef(false)
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setShown(true))
     return () => cancelAnimationFrame(frame)
   }, [])
+
+  useEffect(() => {
+    const isOpen = selected !== null
+    if (prevOpen.current === isOpen) return
+    prevOpen.current = isOpen
+    setPush((previous) => ({ dir: isOpen ? "up" : "down", k: (previous?.k ?? 0) + 1 }))
+  }, [selected])
 
   const finish = (source: Exclude<ServerSource, null>) => {
     if (leaving) return
@@ -176,7 +185,14 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
       />
 
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center gap-7 sm:gap-8">
-        <header className="flex flex-col items-center gap-3">
+        <header
+          key={push?.k ?? "init"}
+          className={cn(
+            "flex flex-col items-center gap-3",
+            push?.dir === "up" && "animate-text-push-up",
+            push?.dir === "down" && "animate-text-push-down",
+          )}
+        >
           <Badge variant="outline" className="border-border/60 bg-background/35 px-2.5 text-muted-foreground backdrop-blur-md" style={reveal(0)}>
             <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
             控制服务
@@ -215,7 +231,10 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
 
                   <div
                     className="grid motion-reduce:transition-none"
-                    style={{ gridTemplateRows: active ? "0fr" : "1fr", transition: `grid-template-rows 560ms ${EASE}` }}
+                    style={{
+                      gridTemplateRows: active ? "0fr" : "1fr",
+                      transition: active ? "none" : `grid-template-rows 560ms ${EASE}`,
+                    }}
                   >
                     <div className="min-h-0 overflow-hidden">
                       <button
@@ -297,7 +316,10 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                     id={`server-source-detail-${option.mode}`}
                     className={cn("grid motion-reduce:transition-none", !active && "pointer-events-none")}
                     aria-hidden={!active}
-                    style={{ gridTemplateRows: active ? "1fr" : "0fr", transition: `grid-template-rows 720ms ${EASE}` }}
+                    style={{
+                      gridTemplateRows: active ? "1fr" : "0fr",
+                      transition: active ? "none" : `grid-template-rows 720ms ${EASE}`,
+                    }}
                   >
                     <div className="min-h-0 overflow-hidden">
                       {opened && (
@@ -305,8 +327,7 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                           style={{
                             opacity: active ? 1 : 0,
                             filter: active ? "blur(0px)" : "blur(14px)",
-                            transform: active ? "translateY(0) scale(1)" : "translateY(8px) scale(0.975)",
-                            transition: `opacity 440ms ease ${active ? "160ms" : "0ms"}, filter 520ms ease ${active ? "160ms" : "0ms"}, transform 620ms ${EASE} ${active ? "140ms" : "0ms"}`,
+                            transition: `opacity 440ms ease ${active ? "160ms" : "0ms"}, filter 520ms ease ${active ? "160ms" : "0ms"}`,
                           }}
                         >
                           {option.mode === "local" ? (
