@@ -67,9 +67,9 @@ function copyText(value: string) {
   return navigator.clipboard.writeText(value)
 }
 
-function InfoCell({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function InfoCell({ label, value, mono = false, glass = false }: { label: string; value: string; mono?: boolean; glass?: boolean }) {
   return (
-    <div className="rounded-xl border border-border/70 bg-background/35 px-3 py-2.5">
+    <div className={cn("rounded-xl border px-3 py-2.5", glass ? "border-border/45 bg-background/20" : "border-border/70 bg-background/35")}>
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={cn("mt-1 truncate text-sm font-medium text-foreground", mono && "font-mono text-xs")}>{value}</p>
     </div>
@@ -83,6 +83,7 @@ function AccessModeOption({
   description,
   icon: Icon,
   disabled,
+  glass = false,
   onSelect,
 }: {
   mode: LocalControlAccessMode
@@ -91,6 +92,7 @@ function AccessModeOption({
   description: string
   icon: typeof MonitorSmartphone
   disabled?: boolean
+  glass?: boolean
   onSelect: (mode: LocalControlAccessMode) => void
 }) {
   return (
@@ -101,8 +103,14 @@ function AccessModeOption({
       disabled={disabled}
       onClick={() => onSelect(mode)}
       className={cn(
-        "flex min-w-0 flex-1 items-start gap-3 rounded-xl border p-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
-        selected ? "border-primary/50 bg-primary/8" : "border-border/70 bg-background/30 hover:border-border hover:bg-muted/40",
+        "flex min-w-0 flex-1 items-start gap-3 rounded-xl border p-3 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        selected
+          ? glass
+            ? "border-primary/35 bg-primary/8 shadow-sm"
+            : "border-primary/50 bg-primary/8"
+          : glass
+            ? "border-border/45 bg-background/15 hover:border-foreground/15 hover:bg-background/30"
+            : "border-border/70 bg-background/30 hover:border-border hover:bg-muted/40",
       )}
     >
       <span className={cn("mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg", selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
@@ -119,9 +127,9 @@ function AccessModeOption({
   )
 }
 
-function Prerequisite({ ready, label, detail }: { ready: boolean; label: string; detail: string }) {
+function Prerequisite({ ready, label, detail, glass = false }: { ready: boolean; label: string; detail: string; glass?: boolean }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5">
+    <div className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", glass ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
       <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full", ready ? "bg-emerald-500/12 text-emerald-500" : "bg-destructive/10 text-destructive")}>
         {ready ? <Check className="size-3.5" aria-hidden="true" /> : <X className="size-3.5" aria-hidden="true" />}
       </span>
@@ -155,6 +163,7 @@ export function LocalControlServerManager({
   const [uninstallConfirmation, setUninstallConfirmation] = useState("")
 
   const busy = operation !== null
+  const onboarding = surface === "onboarding"
   const isCurrent = Boolean(
     currentSource?.mode === "local" &&
     status?.connection &&
@@ -224,7 +233,7 @@ export function LocalControlServerManager({
 
   if (loading && !status) {
     return (
-      <div className="flex min-h-52 items-center justify-center rounded-2xl border border-border bg-card/50" aria-live="polite">
+      <div className={cn("flex min-h-52 items-center justify-center border", onboarding ? "rounded-[1.75rem] border-border/55 bg-card/45 shadow-[0_24px_75px_-48px_rgba(0,0,0,0.95)] backdrop-blur-xl" : "rounded-2xl border-border bg-card/50")} aria-live="polite">
         <Loader2 className="size-5 animate-spin text-primary" aria-hidden="true" />
         <span className="ml-2 text-sm text-muted-foreground">正在检查本机环境…</span>
       </div>
@@ -245,20 +254,20 @@ export function LocalControlServerManager({
   const canInstall = status.platformSupported && status.prerequisites.node && status.prerequisites.npm && status.prerequisites.source
 
   return (
-    <div className="space-y-4">
-      <section className="overflow-hidden rounded-2xl border border-border bg-card/72 shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-border/70 bg-gradient-to-br from-primary/7 via-transparent to-transparent px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-4">
+      <section className={cn("overflow-hidden border", onboarding ? "rounded-[1.75rem] border-border/55 bg-card/48 shadow-[0_24px_75px_-48px_rgba(0,0,0,0.95)] backdrop-blur-xl" : "rounded-2xl border-border bg-card/72 shadow-sm")}>
+        <div className={cn("flex flex-col gap-3 border-b sm:flex-row sm:items-center sm:justify-between", onboarding ? "border-border/45 bg-foreground/[0.018] px-5 py-5 sm:px-6" : "border-border/70 bg-gradient-to-br from-primary/7 via-transparent to-transparent px-4 py-4")}>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/10 text-primary">
+            <span className={cn("flex shrink-0 items-center justify-center border shadow-sm", onboarding ? "size-11 rounded-2xl border-border/55 bg-background/35 text-foreground" : "size-10 rounded-xl border-primary/15 bg-primary/10 text-primary")}>
               <ServerCog className="size-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-semibold text-foreground">本机控制服务</h3>
+                <h3 className="font-semibold text-foreground">{onboarding ? "在此设备运行控制服务" : "本机控制服务"}</h3>
                 <Badge variant="outline" className={statusStyle.className}>{statusStyle.label}</Badge>
               </div>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                数据、日志和凭据均保存在当前 Windows 设备，不上传到 NachoPanel。
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {onboarding ? "确认环境与访问范围后，将自动完成安装、配置和启动。" : "数据、日志和凭据均保存在当前 Windows 设备，不上传到 NachoPanel。"}
               </p>
             </div>
           </div>
@@ -270,7 +279,7 @@ export function LocalControlServerManager({
           )}
         </div>
 
-        <div className="space-y-4 p-4">
+        <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-4")}>
           {!status.platformSupported && (
             <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
               <AlertCircle className="text-amber-500" aria-hidden="true" />
@@ -283,43 +292,43 @@ export function LocalControlServerManager({
 
           {!status.installed ? (
             <>
-              <div>
-                <div className="mb-2 flex items-center gap-2">
+              <div className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+                <div className="mb-3 flex items-center gap-2">
                   <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">1</span>
                   <h4 className="text-sm font-semibold text-foreground">检查运行环境</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <Prerequisite ready={status.prerequisites.node} label="Node.js 22+" detail={`当前版本 ${status.prerequisites.nodeVersion}`} />
-                  <Prerequisite ready={status.prerequisites.npm} label="npm" detail={status.prerequisites.npm ? "命令可用" : "未检测到命令"} />
-                  <Prerequisite ready={status.prerequisites.source} label="server 项目" detail={status.prerequisites.source ? "源码与管理脚本完整" : "目录或文件不完整"} />
+                  <Prerequisite glass={onboarding} ready={status.prerequisites.node} label="Node.js 22+" detail={`当前版本 ${status.prerequisites.nodeVersion}`} />
+                  <Prerequisite glass={onboarding} ready={status.prerequisites.npm} label="npm" detail={status.prerequisites.npm ? "命令可用" : "未检测到命令"} />
+                  <Prerequisite glass={onboarding} ready={status.prerequisites.source} label="server 项目" detail={status.prerequisites.source ? "源码与管理脚本完整" : "目录或文件不完整"} />
                 </div>
               </div>
 
-              <fieldset disabled={busy || !status.platformSupported}>
-                <legend className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+              <fieldset disabled={busy || !status.platformSupported} className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+                <legend className={cn("flex items-center gap-2 text-sm font-semibold text-foreground", onboarding ? "mb-3 px-1" : "mb-2")}>
                   <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">2</span>
                   选择访问范围
                 </legend>
                 <div role="radiogroup" aria-label="本地服务访问范围" className="flex flex-col gap-2 sm:flex-row">
-                  <AccessModeOption mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允许当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
-                  <AccessModeOption mode="lan" selected={accessMode === "lan"} title="同一局域网" description="允许私有网络中的其他设备连接。" icon={Network} onSelect={handleAccessMode} />
+                  <AccessModeOption glass={onboarding} mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允许当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
+                  <AccessModeOption glass={onboarding} mode="lan" selected={accessMode === "lan"} title="同一局域网" description="允许私有网络中的其他设备连接。" icon={Network} onSelect={handleAccessMode} />
                 </div>
               </fieldset>
 
-              <div>
-                <div className="mb-2 flex items-center gap-2">
+              <div className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+                <div className="mb-3 flex items-center gap-2">
                   <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">3</span>
                   <h4 className="text-sm font-semibold text-foreground">确认本机设置</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
-                  <label className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5">
+                  <label className={cn("flex items-center justify-between gap-4 rounded-xl border px-3 py-2.5", onboarding ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
                     <span>
                       <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                       <span className="block text-xs text-muted-foreground">仅写入当前 Windows 用户的 HKCU 启动项</span>
                     </span>
                     <Switch checked={autoStart} onCheckedChange={setAutoStart} disabled={busy || !status.platformSupported} aria-label="登录后自动启动" />
                   </label>
-                  <label className="rounded-xl border border-border/70 bg-background/30 px-3 py-2">
+                  <label className={cn("rounded-xl border px-3 py-2", onboarding ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
                     <span className="text-xs font-medium text-muted-foreground">监听端口</span>
                     <Input className="mt-1 h-7 font-mono text-xs" inputMode="numeric" value={port} disabled={busy || !status.platformSupported} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
                   </label>
@@ -334,18 +343,18 @@ export function LocalControlServerManager({
                 </Alert>
               )}
 
-              <Button className="h-10 w-full" disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
-                {operation === "install" ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Play className="size-4" aria-hidden="true" />}
-                {surface === "onboarding" ? "安装、启动并继续" : "安装并启动本地服务"}
+              <Button className={cn("w-full", onboarding ? "h-11 rounded-xl shadow-[0_12px_30px_-16px_color-mix(in_srgb,var(--primary)_70%,transparent)]" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
+                {operation === "install" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Play data-icon="inline-start" aria-hidden="true" />}
+                {onboarding ? "安装、启动并继续" : "安装并启动本地服务"}
               </Button>
             </>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                <InfoCell label="运行状态" value={status.healthy ? "健康" : status.running ? "异常" : "已停止"} />
-                <InfoCell label="登录后自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
-                <InfoCell label="访问范围" value={status.accessMode === "loopback" ? "仅此设备" : "同一局域网"} />
-                <InfoCell label="监听端口" value={String(status.port)} mono />
+                <InfoCell glass={onboarding} label="运行状态" value={status.healthy ? "健康" : status.running ? "异常" : "已停止"} />
+                <InfoCell glass={onboarding} label="登录后自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
+                <InfoCell glass={onboarding} label="访问范围" value={status.accessMode === "loopback" ? "仅此设备" : "同一局域网"} />
+                <InfoCell glass={onboarding} label="监听端口" value={String(status.port)} mono />
               </div>
 
               {status.issues.length > 0 && (
@@ -380,7 +389,7 @@ export function LocalControlServerManager({
                   <Wrench className="size-4" aria-hidden="true" />修复 / 升级
                 </Button>
                 {surface === "onboarding" && status.healthy && status.connection && (
-                  <Button className="sm:ml-auto" disabled={busy} onClick={() => onConnected?.({ mode: "local", ...status.connection! })}>
+                  <Button className="h-9 rounded-xl sm:ml-auto" disabled={busy} onClick={() => onConnected?.({ mode: "local", ...status.connection! })}>
                     使用此服务继续
                   </Button>
                 )}
