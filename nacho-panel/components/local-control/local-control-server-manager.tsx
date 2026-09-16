@@ -58,7 +58,7 @@ const operationCopy: Record<Operation, string> = {
   stop: "正在安全停止本地服务…",
   restart: "正在重启本地服务…",
   repair: "正在备份并重新构建服务…",
-  autoStart: "正在更新开机自启…",
+  autoStart: "正在更新登录后自启…",
   accessMode: "正在更新监听范围与防火墙…",
   uninstall: "正在彻底卸载并清理本地数据…",
 }
@@ -135,12 +135,12 @@ function Prerequisite({ ready, label, detail }: { ready: boolean; label: string;
 
 export function LocalControlServerManager({
   surface = "settings",
-  isCurrent = false,
+  currentSource,
   onConnected,
   onUninstalled,
 }: {
   surface?: "onboarding" | "settings"
-  isCurrent?: boolean
+  currentSource?: ServerSource
   onConnected?: (source: Exclude<ServerSource, null>) => void
   onUninstalled?: () => void
 }) {
@@ -155,6 +155,19 @@ export function LocalControlServerManager({
   const [uninstallConfirmation, setUninstallConfirmation] = useState("")
 
   const busy = operation !== null
+  const isCurrent = Boolean(
+    currentSource?.mode === "local" &&
+    status?.connection &&
+    currentSource.api === status.connection.api &&
+    currentSource.key === status.connection.key &&
+    (currentSource.agentApi || currentSource.api) === status.connection.agentApi,
+  )
+
+  function syncCurrentLocalSource(nextStatus: LocalControlServerStatus | null) {
+    if (currentSource?.mode === "local" && nextStatus?.connection) {
+      onConnected?.({ mode: "local", ...nextStatus.connection })
+    }
+  }
 
   async function perform<T>(nextOperation: Operation, task: () => Promise<T>) {
     setOperation(nextOperation)
@@ -181,6 +194,8 @@ export function LocalControlServerManager({
     const nextStatus = await perform(action, () => runLocalControlAction(action))
     if (surface === "onboarding" && nextStatus?.healthy && nextStatus.connection && onConnected) {
       onConnected({ mode: "local", ...nextStatus.connection })
+    } else {
+      syncCurrentLocalSource(nextStatus)
     }
   }
 
@@ -189,7 +204,8 @@ export function LocalControlServerManager({
       setAccessMode(nextMode)
       return
     }
-    await perform("accessMode", () => updateLocalControlAccessMode(nextMode))
+    const nextStatus = await perform("accessMode", () => updateLocalControlAccessMode(nextMode))
+    syncCurrentLocalSource(nextStatus)
   }
 
   async function handleCopy(kind: "api" | "key", value: string) {
@@ -298,10 +314,10 @@ export function LocalControlServerManager({
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
                   <label className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5">
                     <span>
-                      <span className="block text-sm font-medium text-foreground">开机自动启动</span>
+                      <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                       <span className="block text-xs text-muted-foreground">仅写入当前 Windows 用户的 HKCU 启动项</span>
                     </span>
-                    <Switch checked={autoStart} onCheckedChange={setAutoStart} disabled={busy || !status.platformSupported} aria-label="开机自动启动" />
+                    <Switch checked={autoStart} onCheckedChange={setAutoStart} disabled={busy || !status.platformSupported} aria-label="登录后自动启动" />
                   </label>
                   <label className="rounded-xl border border-border/70 bg-background/30 px-3 py-2">
                     <span className="text-xs font-medium text-muted-foreground">监听端口</span>
@@ -327,7 +343,7 @@ export function LocalControlServerManager({
             <>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                 <InfoCell label="运行状态" value={status.healthy ? "健康" : status.running ? "异常" : "已停止"} />
-                <InfoCell label="开机自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
+                <InfoCell label="登录后自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
                 <InfoCell label="访问范围" value={status.accessMode === "loopback" ? "仅此设备" : "同一局域网"} />
                 <InfoCell label="监听端口" value={String(status.port)} mono />
               </div>
@@ -397,10 +413,10 @@ export function LocalControlServerManager({
             <div className="space-y-3">
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5">
                 <span>
-                  <span className="block text-sm font-medium text-foreground">开机自动启动</span>
+                  <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                   <span className="block text-xs text-muted-foreground">当前 Windows 用户登录后自动启动</span>
                 </span>
-                <Switch checked={status.autoStartEnabled} disabled={busy} onCheckedChange={(checked) => void perform("autoStart", () => updateLocalControlAutoStart(checked))} aria-label="开机自动启动" />
+                <Switch checked={status.autoStartEnabled} disabled={busy} onCheckedChange={(checked) => void perform("autoStart", () => updateLocalControlAutoStart(checked))} aria-label="登录后自动启动" />
               </label>
               <div>
                 <p className="mb-2 text-sm font-medium text-foreground">访问范围</p>

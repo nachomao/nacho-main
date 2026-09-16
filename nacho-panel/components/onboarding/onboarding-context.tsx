@@ -7,7 +7,7 @@ import type { LocalAvatarId } from "@/lib/local-settings-schema"
 
 /** 服务端来源：本地部署 或 云端对接（API + Key） */
 export type ServerSource =
-  | { mode: "local"; api: string; key: string }
+  | { mode: "local"; api: string; agentApi?: string; key: string }
   | { mode: "cloud"; api: string; key: string }
   | null
 
@@ -81,7 +81,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(savedServerSource) as Partial<Exclude<ServerSource, null>> | null
         if (parsed?.mode === "local") {
           if (typeof parsed.api === "string" && typeof parsed.key === "string" && parsed.api && parsed.key) {
-            setServerSourceState({ mode: "local", api: parsed.api, key: parsed.key })
+            setServerSourceState({
+              mode: "local",
+              api: parsed.api,
+              agentApi: typeof parsed.agentApi === "string" && parsed.agentApi ? parsed.agentApi : undefined,
+              key: parsed.key,
+            })
           } else {
             legacyLocalSource.current = true
           }

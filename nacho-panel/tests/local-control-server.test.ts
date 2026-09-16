@@ -4,6 +4,8 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, test } from "node:test"
 import {
+  createInitialEnvironment,
+  ensureManagedEnvironment,
   isValidLocalControlPort,
   parseEnvironmentFile,
   resolveLocalServerDirectory,
@@ -37,6 +39,37 @@ test("local control ports are restricted to the non-privileged TCP range", () =>
   assert.equal(isValidLocalControlPort(65536), false)
   assert.equal(isValidLocalControlPort(8443.5), false)
   assert.equal(isValidLocalControlPort("8443"), false)
+})
+
+test("initial environment uses safe local defaults and independent strong secrets", () => {
+  const first = createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: 9555 })
+  const second = createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: 9555 })
+
+  assert.equal(first.get("HOST"), "127.0.0.1")
+  assert.equal(first.get("PORT"), "9555")
+  assert.equal(first.get("DATABASE_PATH"), "./data/nacho.db")
+  for (const key of ["PANEL_API_KEY", "ENROLLMENT_KEY", "LOCAL_CONTROL_TOKEN"]) {
+    assert.match(first.get(key) || "", /^[A-Za-z0-9_-]{43}$/)
+    assert.notEqual(first.get(key), second.get(key))
+  }
+})
+
+test("managed environment repairs weak defaults without discarding unrelated values", () => {
+  const repaired = ensureManagedEnvironment(new Map([
+    ["HOST", "localhost"],
+    ["PORT", "80"],
+    ["PANEL_API_KEY", "change-me-panel-api-key"],
+    ["ENROLLMENT_KEY", "change-me-enrollment-key"],
+    ["CUSTOM_VALUE", "preserved"],
+  ]))
+
+  assert.equal(repaired.get("HOST"), "127.0.0.1")
+  assert.equal(repaired.get("PORT"), "8443")
+  assert.equal(repaired.get("DATABASE_PATH"), "./data/nacho.db")
+  assert.equal(repaired.get("CUSTOM_VALUE"), "preserved")
+  assert.match(repaired.get("PANEL_API_KEY") || "", /^[A-Za-z0-9_-]{43}$/)
+  assert.match(repaired.get("ENROLLMENT_KEY") || "", /^[A-Za-z0-9_-]{43}$/)
+  assert.match(repaired.get("LOCAL_CONTROL_TOKEN") || "", /^[A-Za-z0-9_-]{43}$/)
 })
 
 test("server directory resolution rejects an untrusted project and accepts the expected layout", async () => {

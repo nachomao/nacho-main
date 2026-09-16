@@ -6,15 +6,9 @@ import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useServerData } from "@/components/server-data-context"
 import { LocalControlServerManager } from "@/components/local-control/local-control-server-manager"
 
-const history = [
-  { title: "同步设备状态", time: "刚刚", status: "成功" },
-  { title: "获取客户端列表", time: "2 分钟前", status: "成功" },
-  { title: "更新实时日志", time: "5 分钟前", status: "成功" },
-]
-
 export function ConnectionPanel() {
   const { serverSource, setServerSource } = useOnboarding()
-  const { error, loading, refresh } = useServerData()
+  const { error, loading, refreshing, refresh } = useServerData()
   const [showKey, setShowKey] = useState(false)
   const [copied, setCopied] = useState(false)
   const [cloudApi, setCloudApi] = useState(serverSource?.mode === "cloud" ? serverSource.api : "")
@@ -44,7 +38,7 @@ export function ConnectionPanel() {
 
       <LocalControlServerManager
         surface="settings"
-        isCurrent={serverSource?.mode === "local"}
+        currentSource={serverSource}
         onConnected={setServerSource}
         onUninstalled={() => {
           if (serverSource?.mode === "local") setServerSource(null)
@@ -116,22 +110,28 @@ export function ConnectionPanel() {
         </div>
       </div>
 
-      <div>
-        <div className="mb-3 flex items-center gap-2">
-          <RefreshCw className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <h3 className="text-sm font-semibold text-foreground">最近同步</h3>
+      <section className="rounded-2xl border border-border bg-card p-4" aria-live="polite">
+        <div className="flex flex-wrap items-center gap-3">
+          <RefreshCw className={refreshing ? "size-3.5 animate-spin text-primary" : "size-3.5 text-muted-foreground"} aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-foreground">当前连接状态</h3>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {serverSource ? `${serverSource.mode === "local" ? "本机服务" : "云端服务"} · ${serverSource.api}` : "尚未选择控制服务来源"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={!serverSource || refreshing}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          >
+            重新检测
+          </button>
         </div>
-        <div className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border bg-card">
-          {history.map((item) => (
-            <div key={item.title} className="flex items-center gap-3 px-4 py-3">
-              <div className="size-1.5 rounded-full bg-emerald-400" />
-              <span className="flex-1 text-xs text-foreground">{item.title}</span>
-              <span className="text-[11px] text-muted-foreground">{item.time}</span>
-              <span className="text-[11px] text-emerald-400">{item.status}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+        <p className={error ? "mt-3 text-xs text-destructive" : "mt-3 text-xs text-muted-foreground"}>
+          {!serverSource ? "配置本机部署或云端连接后，面板才会读取真实业务数据。" : loading || refreshing ? "正在验证控制服务连接…" : error || "控制服务连接正常。"}
+        </p>
+      </section>
     </div>
   )
 }

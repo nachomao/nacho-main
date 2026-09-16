@@ -20,14 +20,14 @@ export type LocalControlServerStatus = {
   startedAt: string | null
   autoStartEnabled: boolean
   accessMode: LocalControlAccessMode
-  host: "127.0.0.1" | "0.0.0.0"
+  host: string
   port: number
   firewallEnabled: boolean
   firewallNeedsCleanup: boolean
   serverDir: string
   databasePath: string
   localAddresses: string[]
-  connection: { api: string; key: string } | null
+  connection: { api: string; agentApi: string; key: string } | null
   prerequisites: {
     node: boolean
     nodeVersion: string

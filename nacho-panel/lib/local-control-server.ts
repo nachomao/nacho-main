@@ -18,7 +18,6 @@ const MIN_PORT = 1024
 const MAX_PORT = 65535
 const HEALTH_TIMEOUT_MS = 15_000
 const POWERSHELL_TIMEOUT_MS = 60_000
-const FIREWALL_PREFIX = "NachoPanel-Local-Control-"
 
 export class LocalControlServerError extends Error {
   constructor(message: string, readonly status = 500) {
@@ -32,9 +31,12 @@ type WindowsRuntimeState = {
   startedAt?: string | null
   autoStartEnabled?: boolean
   firewallPorts?: number[]
+  listeningPorts?: number[]
 }
 
-type EnvironmentMap = Map<string, string>
+export type EnvironmentMap = Map<string, string>
+
+const WEAK_SECRETS = new Set(["change-me-panel-api-key", "change-me-enrollment-key"])
 
 function exists(filePath: string) {
   return access(filePath, constants.F_OK).then(
@@ -111,6 +113,7 @@ function managementPaths(serverDir: string) {
     script: path.join(serverDir, "deploy", "windows", "local-control-server.ps1"),
     stateDir,
     backupDist: path.join(stateDir, "backup-dist"),
+    backupEnv: path.join(stateDir, "backup.env"),
   }
 }
 
@@ -128,7 +131,7 @@ async function writeEnvironment(serverDir: string, values: EnvironmentMap) {
 }
 
 function accessModeFromEnvironment(values: EnvironmentMap): LocalControlAccessMode {
-  return values.get("HOST") === "0.0.0.0" ? "lan" : "loopback"
+  return values.get("HOST") === "127.0.0.1" ? "loopback" : "lan"
 }
 
 function portFromEnvironment(values: EnvironmentMap) {
@@ -136,11 +139,26 @@ function portFromEnvironment(values: EnvironmentMap) {
   return isValidLocalControlPort(parsed) ? parsed : DEFAULT_PORT
 }
 
+function databasePathFromEnvironment(serverDir: string, values: EnvironmentMap) {
+  const configured = values.get("DATABASE_PATH")?.trim() || "./data/nacho.db"
+  return path.isAbsolute(configured) ? path.normalize(configured) : path.resolve(serverDir, configured)
+}
+
 function localApi(port: number) {
   return `http://127.0.0.1:${port}`
 }
 
-function createInitialEnvironment(options: Required<LocalControlInstallOptions>) {
+function localAgentApi(accessMode: LocalControlAccessMode, port: number, addresses: string[]) {
+  if (accessMode === "lan" && addresses[0]) return `http://${addresses[0]}:${port}`
+  return localApi(port)
+}
+
+function hasStrongSecret(values: EnvironmentMap, key: string) {
+  const value = values.get(key)?.trim() || ""
+  return value.length >= 24 && !WEAK_SECRETS.has(value)
+}
+
+export function createInitialEnvironment(options: Required<LocalControlInstallOptions>) {
   const values = new Map<string, string>()
   values.set("HOST", options.accessMode === "lan" ? "0.0.0.0" : "127.0.0.1")
   values.set("PORT", String(options.port))
@@ -158,6 +176,46 @@ function createInitialEnvironment(options: Required<LocalControlInstallOptions>)
   values.set("LOCAL_CONTROL_TOKEN", generateSecret())
   values.set("NODE_ENV", "production")
   return values
+}
+
+export function ensureManagedEnvironment(input: EnvironmentMap) {
+  const values = new Map(input)
+  const host = values.get("HOST")
+  if (host !== "127.0.0.1" && host !== "0.0.0.0") values.set("HOST", "127.0.0.1")
+  if (!isValidLocalControlPort(Number(values.get("PORT")))) values.set("PORT", String(DEFAULT_PORT))
+
+  const defaults = new Map<string, string>([
+    ["CORS_ORIGIN", "*"],
+    ["DATABASE_PATH", "./data/nacho.db"],
+    ["ALLOW_OPEN_ENROLLMENT", "false"],
+    ["PUBLIC_BASE_URL", ""],
+    ["TRUST_PROXY", "false"],
+    ["ARTIFACTS_PATH", "./artifacts"],
+    ["HEALTH_ARTIFACTS_PATH", "./data/health-artifacts"],
+    ["OFFLINE_THRESHOLD", "60"],
+    ["LOG_RETENTION_MAX", "100000"],
+    ["NODE_ENV", "production"],
+  ])
+  for (const [key, value] of defaults) {
+    if (!values.has(key) || (key !== "PUBLIC_BASE_URL" && !values.get(key)?.trim())) values.set(key, value)
+  }
+  for (const key of ["PANEL_API_KEY", "ENROLLMENT_KEY", "LOCAL_CONTROL_TOKEN"]) {
+    if (!hasStrongSecret(values, key)) values.set(key, generateSecret())
+  }
+  return values
+}
+
+function configurationNeedsRepair(values: EnvironmentMap, envExists: boolean) {
+  if (!envExists) return false
+  const host = values.get("HOST")
+  return (
+    (host !== "127.0.0.1" && host !== "0.0.0.0") ||
+    !isValidLocalControlPort(Number(values.get("PORT"))) ||
+    !values.get("DATABASE_PATH")?.trim() ||
+    !hasStrongSecret(values, "PANEL_API_KEY") ||
+    !hasStrongSecret(values, "ENROLLMENT_KEY") ||
+    !hasStrongSecret(values, "LOCAL_CONTROL_TOKEN")
+  )
 }
 
 async function runExecutable(file: string, args: string[], cwd: string, timeout = POWERSHELL_TIMEOUT_MS) {
@@ -183,10 +241,10 @@ async function runPowerShell(serverDir: string, action: string, port?: number) {
   return runExecutable("powershell.exe", args, serverDir)
 }
 
-async function windowsRuntimeState(serverDir: string): Promise<WindowsRuntimeState> {
+async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Promise<WindowsRuntimeState> {
   if (process.platform !== "win32") return {}
   try {
-    const { stdout } = await runPowerShell(serverDir, "Status")
+    const { stdout } = await runPowerShell(serverDir, "Status", port)
     const line = stdout.trim().split(/\r?\n/).at(-1)
     return line ? (JSON.parse(line) as WindowsRuntimeState) : {}
   } catch {
@@ -213,13 +271,14 @@ async function healthCheck(port: number) {
   }
 }
 
-async function waitForHealth(port: number) {
+async function waitForHealth(serverDir: string, port: number) {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS
   while (Date.now() < deadline) {
-    if (await healthCheck(port)) return
+    const runtime = await windowsRuntimeState(serverDir, port)
+    if (runtime.running && runtime.listeningPorts?.includes(port) && (await healthCheck(port))) return
     await new Promise((resolve) => setTimeout(resolve, 350))
   }
-  throw new LocalControlServerError(`本地服务未能在端口 ${port} 上通过健康检查`)
+  throw new LocalControlServerError(`受管本地服务未能在端口 ${port} 上通过健康检查`)
 }
 
 export async function getLocalControlServerStatus(): Promise<LocalControlServerStatus> {
@@ -228,9 +287,10 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     serverDir = await resolveLocalServerDirectory()
   } catch (error) {
     const message = error instanceof Error ? error.message : "未找到 server 项目目录"
+    const platformSupported = process.platform === "win32"
     return {
-      platformSupported: false,
-      runtimeStatus: "unsupported",
+      platformSupported,
+      runtimeStatus: platformSupported ? "not-installed" : "unsupported",
       installed: false,
       running: false,
       healthy: false,
@@ -253,34 +313,38 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   }
 
   const paths = managementPaths(serverDir)
-  const [envExists, distExists, lockExists, scriptExists, npm, values, runtime] = await Promise.all([
+  const values = await readEnvironment(serverDir)
+  const port = portFromEnvironment(values)
+  const [envExists, distExists, lockExists, scriptExists, npm, runtime] = await Promise.all([
     exists(paths.env),
     exists(paths.distEntry),
     exists(paths.packageLock),
     exists(paths.script),
     npmAvailable(serverDir),
-    readEnvironment(serverDir),
-    windowsRuntimeState(serverDir),
+    windowsRuntimeState(serverDir, port),
   ])
   const node = majorNodeVersion() >= 22
   const source = lockExists && scriptExists
-  const platformSupported = process.platform === "win32" && source
-  const port = portFromEnvironment(values)
+  const platformSupported = process.platform === "win32"
   const accessMode = accessModeFromEnvironment(values)
   const running = runtime.running === true
-  const healthy = running && (await healthCheck(port))
+  const ownsConfiguredListener = runtime.listeningPorts?.includes(port) === true
+  const healthy = running && ownsConfiguredListener && (await healthCheck(port))
   const installed = envExists && distExists
+  const configNeedsRepair = configurationNeedsRepair(values, envExists)
   const firewallPorts = runtime.firewallPorts || []
   const firewallEnabled = firewallPorts.includes(port)
   const firewallNeedsCleanup = accessMode === "loopback" && firewallPorts.length > 0
   const issues: string[] = []
 
-  if (process.platform !== "win32") issues.push("本地控制服务管理仅支持 Windows")
+  if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
   if (!node) issues.push("需要 Node.js 22 或更高版本")
   if (!npm) issues.push("未检测到 npm")
   if (!source) issues.push("server 项目源码或 Windows 管理脚本不完整")
   if (envExists !== distExists) issues.push("本地服务安装不完整，需要修复")
-  if (running && !healthy) issues.push("进程正在运行，但健康检查失败")
+  if (configNeedsRepair) issues.push("本地服务配置缺失或不安全，需要修复")
+  if (running && !ownsConfiguredListener) issues.push(`受管进程未监听配置端口 ${port}`)
+  else if (running && !healthy) issues.push("进程正在运行，但健康检查失败")
   if (accessMode === "lan" && !firewallEnabled) issues.push("局域网模式尚未完成 Windows 防火墙放行")
   if (firewallNeedsCleanup) issues.push("检测到不再需要的 Windows 防火墙规则")
 
@@ -293,25 +357,26 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   }
 
   const key = values.get("PANEL_API_KEY")
+  const localAddresses = localIpv4Addresses()
   return {
     platformSupported,
     runtimeStatus,
     installed,
     running,
     healthy,
-    needsRepair: envExists !== distExists || (running && !healthy),
+    needsRepair: envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
     pid: runtime.pid || null,
     startedAt: runtime.startedAt || null,
     autoStartEnabled: runtime.autoStartEnabled === true,
     accessMode,
-    host: accessMode === "lan" ? "0.0.0.0" : "127.0.0.1",
+    host: values.get("HOST") || "127.0.0.1",
     port,
     firewallEnabled,
     firewallNeedsCleanup,
     serverDir,
-    databasePath: path.join(serverDir, "data", "nacho.db"),
-    localAddresses: localIpv4Addresses(),
-    connection: installed && key ? { api: localApi(port), key } : null,
+    databasePath: databasePathFromEnvironment(serverDir, values),
+    localAddresses,
+    connection: installed && key ? { api: localApi(port), agentApi: localAgentApi(accessMode, port, localAddresses), key } : null,
     prerequisites: { node, nodeVersion: process.versions.node, npm, source },
     issues,
   }
@@ -350,8 +415,9 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
   if (!(await exists(managementPaths(serverDir).distEntry))) {
     throw new LocalControlServerError("缺少服务端构建产物，请先安装或修复", 409)
   }
-  await runPowerShell(serverDir, "Start")
-  await waitForHealth(portFromEnvironment(values))
+  const port = portFromEnvironment(values)
+  await runPowerShell(serverDir, "Start", port)
+  await waitForHealth(serverDir, port)
 }
 
 async function buildServer(serverDir: string) {
@@ -376,17 +442,18 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
     }
     const status = await getLocalControlServerStatus()
     requireWindows(status)
-    if (!status.prerequisites.node || !status.prerequisites.npm) {
-      throw new LocalControlServerError("请先安装 Node.js 22 或更高版本，并确保 npm 可用", 409)
+    if (!status.prerequisites.node || !status.prerequisites.npm || !status.prerequisites.source) {
+      throw new LocalControlServerError("请确保 Node.js 22+、npm 与完整的 server 项目源码可用", 409)
     }
     if (status.installed) throw new LocalControlServerError("本地服务已经安装", 409)
+    if (status.needsRepair) throw new LocalControlServerError("检测到已有配置或构建产物，请使用修复功能以保留现有数据与密钥", 409)
 
     const serverDir = status.serverDir
     await buildServer(serverDir)
     if (options.accessMode === "lan") await runPowerShell(serverDir, "SetFirewall", port)
     const values = createInitialEnvironment({ accessMode: options.accessMode, autoStart: options.autoStart, port })
     await writeEnvironment(serverDir, values)
-    if (options.autoStart) await runPowerShell(serverDir, "EnableAutostart")
+    if (options.autoStart) await runPowerShell(serverDir, "EnableAutostart", port)
     await startUnlocked(serverDir, values)
     return getLocalControlServerStatus()
   })
@@ -431,25 +498,41 @@ export function repairLocalControlServer() {
     requireWindows(status)
     const serverDir = status.serverDir
     const paths = managementPaths(serverDir)
-    const values = (await exists(paths.env))
-      ? await readEnvironment(serverDir)
+    const envExisted = await exists(paths.env)
+    const previousValues = envExisted ? await readEnvironment(serverDir) : new Map<string, string>()
+    const values = envExisted
+      ? ensureManagedEnvironment(previousValues)
       : createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: DEFAULT_PORT })
     const wasRunning = status.running
-    if (wasRunning) await stopUnlocked(serverDir, values)
+    if (wasRunning) await stopUnlocked(serverDir, previousValues)
     await mkdir(paths.stateDir, { recursive: true })
-    await rm(paths.backupDist, { recursive: true, force: true })
+    await Promise.all([
+      rm(paths.backupDist, { recursive: true, force: true }),
+      rm(paths.backupEnv, { force: true }),
+    ])
     if (await exists(path.dirname(paths.distEntry))) await cp(path.dirname(paths.distEntry), paths.backupDist, { recursive: true })
+    if (envExisted) await cp(paths.env, paths.backupEnv)
     try {
       await buildServer(serverDir)
+      if (accessModeFromEnvironment(values) === "lan") {
+        await runPowerShell(serverDir, "SetFirewall", portFromEnvironment(values))
+      } else if (status.firewallNeedsCleanup) {
+        await runPowerShell(serverDir, "RemoveFirewall", portFromEnvironment(values))
+      }
       await writeEnvironment(serverDir, values)
       if (wasRunning || !status.installed) await startUnlocked(serverDir, values)
-      await rm(paths.backupDist, { recursive: true, force: true })
+      await Promise.all([
+        rm(paths.backupDist, { recursive: true, force: true }),
+        rm(paths.backupEnv, { force: true }),
+      ])
     } catch (error) {
       if (await exists(paths.backupDist)) {
         await rm(path.dirname(paths.distEntry), { recursive: true, force: true })
         await cp(paths.backupDist, path.dirname(paths.distEntry), { recursive: true })
       }
-      if (wasRunning && (await exists(paths.distEntry))) await startUnlocked(serverDir, values).catch(() => undefined)
+      if (envExisted && (await exists(paths.backupEnv))) await cp(paths.backupEnv, paths.env)
+      else await rm(paths.env, { force: true })
+      if (wasRunning && (await exists(paths.distEntry))) await startUnlocked(serverDir, previousValues).catch(() => undefined)
       throw error
     }
     return getLocalControlServerStatus()
@@ -461,7 +544,7 @@ export function setLocalControlAutoStart(enabled: boolean) {
     const status = await getLocalControlServerStatus()
     requireWindows(status)
     if (!status.installed) throw new LocalControlServerError("本地服务尚未安装", 409)
-    await runPowerShell(status.serverDir, enabled ? "EnableAutostart" : "DisableAutostart")
+    await runPowerShell(status.serverDir, enabled ? "EnableAutostart" : "DisableAutostart", status.port)
     return getLocalControlServerStatus()
   })
 }
@@ -474,15 +557,35 @@ export function setLocalControlAccessMode(accessMode: LocalControlAccessMode) {
     if (!status.installed) throw new LocalControlServerError("本地服务尚未安装", 409)
     if (status.accessMode === accessMode && !(accessMode === "loopback" && status.firewallNeedsCleanup)) return status
 
-    const values = await readEnvironment(status.serverDir)
+    const previousValues = await readEnvironment(status.serverDir)
+    const values = new Map(previousValues)
     const port = portFromEnvironment(values)
-    if (accessMode === "lan") await runPowerShell(status.serverDir, "SetFirewall", port)
-    if (status.running) await stopUnlocked(status.serverDir, values)
-    values.set("HOST", accessMode === "lan" ? "0.0.0.0" : "127.0.0.1")
-    await writeEnvironment(status.serverDir, values)
-    if (status.running) await startUnlocked(status.serverDir, values)
-    if (accessMode === "loopback") await runPowerShell(status.serverDir, "RemoveFirewall")
-    return getLocalControlServerStatus()
+    let stopped = false
+    let wroteEnvironment = false
+    let startedWithNewEnvironment = false
+    try {
+      if (accessMode === "lan") await runPowerShell(status.serverDir, "SetFirewall", port)
+      if (status.running) {
+        await stopUnlocked(status.serverDir, previousValues)
+        stopped = true
+      }
+      values.set("HOST", accessMode === "lan" ? "0.0.0.0" : "127.0.0.1")
+      await writeEnvironment(status.serverDir, values)
+      wroteEnvironment = true
+      if (status.running) {
+        await startUnlocked(status.serverDir, values)
+        startedWithNewEnvironment = true
+      }
+      if (accessMode === "loopback") await runPowerShell(status.serverDir, "RemoveFirewall")
+      return getLocalControlServerStatus()
+    } catch (error) {
+      if (startedWithNewEnvironment) await stopUnlocked(status.serverDir, values).catch(() => undefined)
+      if (wroteEnvironment) await writeEnvironment(status.serverDir, previousValues).catch(() => undefined)
+      if (status.running && (stopped || startedWithNewEnvironment)) {
+        await startUnlocked(status.serverDir, previousValues).catch(() => undefined)
+      }
+      throw error
+    }
   })
 }
 

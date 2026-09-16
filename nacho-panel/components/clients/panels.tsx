@@ -287,7 +287,9 @@ function normalizeUrl(raw: string) {
 /* ---------- 面板二：客户端安装脚本 ---------- */
 export function AddClientPanel() {
   const { serverSource } = useOnboarding()
-  const configuredUrl = serverSource?.mode === "cloud" ? serverSource.api : defaultServerBaseUrl()
+  const configuredUrl = serverSource?.mode === "local"
+    ? serverSource.agentApi || serverSource.api
+    : serverSource?.api || defaultServerBaseUrl()
   const [serverUrl, setServerUrl] = useState(configuredUrl)
 
   useEffect(() => setServerUrl(configuredUrl), [configuredUrl])

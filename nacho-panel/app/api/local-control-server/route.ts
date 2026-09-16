@@ -11,7 +11,6 @@ import {
   stopLocalControlServer,
   uninstallLocalControlServer,
 } from "@/lib/local-control-server"
-import type { LocalControlAccessMode } from "@/lib/local-control-server-types"
 import { isSameOriginRequest } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
@@ -60,7 +59,16 @@ function handleError(error: unknown) {
   return json({ ok: false, message: error instanceof Error ? error.message : "本地服务管理失败" }, { status: 500 })
 }
 
-export async function GET() {
+function requireOnlyKeys(body: Record<string, unknown>, allowed: string[]) {
+  if (Object.keys(body).some((key) => !allowed.includes(key))) {
+    throw new LocalControlServerError("请求包含不支持的字段", 400)
+  }
+}
+
+export async function GET(request: NextRequest) {
+  if (!isSameOriginRequest(request.headers, request.nextUrl.origin)) {
+    return json({ ok: false, message: "仅允许面板同源请求" }, { status: 403 })
+  }
   try {
     return json({ ok: true, data: await getLocalControlServerStatus() })
   } catch (error) {
@@ -76,22 +84,36 @@ export async function POST(request: NextRequest) {
     let data
     switch (body.action) {
       case "install":
+        requireOnlyKeys(body, ["action", "accessMode", "autoStart", "port"])
+        if (body.accessMode !== "loopback" && body.accessMode !== "lan") {
+          throw new LocalControlServerError("连接范围无效", 400)
+        }
+        if (typeof body.autoStart !== "boolean") {
+          throw new LocalControlServerError("autoStart 必须是布尔值", 400)
+        }
+        if (body.port !== undefined && typeof body.port !== "number") {
+          throw new LocalControlServerError("端口必须是数字", 400)
+        }
         data = await installLocalControlServer({
-          accessMode: body.accessMode as LocalControlAccessMode,
-          autoStart: body.autoStart === true,
-          port: body.port === undefined ? undefined : Number(body.port),
+          accessMode: body.accessMode,
+          autoStart: body.autoStart,
+          port: body.port,
         })
         break
       case "start":
+        requireOnlyKeys(body, ["action"])
         data = await startLocalControlServer()
         break
       case "stop":
+        requireOnlyKeys(body, ["action"])
         data = await stopLocalControlServer()
         break
       case "restart":
+        requireOnlyKeys(body, ["action"])
         data = await restartLocalControlServer()
         break
       case "repair":
+        requireOnlyKeys(body, ["action"])
         data = await repairLocalControlServer()
         break
       default:
@@ -110,13 +132,18 @@ export async function PATCH(request: NextRequest) {
     const body = await requestBody(request)
     const keys = Object.keys(body)
     if (keys.length !== 1) throw new LocalControlServerError("每次只能修改一项本地服务设置", 400)
-    const data = Object.hasOwn(body, "autoStart")
-      ? await setLocalControlAutoStart(body.autoStart === true)
-      : Object.hasOwn(body, "accessMode")
-        ? await setLocalControlAccessMode(body.accessMode as LocalControlAccessMode)
-        : (() => {
-            throw new LocalControlServerError("本地服务设置项无效", 400)
-          })()
+    let data
+    if (Object.hasOwn(body, "autoStart")) {
+      if (typeof body.autoStart !== "boolean") throw new LocalControlServerError("autoStart 必须是布尔值", 400)
+      data = await setLocalControlAutoStart(body.autoStart)
+    } else if (Object.hasOwn(body, "accessMode")) {
+      if (body.accessMode !== "loopback" && body.accessMode !== "lan") {
+        throw new LocalControlServerError("连接范围无效", 400)
+      }
+      data = await setLocalControlAccessMode(body.accessMode)
+    } else {
+      throw new LocalControlServerError("本地服务设置项无效", 400)
+    }
     return json({ ok: true, data })
   } catch (error) {
     return handleError(error)
@@ -128,10 +155,9 @@ export async function DELETE(request: NextRequest) {
   if (invalidRequest) return invalidRequest
   try {
     const body = await requestBody(request)
-    if (Object.keys(body).some((key) => key !== "confirmation")) {
-      throw new LocalControlServerError("卸载请求包含未知字段", 400)
-    }
-    return json({ ok: true, data: await uninstallLocalControlServer(String(body.confirmation || "")) })
+    requireOnlyKeys(body, ["confirmation"])
+    if (typeof body.confirmation !== "string") throw new LocalControlServerError("卸载确认文字无效", 400)
+    return json({ ok: true, data: await uninstallLocalControlServer(body.confirmation) })
   } catch (error) {
     return handleError(error)
   }
