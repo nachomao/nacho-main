@@ -4,6 +4,7 @@ import { useState } from "react"
 import {
   AlertCircle,
   Check,
+  ChevronUp,
   CircleStop,
   Copy,
   Database,
@@ -146,11 +147,13 @@ export function LocalControlServerManager({
   currentSource,
   onConnected,
   onUninstalled,
+  onCollapse,
 }: {
   surface?: "onboarding" | "settings"
   currentSource?: ServerSource
   onConnected?: (source: Exclude<ServerSource, null>) => void
   onUninstalled?: () => void
+  onCollapse?: () => void
 }) {
   const { status, error: statusError, loading, refreshing, refresh } = useLocalControlServer(5_000)
   const [accessMode, setAccessMode] = useState<LocalControlAccessMode>("loopback")
@@ -233,7 +236,19 @@ export function LocalControlServerManager({
 
   if (loading && !status) {
     return (
-      <div className={cn("flex min-h-52 items-center justify-center border", onboarding ? "rounded-[1.75rem] border-border/55 bg-card/45 shadow-[0_24px_75px_-48px_rgba(0,0,0,0.95)] backdrop-blur-xl" : "rounded-2xl border-border bg-card/50")} aria-live="polite">
+      <div
+        className={cn(
+          "relative flex min-h-52 items-center justify-center border",
+          onboarding ? "border-0 bg-transparent px-5 py-6" : "rounded-2xl border-border bg-card/50",
+        )}
+        aria-live="polite"
+      >
+        {onboarding && onCollapse && (
+          <Button type="button" variant="ghost" size="sm" className="absolute right-5 top-4 rounded-xl" data-source-collapse onClick={onCollapse}>
+            <ChevronUp data-icon="inline-start" aria-hidden="true" />
+            收起
+          </Button>
+        )}
         <Loader2 className="size-5 animate-spin text-primary" aria-hidden="true" />
         <span className="ml-2 text-sm text-muted-foreground">正在检查本机环境…</span>
       </div>
@@ -242,11 +257,17 @@ export function LocalControlServerManager({
 
   if (!status) {
     return (
-      <Alert variant="destructive">
-        <AlertCircle aria-hidden="true" />
-        <AlertTitle>无法读取本地服务状态</AlertTitle>
-        <AlertDescription>{statusError || "请刷新后重试"}</AlertDescription>
-      </Alert>
+      <div className={cn("flex flex-col gap-3", onboarding && "p-5 sm:p-6")}>
+        {onboarding && onCollapse && (
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" className="rounded-xl" data-source-collapse onClick={onCollapse}>
+              <ChevronUp data-icon="inline-start" aria-hidden="true" />
+              收起
+            </Button>
+          </div>
+        )}
+        <Alert variant="destructive"><AlertCircle aria-hidden="true" /><AlertTitle>无法读取本机状态</AlertTitle><AlertDescription>{operationError || statusError || "请稍后重试。"}</AlertDescription></Alert>
+      </div>
     )
   }
 
@@ -255,7 +276,7 @@ export function LocalControlServerManager({
 
   return (
     <div className="flex flex-col gap-4">
-      <section className={cn("overflow-hidden border", onboarding ? "rounded-[1.75rem] border-border/55 bg-card/48 shadow-[0_24px_75px_-48px_rgba(0,0,0,0.95)] backdrop-blur-xl" : "rounded-2xl border-border bg-card/72 shadow-sm")}>
+      <section className={cn("overflow-hidden border", onboarding ? "border-0 bg-transparent" : "rounded-2xl border-border bg-card/72 shadow-sm")}>
         <div className={cn("flex flex-col gap-3 border-b sm:flex-row sm:items-center sm:justify-between", onboarding ? "border-border/45 bg-foreground/[0.018] px-5 py-5 sm:px-6" : "border-border/70 bg-gradient-to-br from-primary/7 via-transparent to-transparent px-4 py-4")}>
           <div className="flex min-w-0 items-center gap-3">
             <span className={cn("flex shrink-0 items-center justify-center border shadow-sm", onboarding ? "size-11 rounded-2xl border-border/55 bg-background/35 text-foreground" : "size-10 rounded-xl border-primary/15 bg-primary/10 text-primary")}>
@@ -271,12 +292,20 @@ export function LocalControlServerManager({
               </p>
             </div>
           </div>
-          {status.installed && (
-            <Button variant="ghost" size="sm" disabled={busy || refreshing} onClick={() => void refresh()} aria-label="刷新本地服务状态">
-              <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} aria-hidden="true" />
-              刷新
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {status.installed && (
+              <Button variant="ghost" size="sm" disabled={busy || refreshing} onClick={() => void refresh()} aria-label="刷新本地服务状态">
+                <RefreshCw data-icon="inline-start" className={cn(refreshing && "animate-spin")} aria-hidden="true" />
+                刷新
+              </Button>
+            )}
+            {onboarding && onCollapse && (
+              <Button type="button" variant="ghost" size="sm" className="rounded-xl" data-source-collapse onClick={onCollapse}>
+                <ChevronUp data-icon="inline-start" aria-hidden="true" />
+                收起
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-4")}>

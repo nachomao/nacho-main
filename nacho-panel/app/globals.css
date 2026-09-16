@@ -426,6 +426,36 @@
   animation: avatar-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* 首次引导的来源卡片在同一网格内扩张，把另一张卡片推向边缘，而不是另开详情面板。 */
+.source-choice-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  transition: grid-template-columns 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (min-width: 640px) {
+  .source-choice-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .source-choice-grid[data-selected='local'] {
+    grid-template-columns: minmax(0, 4.8fr) minmax(11rem, 1fr);
+  }
+
+  .source-choice-grid[data-selected='cloud'] {
+    grid-template-columns: minmax(11rem, 1fr) minmax(0, 4.8fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-choice-grid,
+  .source-choice-grid * {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
 /* 鍗＄墖灞曞紑 / 鏀惰捣鏃舵帹鍔ㄦ爣棰樼粍锛屽舰鎴?鍗＄墖鍏堝姩銆佹枃瀛楃揣鎺ョ潃璺熶笂"鐨勯敊浣嶈窡闅忥細
    鐗堥潰閲嶆帓锛堝眳涓噸鎺掞級浼氶殢闈㈡澘楂樺害杩囨浮鎶婃枃瀛楁暣浣撲笂绉绘垨涓嬬Щ锛?   鍔ㄧ敾璁╂枃瀛楃粍鍏堝仠鐣欏湪鍋忕Щ澶勪竴灏忔锛堢瓑鍗＄墖鍏堣蛋锛夛紝鍐嶆儻鎬ц拷涓婏紝鑰岄潪涓庡崱鐗囧悓姝ョ‖绉汇€?   璧峰鐨勫仠椤挎鏄叧閿€斺€斿畠鍒堕€犲嚭鏂囧瓧"绱ф帴鍏跺悗"钀戒綅鐨勫眰娆℃劅銆?*/
 @keyframes text-push-up {
