@@ -5,7 +5,7 @@
 - 本项目处于持续开发阶段。每次任务均以当前工作区源码、配置、测试和实际运行状态为准。
 - 信息优先级：当前源码与配置 > 自动化测试 > 实际运行结果 > README > 历史续作记录 > 口头推测。
 - 开始修改前先读取相关文件并执行 `git status --short`；已有实现、协议、测试和运行态需要延续，避免重复实现已经闭环的功能。
-- `server/client/NEXT_TASK_PROMPT.md` 是 2026-07-24 Windows Agent 升级任务的历史验收记录，仅在追溯升级协议时参考。它不是项目全局现状，也不覆盖本文件。
+- `PROJECT_REMAINING_WORK.md` 是唯一当前待办来源；README 只说明使用方式，历史计划、阶段验收记录和临时证据均不代表项目现状。完成或发现待办时直接更新该文件，不再新增平行的续作清单。
 - 输出与代码注释优先使用中文；类型名、协议字段、命令、日志关键字保持源码中的英文形式。
 - 只陈述亲自读取或执行确认的事实。运行结果、服务状态、测试数量、制品版本和哈希均在当前任务中重新获取。
 - 以最小完整改动完成任务：既覆盖必要的三层链路，也保持无关页面、动画、主题、协议和运行配置不变。
@@ -52,7 +52,7 @@
 - 安装程序：`%ProgramFiles%/Nacho/Agent/nacho-agent.exe`。
 - 配置与持久化状态：`%ProgramData%/Nacho/agent.json`、`state.dat`、`queue/` 及更新／重启 intent 文件。
 - 受 ACL 保护的 `%ProgramData%/Nacho` 内容仅在确有验收需要时由提升后的终端读取；配置、设备 token 和 DPAPI 状态不进入输出。
-- 当前支持的命令处理器包括：`run-program`、`manage-service`、`terminate-process`、`restart-system`、`collect-logs`、`update-agent`。
+- 当前支持的命令处理器包括：`run-program`、`run-shell`、`install-package`、`deploy-file`、`rollback-file-deploy`、`manage-service`、`list-processes`、`terminate-process`、`restart-process`、`set-process-efficiency`、`restart-system`、`collect-logs`、`manage-local-user`、`manage-registry`、`show-message`、`open-url`、`update-agent`。
 
 ## 3. 真实数据流与协议边界
 
@@ -89,7 +89,7 @@
 ### 4.3 Agent 改动
 
 - 命令执行继续串行化，并沿用 `CommandJournal` 的先持久化、ACK、执行、报告和重试流程。
-- `run-program`、服务控制、进程终止、系统重启和日志采集继续执行本机策略与允许列表；升级保留既有 `agent.json`、DPAPI 身份和 journal。
+- 程序／Shell／包安装、文件部署与回滚、服务／进程／用户／注册表管理、消息／URL、系统重启和日志采集继续执行各自的本机策略、权限与允许列表；升级保留既有 `agent.json`、DPAPI 身份和 journal。
 - Windows 操作优先使用现有 .NET／Win32 API，不引入额外 shell 链路。
 - 真实服务、进程、重启、日志和升级验收均使用专门夹具或当前任务指定对象，记录并恢复测试前状态。
 - 发布只通过 `server/client/deploy/publish.ps1` 生成制品和清单；发布后再验证清单、文件大小和 SHA-256。
@@ -108,23 +108,23 @@
 
 ## 5. 当前已知的真实功能与演示边界
 
-- 已接通真实链路：客户端注册与心跳、客户端列表、Panel API、WebSocket/HTTP 命令投递、Agent journal、程序执行、服务控制、进程终止、系统重启、受限日志采集、Agent 手动升级与回滚。
-- 服务端已提供任务、插件、健康、日志和设置 CRUD/API，但面板是否真正调用这些接口需要按具体组件核对。
-- `nacho-panel/components/tasks/tasks-view.tsx` 当前只在 React 本地状态中创建、编辑、启停和删除任务，尚未接入服务端 `/tasks`。
-- `nacho-panel/components/plugins/plugins-context.tsx` 当前只维护 React 本地状态，导入、下载、批量安装等交互尚未形成服务端 + Agent 完整闭环。
-- `nacho-panel/components/health/health-view.tsx` 的发现项、日志包、主动采集和重新分析目前是空初值加本地定时模拟，尚未接入已有 health API。
-- `nacho-panel/components/ai-mode/ai-workspace.tsx` 是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
-- `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 是本地模拟终端和模拟文件系统。
+- 已接通真实链路：客户端注册与心跳、客户端列表、Panel API、WebSocket/HTTP 命令投递、Agent journal，以及 `CommandProcessor` 当前列出的 Windows 命令处理器。
+- `nacho-panel/components/tasks/tasks-view.tsx` 已通过服务端 `/tasks` 相关 API 完成真实读取、CRUD、启停和任务下发。
+- `nacho-panel/components/health/health-view.tsx` 已通过 health API 完成发现项与日志包读取、主动采集、下载、重分析和重采集。
+- `nacho-panel/components/plugins/plugins-context.tsx` 的目录读取、CRUD 与启停状态已由服务端持久化；包下载、导入和批量安装仍未形成真实包传输与 Agent 执行闭环。
+- `nacho-panel/components/ai-mode/ai-workspace.tsx` 仍是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
+- `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 仍是本地模拟终端和模拟文件系统。
 - `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/nacho.ps1`。
 - `server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
 - 发现“注释宣称真实、实现仍为本地 state 或定时模拟”的情况时，以代码行为为准，并在相关任务中修正注释。
 
 ## 6. 文件与依赖管理
 
-- 面板使用 `nacho-panel/pnpm-lock.yaml` 与 pnpm；`server/` 使用 `package-lock.json` 与 npm；Agent 使用 dotnet/NuGet。各层保持各自包管理器。
+- 根 `package.json` 与根 `pnpm-lock.yaml` 是 Vercel 部署及命令代理入口，不得作为多余文件删除；面板使用 `nacho-panel/pnpm-lock.yaml` 与 pnpm，`server/` 使用 `package-lock.json` 与 npm，Agent 使用 dotnet/NuGet。各层保持各自包管理器。
 - 业务源码修改范围通常为 `nacho-panel/app/`、`nacho-panel/components/`、`nacho-panel/lib/`、`server/src/`、`server/client/src/` 和对应测试。
 - 生成目录和运行数据保持只读：`nacho-panel/.next/`、各级 `node_modules/`、`server/dist/`、`server/data/`、`server/tmp-*`、`**/bin/`、`**/obj/`。
 - `server/artifacts/windows/*.exe` 是发布制品；源码任务不直接编辑二进制文件。
+- `.codex-*`、`.v0-backups/`、`*.bak` 和无引用的调试截图属于临时文件，不提交到仓库；正式 UI 图片和 `public/` 运行资源不按扩展名批量清理。
 - 当前仓库基线可能尚未建立 tracked files。每次检查 `git ls-files`；当结果为空时，`git diff` 的覆盖范围并不完整，需要同时核对文件清单和内容。清理、重置、暂存、提交与推送均以用户明确要求为触发条件。
 - 保留用户已有的未提交文件和运行数据；修改聚焦当前任务涉及的文件。
 
@@ -189,13 +189,8 @@ powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1
 5. **Restore**：真机测试结束后恢复服务状态、配置、制品和临时夹具，清理已验证的临时目录。
 6. **Report**：最终摘要包含改动文件、行为变化、执行过的命令及结果、真实运行证据、剩余演示边界或下一步。
 
-## 9. 2026-07-31 基线（仅作比较，使用前重新核验）
+## 9. 动态基线规则
 
-- 面板 `http://localhost:3000` 与 `/clients` 返回 HTTP 200。
-- 服务端 `control-server.service` 为 active/enabled，`http://localhost:8443/health` 返回 HTTP 200。
-- Windows `NachoAgent` 为 Running/Auto/LocalSystem，安装程序版本为 `1.1.1.0`。
-- Windows 工具链：Node `v24.13.0`、pnpm `10.28.2`、.NET SDK `10.0.101`。
-- WSL 工具链：Node `v22.23.1`、npm `10.9.8`。
-- 面板逻辑测试：19 项通过；`pnpm exec tsc --noEmit` 通过。
-- 服务端在 WSL 原生依赖隔离目录中：8 项测试通过，TypeScript build 通过。
-- Agent：107 项测试通过，Release build 为 0 warning / 0 error。
+- 不在本文件固化测试数量、工具链版本、服务状态、制品版本或哈希；这些信息会随持续开发和部署变化。
+- 每次任务按受影响层重新执行第 7 节验证，并在最终报告中记录当次命令、结果与未执行原因。
+- 历史聊天、验收截图和证据目录只能用于追溯，不能替代当前源码、自动化测试和真实运行结果。
