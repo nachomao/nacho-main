@@ -160,8 +160,9 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
     setOpenedModes((previous) => (previous.includes(mode) ? previous : [...previous, mode]))
     setSelected(closing ? null : mode)
     window.requestAnimationFrame(() => {
-      if (closing) cardButtons.current[mode]?.focus()
-      else document.querySelector<HTMLElement>(`#server-source-detail-${mode} [data-source-collapse]`)?.focus()
+      // 展开中的 overflow-hidden 容器也会被 focus 滚动，随后滚动范围收缩会让内容先上冲再回正。
+      if (closing) cardButtons.current[mode]?.focus({ preventScroll: true })
+      else document.querySelector<HTMLElement>(`#server-source-detail-${mode} [data-source-collapse]`)?.focus({ preventScroll: true })
     })
   }
 
