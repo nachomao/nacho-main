@@ -67,21 +67,12 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
   const [leaving, setLeaving] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle")
   const [connectionError, setConnectionError] = useState("")
-  const [push, setPush] = useState<{ dir: "up" | "down"; k: number } | null>(null)
   const cardButtons = useRef<Record<Mode, HTMLButtonElement | null>>({ local: null, cloud: null })
-  const prevOpen = useRef(false)
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setShown(true))
     return () => cancelAnimationFrame(frame)
   }, [])
-
-  useEffect(() => {
-    const isOpen = selected !== null
-    if (prevOpen.current === isOpen) return
-    prevOpen.current = isOpen
-    setPush((previous) => ({ dir: isOpen ? "up" : "down", k: (previous?.k ?? 0) + 1 }))
-  }, [selected])
 
   const finish = (source: Exclude<ServerSource, null>) => {
     if (leaving) return
@@ -185,14 +176,7 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
       />
 
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center gap-7 sm:gap-8">
-        <header
-          key={push?.k ?? "init"}
-          className={cn(
-            "flex flex-col items-center gap-3",
-            push?.dir === "up" && "animate-text-push-up",
-            push?.dir === "down" && "animate-text-push-down",
-          )}
-        >
+        <header className="flex flex-col items-center gap-3">
           <Badge variant="outline" className="border-border/60 bg-background/35 px-2.5 text-muted-foreground backdrop-blur-md" style={reveal(0)}>
             <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
             控制服务
