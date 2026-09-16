@@ -31,19 +31,19 @@ test("missing settings return defaults without claiming a persisted file", async
 
 test("patches are validated, merged, and persisted", async () => {
   const saved = await patchLocalSettings({
-    profile: { userName: "  Alice  ", avatarId: "ghost" },
+    profile: { userName: "  Alice  ", avatarId: "lounge" },
     theme: "green",
     onboardingCompleted: true,
   })
   assert.equal(saved.profile.userName, "Alice")
-  assert.equal(saved.profile.avatarId, "ghost")
+  assert.equal(saved.profile.avatarId, "lounge")
   assert.equal(saved.theme, "green")
   assert.equal(saved.onboardingCompleted, true)
 
   const disk = JSON.parse(await readFile(getLocalSettingsPath(), "utf8"))
   assert.deepEqual(disk, saved)
 
-  const second = await patchLocalSettings({ profile: { avatarId: "cat" } })
+  const second = await patchLocalSettings({ profile: { avatarId: "heart" } })
   assert.equal(second.profile.userName, "Alice")
   assert.equal(second.theme, "green")
 })
@@ -61,6 +61,27 @@ test("unknown fields and invalid custom avatars are rejected", async () => {
     () => patchLocalSettings({ profile: { customAvatar: `data:image/png;base64,${"A".repeat(MAX_CUSTOM_AVATAR_LENGTH)}` } }),
     LocalSettingsValidationError,
   )
+})
+
+test("legacy avatar ids migrate to the renamed default without resetting other settings", async () => {
+  const legacySettings = {
+    ...defaultLocalSettings(),
+    profile: {
+      ...defaultLocalSettings().profile,
+      userName: "Legacy User",
+      avatarId: "rabbit",
+    },
+    theme: "orange",
+    onboardingCompleted: true,
+  }
+  await writeFile(getLocalSettingsPath(), JSON.stringify(legacySettings), "utf8")
+
+  const snapshot = await readLocalSettings()
+  assert.equal(snapshot.recovered, false)
+  assert.equal(snapshot.settings.profile.avatarId, "heart")
+  assert.equal(snapshot.settings.profile.userName, "Legacy User")
+  assert.equal(snapshot.settings.theme, "orange")
+  assert.equal(snapshot.settings.onboardingCompleted, true)
 })
 
 test("corrupt files are backed up and replaced with defaults", async () => {

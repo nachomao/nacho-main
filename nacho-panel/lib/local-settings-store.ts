@@ -25,6 +25,7 @@ const TOP_LEVEL_PATCH_KEYS = new Set(["profile", "theme", "onboardingCompleted",
 const PROFILE_PATCH_KEYS = new Set(["userName", "avatarId", "customAvatar"])
 const NOTIFICATION_CENTER_PATCH_KEYS = new Set(["maxItems", "retentionDays", "autoPurge", "defaultSnoozeMinutes", "autoExport", "exportFormat", "showCriticalAsToast"])
 const STORED_KEYS = new Set(["version", "legacyMigrationVersion", "profile", "theme", "onboardingCompleted", "notificationCenter"])
+const LEGACY_AVATAR_IDS = new Set(["cat", "ghost", "bird", "rabbit", "fish", "bot"])
 
 export class LocalSettingsValidationError extends Error {}
 
@@ -54,6 +55,11 @@ function validateAvatarId(value: unknown): LocalAvatarId {
     throw new LocalSettingsValidationError("头像标识无效")
   }
   return value as LocalAvatarId
+}
+
+function validateStoredAvatarId(value: unknown): LocalAvatarId {
+  if (typeof value === "string" && LEGACY_AVATAR_IDS.has(value)) return "heart"
+  return validateAvatarId(value)
 }
 
 function validateCustomAvatar(value: unknown): string | null {
@@ -118,7 +124,7 @@ function validateProfile(value: unknown): LocalProfileSettings {
   assertOnlyKeys(value, PROFILE_PATCH_KEYS, "profile")
   const profile = {
     userName: validateUserName(value.userName),
-    avatarId: validateAvatarId(value.avatarId),
+    avatarId: validateStoredAvatarId(value.avatarId),
     customAvatar: validateCustomAvatar(value.customAvatar),
   }
   if (profile.avatarId === "custom" && !profile.customAvatar) {

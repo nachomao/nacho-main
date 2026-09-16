@@ -3,7 +3,7 @@ export const LOCAL_SETTINGS_VERSION = 1 as const
 export const LOCAL_THEME_IDS = ["blue", "green", "cyan", "orange", "rose"] as const
 export type LocalThemeId = (typeof LOCAL_THEME_IDS)[number]
 
-export const LOCAL_AVATAR_IDS = ["cat", "ghost", "bird", "rabbit", "fish", "bot", "custom"] as const
+export const LOCAL_AVATAR_IDS = ["heart", "lounge", "hood", "custom"] as const
 export type LocalAvatarId = (typeof LOCAL_AVATAR_IDS)[number]
 
 export const NOTIFICATION_EXPORT_FORMATS = ["json", "csv"] as const
@@ -57,7 +57,7 @@ export function defaultLocalSettings(): LocalSettings {
     legacyMigrationVersion: 0,
     profile: {
       userName: "NachoNeko",
-      avatarId: "cat",
+      avatarId: "heart",
       customAvatar: null,
     },
     theme: "blue",
