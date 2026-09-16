@@ -175,7 +175,12 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
         }}
       />
 
-      <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center gap-7 sm:gap-8">
+      <div
+        className={cn(
+          "mx-auto flex min-h-full w-full max-w-5xl flex-col gap-7 sm:gap-8",
+          selected === null ? "justify-center" : "justify-start",
+        )}
+      >
         <header className="flex flex-col items-center gap-3">
           <Badge variant="outline" className="border-border/60 bg-background/35 px-2.5 text-muted-foreground backdrop-blur-md" style={reveal(0)}>
             <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
