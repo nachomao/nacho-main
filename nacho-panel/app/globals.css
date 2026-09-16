@@ -426,30 +426,36 @@
   animation: avatar-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 首次引导的来源卡片在同一网格内扩张，把另一张卡片推向边缘，而不是另开详情面板。 */
-.source-choice-grid {
+/* 首次引导的选择卡片在同一网格内扩张，把另一张卡片推向边缘，而不是另开详情面板。 */
+.source-choice-grid,
+.auth-choice-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   transition: grid-template-columns 0.72s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (min-width: 640px) {
-  .source-choice-grid {
+  .source-choice-grid,
+  .auth-choice-grid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .source-choice-grid[data-selected='local'] {
+  .source-choice-grid[data-selected='local'],
+  .auth-choice-grid[data-selected='key'] {
     grid-template-columns: minmax(0, 4.8fr) minmax(11rem, 1fr);
   }
 
-  .source-choice-grid[data-selected='cloud'] {
+  .source-choice-grid[data-selected='cloud'],
+  .auth-choice-grid[data-selected='password'] {
     grid-template-columns: minmax(11rem, 1fr) minmax(0, 4.8fr);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .source-choice-grid,
-  .source-choice-grid * {
+  .source-choice-grid *,
+  .auth-choice-grid,
+  .auth-choice-grid * {
     animation-duration: 1ms !important;
     transition-duration: 1ms !important;
     transition-delay: 0ms !important;
@@ -585,7 +591,7 @@
 }
 
 /* 通知图标按手绘笔顺执行描边动画：
-   铃铛为帽罩 → 铃身底边 → 铃舌；警告为三角形 → 竖线 → 圆点；倒绘时严格反向擦除。 */
+   铃铛为帽罩 → 铃身底边 → 铃舌；警告为三角形 → 竖线 → 圆点；倒绘���严格反向擦除。 */
 .notice-stroke-icon {
   overflow: visible;
 }
