@@ -656,7 +656,7 @@ function TokenPill() {
           <img src={customAvatar! || "/placeholder.svg"} alt="用户头像" className="h-full w-full object-cover" />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={avatar.src || "/placeholder.svg"} alt="用户头像" className="h-full w-full object-cover" />
+          <img src={avatar.src || "/placeholder.svg"} alt="用户头像" className="size-[82%] object-contain" />
         )}
       </div>
 

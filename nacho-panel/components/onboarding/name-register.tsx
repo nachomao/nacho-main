@@ -5,6 +5,7 @@ import { ArrowRight, ImagePlus } from "lucide-react"
 import { useOnboarding } from "./onboarding-context"
 import { avatars, getAvatar } from "./avatars"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 
 /** 将上传图片读取、居中裁剪为正方形并压缩为 data URL，避免存储过大 */
 function fileToAvatarDataUrl(file: File, size = 256): Promise<string> {
@@ -221,6 +222,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
               pointerEvents: screen === "name" ? "auto" : "none",
             }}
             aria-hidden={screen !== "name"}
+            inert={screen !== "name"}
           >
             <h1
               className="text-balance text-center text-3xl font-semibold text-foreground will-change-transform sm:text-4xl"
@@ -269,17 +271,14 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                     )}
                   />
                   <DrawnPillBorder draw={drawStart} faded={drawDone} />
-                  {/* 箭头钮：边框画完后模糊渐显；默认低调灰，输入内容后点亮为主题色 */}
-                  <button
+                  {/* 箭头钮：边框画完后模糊渐显；默认低调灰，输入内容后显现中性描边 */}
+                  <Button
                     type="button"
+                    variant={value.trim() ? "outline" : "ghost"}
+                    size="icon"
                     onClick={confirmName}
                     aria-label="确认称呼"
-                    className={cn(
-                      "absolute right-2 top-1/2 flex h-10 w-10 items-center justify-center rounded-full transition-all duration-500 ease-out active:scale-90",
-                      value.trim()
-                        ? "bg-primary text-primary-foreground hover:brightness-110"
-                        : "bg-foreground/[0.06] text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
-                    )}
+                    className="absolute right-2 top-1/2 size-10 rounded-full duration-500 ease-out active:scale-90"
                     style={{
                       opacity: drawDone ? 1 : 0,
                       filter: drawDone ? "blur(0px)" : "blur(8px)",
@@ -287,8 +286,8 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                       pointerEvents: drawDone ? "auto" : "none",
                     }}
                   >
-                    <ArrowRight className="h-4.5 w-4.5" strokeWidth={2} />
-                  </button>
+                    <ArrowRight strokeWidth={2} aria-hidden="true" />
+                  </Button>
                 </div>
               </div>
             </div>
@@ -305,6 +304,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
               pointerEvents: screen === "avatar" ? "auto" : "none",
             }}
             aria-hidden={screen !== "avatar"}
+            inert={screen !== "avatar"}
           >
             {/* 大号预览：每次选择重触发弹入动画 */}
             <div
@@ -325,7 +325,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                   <img src={customUrl! || "/placeholder.svg"} alt="自定义头像预览" className="h-full w-full object-cover" />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selected.src || "/placeholder.svg"} alt={selected.label} className="h-full w-full object-cover" />
+                  <img src={selected.src || "/placeholder.svg"} alt={selected.label} className="size-[82%] object-contain" />
                 )}
               </div>
             </div>
@@ -362,28 +362,30 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                     aria-label={a.label}
                     aria-pressed={active}
                     className={cn(
-                      "flex h-14 w-14 items-center justify-center overflow-hidden rounded-full transition-all duration-300 ease-out hover:scale-[1.08] active:scale-95",
+                      "flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-full outline-none transition-all duration-300 ease-out hover:scale-[1.08] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-foreground/70 active:scale-95",
                       active
-                        ? "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.06]"
+                        ? "scale-[1.06] ring-2 ring-foreground/65 ring-offset-2 ring-offset-background"
                         : "opacity-70 hover:opacity-100",
                     )}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.src || "/placeholder.svg"} alt="" className="h-full w-full object-cover" />
+                    <img src={a.src || "/placeholder.svg"} alt="" className="size-[82%] object-contain" />
                   </button>
                 )
               })}
 
               {/* 本地上传头像：选中后显示图片缩略，未选中显示上传图标 */}
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="icon"
                 onClick={() => fileRef.current?.click()}
                 aria-label="上传本地头像"
                 aria-pressed={isCustom}
                 className={cn(
-                  "flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-dashed border-border bg-surface text-muted-foreground transition-all duration-300 ease-out hover:scale-[1.08] hover:text-foreground active:scale-95",
+                  "size-14 overflow-hidden rounded-full border-dashed duration-300 ease-out hover:scale-[1.08] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-foreground/70 active:scale-95",
                   isCustom
-                    ? "scale-[1.06] border-solid ring-2 ring-primary ring-offset-2 ring-offset-background"
+                    ? "scale-[1.06] border-solid ring-2 ring-foreground/65 ring-offset-2 ring-offset-background"
                     : "opacity-80 hover:opacity-100",
                 )}
               >
@@ -391,9 +393,9 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={customUrl! || "/placeholder.svg"} alt="" className="h-full w-full object-cover" />
                 ) : (
-                  <ImagePlus className="h-6 w-6" strokeWidth={1.75} aria-hidden />
+                  <ImagePlus strokeWidth={1.75} aria-hidden="true" />
                 )}
-              </button>
+              </Button>
               <input
                 ref={fileRef}
                 type="file"
@@ -406,10 +408,13 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
             </div>
 
             {/* 确认按钮 */}
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="lg"
               onClick={confirmAvatar}
-              className="mt-10 flex h-12 items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-primary-foreground transition-all duration-300 ease-out hover:brightness-110 active:scale-95"
+              disabled={leaving}
+              className="mt-10 h-12 min-w-32 gap-2 rounded-full px-7 duration-300 ease-out active:scale-95"
               style={{
                 opacity: avatarIn ? 1 : 0,
                 transform: avatarIn ? "translateY(0)" : "translateY(28px)",
@@ -418,8 +423,8 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
               }}
             >
               就用它
-              <ArrowRight className="h-4 w-4" />
-            </button>
+              <ArrowRight data-icon="inline-end" aria-hidden="true" />
+            </Button>
           </div>
         </div>
       )}
