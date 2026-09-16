@@ -289,6 +289,7 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                           <span
                             className={cn(
                               "mt-2 block max-h-24 max-w-md overflow-hidden text-sm leading-6 text-muted-foreground transition-[max-height,margin,opacity,filter] duration-500",
+                              !displaced && "sm:min-h-[4.5rem] md:min-h-12",
                               displaced && "sm:mt-0 sm:max-h-0 sm:opacity-0 sm:blur-sm",
                             )}
                           >
