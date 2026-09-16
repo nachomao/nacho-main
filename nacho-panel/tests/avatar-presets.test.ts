@@ -34,6 +34,14 @@ test("已删除与未知头像标识安全回退，自定义上传分支保持�
 })
 
 const source = readFileSync(new URL("../components/onboarding/name-register.tsx", import.meta.url), "utf8")
+const topbarSource = readFileSync(new URL("../components/topbar.tsx", import.meta.url), "utf8")
+
+test("预设头像缩小并完整显示，自定义头像仍填充圆形容器", () => {
+  assert.equal(source.match(/size-\[82%\] object-contain/g)?.length, 2)
+  assert.match(topbarSource, /size-\[82%\] object-contain/)
+  assert.equal(source.match(/h-full w-full object-cover/g)?.length, 2)
+  assert.match(topbarSource, /h-full w-full object-cover/)
+})
 
 test("头像步骤使用中性描边按钮，并保留上传、中文输入保护和切换动画", () => {
   assert.doesNotMatch(source, /bg-primary|text-primary-foreground|ring-primary/)

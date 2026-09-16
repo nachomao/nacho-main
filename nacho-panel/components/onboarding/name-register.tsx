@@ -325,7 +325,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                   <img src={customUrl! || "/placeholder.svg"} alt="自定义头像预览" className="h-full w-full object-cover" />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selected.src || "/placeholder.svg"} alt={selected.label} className="h-full w-full object-cover" />
+                  <img src={selected.src || "/placeholder.svg"} alt={selected.label} className="size-[82%] object-contain" />
                 )}
               </div>
             </div>
@@ -369,7 +369,7 @@ export function NameRegister({ onDone }: { onDone: () => void }) {
                     )}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={a.src || "/placeholder.svg"} alt="" className="h-full w-full object-cover" />
+                    <img src={a.src || "/placeholder.svg"} alt="" className="size-[82%] object-contain" />
                   </button>
                 )
               })}
