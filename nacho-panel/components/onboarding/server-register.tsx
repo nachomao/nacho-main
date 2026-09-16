@@ -426,10 +426,11 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
 
                                 <Button
                                   type="button"
+                                  variant="outline"
                                   size="lg"
                                   onClick={() => void confirmCloud()}
                                   disabled={!cloudReady || connectionStatus === "testing" || connectionStatus === "success"}
-                                  className="h-11 w-full rounded-xl shadow-[0_12px_30px_-16px_color-mix(in_srgb,var(--primary)_70%,transparent)]"
+                                  className="h-11 w-full rounded-xl"
                                 >
                                   {connectionStatus === "testing" && <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" />}
                                   {connectionStatus === "success" && <Check data-icon="inline-start" aria-hidden="true" />}
