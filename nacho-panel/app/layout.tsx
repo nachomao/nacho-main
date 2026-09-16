@@ -20,8 +20,8 @@ const geistMono = Geist_Mono({
 const outfit = Outfit({ variable: '--font-outfit', subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Token Overview — Crypto Dashboard',
-  description: 'Crypto portfolio and token overview dashboard',
+  title: 'NachoPanel — Windows 设备控制面板',
+  description: '部署并管理 Windows 控制服务、Agent、任务、日志与设备状态。',
   generator: 'v0.app',
   icons: {
     icon: '/icon.svg',
@@ -44,7 +44,7 @@ export default async function RootLayout({
 
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       data-theme={theme === 'blue' ? undefined : theme}
       className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} bg-background`}
       style={{ height: '100%', overflow: 'hidden' }}

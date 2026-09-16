@@ -108,14 +108,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const connection = useMemo(() => {
     // 未完成引导时不构造连接，由上层展示引导/错误态，避免伪造可用连接
     if (!serverSource) return null
-    if (serverSource?.mode === "cloud") {
-      return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
-    }
-    const configuredKey = process.env.NEXT_PUBLIC_NACHO_PANEL_API_KEY
-    return {
-      baseUrl: defaultServerBaseUrl(),
-      key: configuredKey || "change-me-panel-api-key",
-    }
+    return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
   }, [serverSource])
 
   const apiRequest = useCallback(

@@ -2,11 +2,12 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import { useLocalSettings } from "@/components/local-settings-provider"
+import { useLocalControlServer } from "@/lib/local-control-server-client"
 import type { LocalAvatarId } from "@/lib/local-settings-schema"
 
 /** 服务端来源：本地部署 或 云端对接（API + Key） */
 export type ServerSource =
-  | { mode: "local" }
+  | { mode: "local"; api: string; agentApi?: string; key: string }
   | { mode: "cloud"; api: string; key: string }
   | null
 
@@ -67,6 +68,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [serverSource, setServerSourceState] = useState<ServerSource>(null)
   const [auth, setAuthState] = useState<AuthMethod>(null)
   const restored = useRef(false)
+  const legacyLocalSource = useRef(false)
+  const { status: localControlStatus } = useLocalControlServer()
 
   // 共享设置迁移完成后，再恢复当前浏览器独有的连接与锁屏状态。
   useEffect(() => {
@@ -75,9 +78,20 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     try {
       const savedServerSource = localStorage.getItem(SERVER_SOURCE_STORAGE_KEY)
       if (savedServerSource) {
-        const parsed = JSON.parse(savedServerSource) as ServerSource
-        if (parsed?.mode === "local" || (parsed?.mode === "cloud" && parsed.api && parsed.key)) {
-          setServerSourceState(parsed)
+        const parsed = JSON.parse(savedServerSource) as Partial<Exclude<ServerSource, null>> | null
+        if (parsed?.mode === "local") {
+          if (typeof parsed.api === "string" && typeof parsed.key === "string" && parsed.api && parsed.key) {
+            setServerSourceState({
+              mode: "local",
+              api: parsed.api,
+              agentApi: typeof parsed.agentApi === "string" && parsed.agentApi ? parsed.agentApi : undefined,
+              key: parsed.key,
+            })
+          } else {
+            legacyLocalSource.current = true
+          }
+        } else if (parsed?.mode === "cloud" && parsed.api && parsed.key) {
+          setServerSourceState({ mode: "cloud", api: parsed.api, key: parsed.key })
         }
       }
       const raw = localStorage.getItem(AUTH_STORAGE_KEY)
@@ -95,6 +109,16 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       // 存储不可用时静默降级为完整首次流程
     }
   }, [hydrated, settings.onboardingCompleted])
+
+  useEffect(() => {
+    if (!legacyLocalSource.current || !localControlStatus?.healthy || !localControlStatus.connection) return
+    legacyLocalSource.current = false
+    const source: ServerSource = { mode: "local", ...localControlStatus.connection }
+    setServerSourceState(source)
+    try {
+      localStorage.setItem(SERVER_SOURCE_STORAGE_KEY, JSON.stringify(source))
+    } catch {}
+  }, [localControlStatus])
 
   const setUserName = useCallback((name: string) => {
     void update({ profile: { userName: name } })
