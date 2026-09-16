@@ -6,6 +6,7 @@ import {
   readLocalSettings,
   resetLocalSettings,
 } from "@/lib/local-settings-store"
+import { isSameOriginRequest } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -20,8 +21,7 @@ function json(data: unknown, init?: ResponseInit) {
 }
 
 function validateMutationRequest(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  if (origin !== request.nextUrl.origin) {
+  if (!isSameOriginRequest(request.headers, request.nextUrl.origin)) {
     return json({ ok: false, message: "仅允许面板同源请求" }, { status: 403 })
   }
   const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase()

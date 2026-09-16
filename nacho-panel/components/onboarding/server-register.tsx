@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { AlertCircle, Check, Cloud, HardDrive, KeyRound, Link2, Loader2 } from "lucide-react"
+import { LocalControlServerManager } from "@/components/local-control/local-control-server-manager"
 import { cn } from "@/lib/utils"
 import { useOnboarding, type ServerSource } from "./onboarding-context"
 
@@ -21,35 +22,28 @@ function isOverviewResponse(value: unknown): value is { ok: true; data: object }
   return response.ok === true && typeof response.data === "object" && response.data !== null
 }
 
-/**
- * 第三部分：服务端注册。
- * 标题与两张来源卡片错峰模糊渐显；点选卡片后其内部面板平滑展开
- * （本地部署直接确认 / 云端对接需填写 API 地址 + Key），确认后整体渐隐。
- */
 export function ServerRegister({ onDone }: { onDone: () => void }) {
   const { setServerSource } = useOnboarding()
-  const [shown, setShown] = useState(false) // 入场揭示
+  const [shown, setShown] = useState(false)
   const [selected, setSelected] = useState<Mode | null>(null)
   const [api, setApi] = useState("")
   const [key, setKey] = useState("")
   const [leaving, setLeaving] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle")
   const [connectionError, setConnectionError] = useState("")
-
-  // 文字"被卡片推上去"的惯性跟随：每次展开/收起切换关键帧动画并借助 key 重放。
   const [push, setPush] = useState<{ dir: "up" | "down"; k: number } | null>(null)
   const prevOpen = useRef(false)
 
   useEffect(() => {
-    const raf = requestAnimationFrame(() => setShown(true))
-    return () => cancelAnimationFrame(raf)
+    const frame = requestAnimationFrame(() => setShown(true))
+    return () => cancelAnimationFrame(frame)
   }, [])
 
   useEffect(() => {
     const isOpen = selected !== null
     if (prevOpen.current === isOpen) return
     prevOpen.current = isOpen
-    setPush((p) => ({ dir: isOpen ? "up" : "down", k: (p?.k ?? 0) + 1 }))
+    setPush((previous) => ({ dir: isOpen ? "up" : "down", k: (previous?.k ?? 0) + 1 }))
   }, [selected])
 
   const finish = (source: Exclude<ServerSource, null>) => {
@@ -61,7 +55,6 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
 
   const confirmCloud = async () => {
     if (leaving || connectionStatus === "testing") return
-
     const baseUrl = normalizeApiUrl(api)
     const apiKey = key.trim()
     if (!baseUrl || !apiKey) return
@@ -78,33 +71,29 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
     setConnectionStatus("testing")
     setConnectionError("")
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 8000)
+    const timeout = window.setTimeout(() => controller.abort(), 8_000)
 
     try {
       const response = await fetch(`${baseUrl}/api/panel/overview`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       })
-
       if (response.status === 401 || response.status === 403) {
         setConnectionStatus("error")
         setConnectionError("面板 API Key 校验失败，请检查后重试")
         return
       }
-
       if (!response.ok) {
         setConnectionStatus("error")
         setConnectionError(`服务端响应异常（HTTP ${response.status}）`)
         return
       }
-
       const body: unknown = await response.json()
       if (!isOverviewResponse(body)) {
         setConnectionStatus("error")
         setConnectionError("目标地址不是有效的 NachoPanel 服务端")
         return
       }
-
       setConnectionStatus("success")
       window.setTimeout(() => finish({ mode: "cloud", api: baseUrl, key: apiKey }), 500)
     } catch (error) {
@@ -119,7 +108,6 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
     }
   }
 
-  /** 错峰入场揭示样式 */
   const reveal = (delay: number): React.CSSProperties => ({
     opacity: shown ? 1 : 0,
     transform: shown ? "translateY(0)" : "translateY(26px)",
@@ -129,30 +117,14 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
   })
 
   const cloudReady = api.trim().length > 0 && key.trim().length > 0
-
-  const cards: {
-    mode: Mode
-    icon: React.ReactNode
-    title: string
-    desc: string
-  }[] = [
-    {
-      mode: "local",
-      icon: <HardDrive className="h-6 w-6" />,
-      title: "本地部署",
-      desc: "直接通过本地部署的服务端连接",
-    },
-    {
-      mode: "cloud",
-      icon: <Cloud className="h-6 w-6" />,
-      title: "云端对接",
-      desc: "输入云端 API 地址与访问密钥",
-    },
+  const cards: { mode: Mode; icon: React.ReactNode; title: string; desc: string }[] = [
+    { mode: "local", icon: <HardDrive className="size-6" />, title: "本机部署", desc: "在当前 Windows 设备安装并运行控制服务" },
+    { mode: "cloud", icon: <Cloud className="size-6" />, title: "云端对接", desc: "连接已部署的远程 API 与访问密钥" },
   ]
 
   return (
     <div
-      className="flex h-full w-full items-center justify-center px-6"
+      className="h-full w-full overflow-y-auto px-4 py-10 sm:px-6"
       style={{
         opacity: leaving ? 0 : 1,
         filter: leaving ? "blur(14px)" : "blur(0px)",
@@ -160,8 +132,7 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
         transition: `opacity 700ms ease, filter 700ms ease, transform 700ms ${EASE}`,
       }}
     >
-      <div className="flex w-full max-w-2xl flex-col items-center gap-10">
-        {/* 文字组：key 变化触发关键帧重放，被展开的卡片以惯性推上/放下 */}
+      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center gap-8">
         <div
           key={push?.k ?? "init"}
           className={cn(
@@ -170,187 +141,127 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
             push?.dir === "down" && "animate-text-push-down",
           )}
         >
-          <h1
-            className="text-balance text-center text-2xl font-semibold text-foreground sm:text-3xl"
-            style={reveal(0)}
-          >
-            此项需要您提供服务端来源
+          <h1 className="text-balance text-center text-2xl font-semibold text-foreground sm:text-3xl" style={reveal(0)}>
+            选择控制服务来源
           </h1>
-          <p className="text-sm text-muted-foreground" style={reveal(120)}>
-            请选择 NachoPanel 的服务端连接方式
+          <p className="text-center text-sm text-muted-foreground" style={reveal(120)}>
+            在此设备完成本机部署，或连接已有的云端服务
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-start">
-          {cards.map((c, i) => {
-            const active = selected === c.mode
+        <div className="grid w-full gap-3 sm:grid-cols-2">
+          {cards.map((card, index) => {
+            const active = selected === card.mode
             const dimmed = selected !== null && !active
             return (
-              // 外层承载入场错峰揭示，内层承载选中/让位过渡，二者互不干扰
-              <div key={c.mode} className="w-full sm:flex-1" style={reveal(240 + i * 130)}>
-                <div
-                  style={{
-                    opacity: dimmed ? 0.38 : 1,
-                    transform: dimmed ? "scale(0.97)" : "scale(1)",
-                    filter: dimmed ? "blur(1.5px)" : "blur(0px)",
-                    transition: `opacity 400ms ease, transform 400ms ${EASE}, filter 400ms ease`,
-                  }}
-                >
+              <div key={card.mode} style={reveal(240 + index * 130)}>
                 <button
                   type="button"
-                  onClick={() => setSelected(active ? null : c.mode)}
+                  onClick={() => setSelected(active ? null : card.mode)}
                   aria-expanded={active}
+                  aria-controls="server-source-detail"
                   className={cn(
-                    "flex w-full items-center gap-4 rounded-t-3xl border p-5 text-left transition-all duration-300 ease-out",
-                    active
-                      ? "border-primary/50 bg-surface"
-                      : "rounded-b-3xl border-border bg-card hover:border-primary/30 hover:bg-surface",
+                    "flex w-full items-center gap-4 rounded-3xl border p-5 text-left outline-none transition-all duration-300 ease-out focus-visible:ring-2 focus-visible:ring-ring",
+                    active ? "border-primary/50 bg-surface shadow-lg shadow-primary/8" : "border-border bg-card hover:border-primary/30 hover:bg-surface",
                   )}
-                >
-                  <span
-                    className={cn(
-                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-all duration-300",
-                      active ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25" : "bg-muted text-primary",
-                    )}
-                  >
-                    {c.icon}
-                  </span>
-                  <span className="flex-1">
-                    <span className="block text-base font-semibold text-foreground">{c.title}</span>
-                    <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">{c.desc}</span>
-                  </span>
-                  <span
-                    className={cn(
-                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-all duration-300",
-                      active ? "border-primary bg-primary text-primary-foreground" : "border-border text-transparent",
-                    )}
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                  </span>
-                </button>
-
-                {/* 展开面板：grid-rows 0fr→1fr 按内容精确高度平滑展开，内容层做模糊渐显 */}
-                <div
-                  className="grid rounded-b-3xl"
                   style={{
-                    gridTemplateRows: active ? "1fr" : "0fr",
-                    transition: `grid-template-rows 520ms ${EASE}`,
+                    opacity: dimmed ? 0.48 : 1,
+                    transform: dimmed ? "scale(0.98)" : active ? "translateY(-2px)" : "scale(1)",
+                    filter: dimmed ? "blur(1px)" : "blur(0px)",
                   }}
                 >
-                  <div className="min-h-0 overflow-hidden">
-                  <div
-                    className="flex flex-col gap-3 rounded-b-3xl border border-t-0 border-primary/50 bg-surface p-5 pt-1"
-                    style={{
-                      opacity: active ? 1 : 0,
-                      transform: active ? "translateY(0)" : "translateY(-10px)",
-                      filter: active ? "blur(0px)" : "blur(6px)",
-                      transition: `opacity 450ms ease ${active ? "120ms" : "0ms"}, transform 450ms ${EASE} ${active ? "120ms" : "0ms"}, filter 450ms ease ${active ? "120ms" : "0ms"}`,
-                    }}
-                  >
-                    {c.mode === "local" ? (
-                      <>
-                        <p className="text-sm leading-relaxed text-muted-foreground">
-                          将自动发现并连接本机运行的 NachoPanel 服务端，无需额外配置。
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => finish({ mode: "local" })}
-                          className="flex h-12 items-center justify-center gap-2 rounded-full bg-primary text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 ease-out hover:scale-[1.02] active:scale-95"
-                        >
-                          <Check className="h-4 w-4" />
-                          确认使用本地部署
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <label className="flex h-12 items-center gap-2.5 rounded-full border border-border bg-card px-4 transition-colors focus-within:border-primary/50">
-                          <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <input
-                            type="url"
-                            value={api}
-                            onChange={(e) => {
-                              setApi(e.target.value)
-                              setConnectionStatus("idle")
-                              setConnectionError("")
-                            }}
-                            placeholder="云端 API 地址"
-                            aria-label="云端 API 地址"
-                            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
-                          />
-                        </label>
-                        <label className="flex h-12 items-center gap-2.5 rounded-full border border-border bg-card px-4 transition-colors focus-within:border-primary/50">
-                          <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <input
-                            type="password"
-                            value={key}
-                            onChange={(e) => {
-                              setKey(e.target.value)
-                              setConnectionStatus("idle")
-                              setConnectionError("")
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229 && cloudReady)
-                                void confirmCloud()
-                            }}
-                            placeholder="访问密钥 Key"
-                            aria-label="访问密钥"
-                            className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => void confirmCloud()}
-                          disabled={!cloudReady || connectionStatus === "testing" || connectionStatus === "success"}
-                          className="flex h-12 items-center justify-center gap-2 rounded-full bg-primary text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 ease-out hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-                        >
-                          {connectionStatus === "testing" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Check className="h-4 w-4" />
-                          )}
-                          {connectionStatus === "testing"
-                            ? "正在校验连接"
-                            : connectionStatus === "success"
-                              ? "校验成功"
-                              : "确认云端对接"}
-                        </button>
-                        {/* 错误提示：高度 0fr→1fr 平滑展开 + 模糊渐显，模拟 iOS 弹性浮现 */}
-                        <div
-                          className="grid"
-                          style={{
-                            gridTemplateRows: connectionStatus === "error" ? "1fr" : "0fr",
-                            transition: `grid-template-rows 480ms ${EASE}`,
-                          }}
-                        >
-                          <div className="min-h-0 overflow-hidden">
-                            <p
-                              aria-live="polite"
-                              className="flex items-start gap-1.5 px-1 pb-0.5 text-xs leading-relaxed text-negative"
-                              style={{
-                                opacity: connectionStatus === "error" ? 1 : 0,
-                                transform:
-                                  connectionStatus === "error"
-                                    ? "translateY(0) scale(1)"
-                                    : "translateY(-6px) scale(0.96)",
-                                filter: connectionStatus === "error" ? "blur(0px)" : "blur(6px)",
-                                transformOrigin: "top left",
-                                transition: `opacity 420ms ease ${connectionStatus === "error" ? "80ms" : "0ms"}, transform 480ms ${EASE} ${connectionStatus === "error" ? "80ms" : "0ms"}, filter 420ms ease ${connectionStatus === "error" ? "80ms" : "0ms"}`,
-                              }}
-                            >
-                              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                              <span>{connectionError || "\u00A0"}</span>
-                            </p>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  </div>
-                </div>
-                </div>
+                  <span className={cn("flex size-12 shrink-0 items-center justify-center rounded-2xl transition-all duration-300", active ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25" : "bg-muted text-primary")}>
+                    {card.icon}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-base font-semibold text-foreground">{card.title}</span>
+                    <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">{card.desc}</span>
+                  </span>
+                  <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full border transition-all duration-300", active ? "border-primary bg-primary text-primary-foreground" : "border-border text-transparent")}>
+                    <Check className="size-3.5" aria-hidden="true" />
+                  </span>
+                </button>
               </div>
             )
           })}
+        </div>
+
+        <div
+          id="server-source-detail"
+          className="grid w-full"
+          style={{ gridTemplateRows: selected ? "1fr" : "0fr", transition: `grid-template-rows 520ms ${EASE}` }}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div
+              className="pb-2"
+              style={{
+                opacity: selected ? 1 : 0,
+                transform: selected ? "translateY(0)" : "translateY(-14px)",
+                filter: selected ? "blur(0px)" : "blur(8px)",
+                transition: `opacity 450ms ease ${selected ? "120ms" : "0ms"}, transform 450ms ${EASE} ${selected ? "120ms" : "0ms"}, filter 450ms ease ${selected ? "120ms" : "0ms"}`,
+              }}
+            >
+              {selected === "local" && <LocalControlServerManager surface="onboarding" onConnected={finish} />}
+              {selected === "cloud" && (
+                <section className="rounded-3xl border border-primary/35 bg-surface p-5 shadow-xl shadow-primary/5 sm:p-6">
+                  <div className="mx-auto max-w-xl space-y-3">
+                    <div className="mb-4 text-center">
+                      <h2 className="text-base font-semibold text-foreground">连接云端控制服务</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">凭据只保存在当前浏览器中，连接前会验证服务身份与权限。</p>
+                    </div>
+                    <label className="flex h-12 items-center gap-2.5 rounded-full border border-border bg-card px-4 transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10">
+                      <Link2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <input
+                        type="url"
+                        value={api}
+                        onChange={(event) => { setApi(event.target.value); setConnectionStatus("idle"); setConnectionError("") }}
+                        placeholder="云端 API 地址"
+                        aria-label="云端 API 地址"
+                        autoComplete="url"
+                        className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
+                      />
+                    </label>
+                    <label className="flex h-12 items-center gap-2.5 rounded-full border border-border bg-card px-4 transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10">
+                      <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <input
+                        type="password"
+                        value={key}
+                        onChange={(event) => { setKey(event.target.value); setConnectionStatus("idle"); setConnectionError("") }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && cloudReady) void confirmCloud()
+                        }}
+                        placeholder="Panel API Key"
+                        aria-label="Panel API Key"
+                        autoComplete="off"
+                        className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/60"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void confirmCloud()}
+                      disabled={!cloudReady || connectionStatus === "testing" || connectionStatus === "success"}
+                      className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 ease-out hover:scale-[1.01] active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      {connectionStatus === "testing" ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <Check className="size-4" aria-hidden="true" />}
+                      {connectionStatus === "testing" ? "正在校验连接" : connectionStatus === "success" ? "校验成功" : "验证并使用云端服务"}
+                    </button>
+                    <div className="grid" style={{ gridTemplateRows: connectionStatus === "error" ? "1fr" : "0fr", transition: `grid-template-rows 480ms ${EASE}` }}>
+                      <div className="min-h-0 overflow-hidden">
+                        <p
+                          aria-live="polite"
+                          className="flex items-start gap-1.5 px-1 pt-2 text-xs leading-relaxed text-negative"
+                          style={{ opacity: connectionStatus === "error" ? 1 : 0, filter: connectionStatus === "error" ? "blur(0px)" : "blur(6px)", transition: "opacity 420ms ease, filter 420ms ease" }}
+                        >
+                          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                          <span>{connectionError || "\u00A0"}</span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
