@@ -216,8 +216,8 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                 <article
                   aria-label={`${option.title}使用方式`}
                   className={cn(
-                    "relative isolate overflow-hidden rounded-[1.75rem] border bg-card/42 shadow-[0_18px_55px_-42px_rgba(0,0,0,0.9)] backdrop-blur-xl transition-[border-color,background-color,box-shadow,transform,opacity] duration-700 ease-out",
-                    active && "-translate-y-1 border-primary/45 bg-card/72 shadow-[0_24px_80px_-38px_color-mix(in_srgb,var(--primary)_60%,transparent)] ring-1 ring-primary/10",
+                    "relative isolate overflow-hidden rounded-[1.75rem] border border-border/55 bg-card/42 shadow-[0_18px_55px_-42px_rgba(0,0,0,0.9)] backdrop-blur-xl transition-[border-color,background-color,box-shadow,transform,opacity] duration-700 ease-out",
+                    active && "-translate-y-1 border-border/80 bg-card/62 shadow-[0_24px_80px_-42px_rgba(0,0,0,0.92)] ring-1 ring-foreground/5",
                     displaced && "sm:translate-y-5 sm:scale-[0.97] sm:bg-card/32 sm:opacity-80",
                   )}
                 >

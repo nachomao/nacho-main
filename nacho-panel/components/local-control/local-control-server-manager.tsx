@@ -70,7 +70,7 @@ function copyText(value: string) {
 
 function InfoCell({ label, value, mono = false, glass = false }: { label: string; value: string; mono?: boolean; glass?: boolean }) {
   return (
-    <div className={cn("rounded-xl border px-3 py-2.5", glass ? "border-border/45 bg-background/20" : "border-border/70 bg-background/35")}>
+    <div className={cn("rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/35")}>
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={cn("mt-1 truncate text-sm font-medium text-foreground", mono && "font-mono text-xs")}>{value}</p>
     </div>
@@ -107,20 +107,31 @@ function AccessModeOption({
         "flex min-w-0 flex-1 items-start gap-3 rounded-xl border p-3 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
         selected
           ? glass
-            ? "border-primary/35 bg-primary/8 shadow-sm"
+            ? "border-foreground/20 bg-foreground/[0.055] shadow-sm"
             : "border-primary/50 bg-primary/8"
           : glass
-            ? "border-border/45 bg-background/15 hover:border-foreground/15 hover:bg-background/30"
+            ? "border-border/45 bg-background/20 hover:border-foreground/15 hover:bg-background/32"
             : "border-border/70 bg-background/30 hover:border-border hover:bg-muted/40",
       )}
     >
-      <span className={cn("mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg", selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
+      <span
+        className={cn(
+          "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg",
+          selected
+            ? glass
+              ? "border border-foreground/15 bg-foreground/10 text-foreground"
+              : "bg-primary text-primary-foreground"
+            : glass
+              ? "border border-border/50 bg-background/35 text-muted-foreground"
+              : "bg-muted text-muted-foreground",
+        )}
+      >
         <Icon className="size-4" aria-hidden="true" />
       </span>
       <span className="min-w-0">
         <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
           {title}
-          {selected && <Check className="size-3.5 text-primary" aria-hidden="true" />}
+          {selected && <Check className={cn("size-3.5", glass ? "text-foreground/70" : "text-primary")} aria-hidden="true" />}
         </span>
         <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{description}</span>
       </span>
@@ -130,7 +141,7 @@ function AccessModeOption({
 
 function Prerequisite({ ready, label, detail, glass = false }: { ready: boolean; label: string; detail: string; glass?: boolean }) {
   return (
-    <div className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", glass ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
+    <div className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
       <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full", ready ? "bg-emerald-500/12 text-emerald-500" : "bg-destructive/10 text-destructive")}>
         {ready ? <Check className="size-3.5" aria-hidden="true" /> : <X className="size-3.5" aria-hidden="true" />}
       </span>
@@ -321,9 +332,9 @@ export function LocalControlServerManager({
 
           {!status.installed ? (
             <>
-              <div className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+              <div className={cn(onboarding && "rounded-2xl border border-border/50 bg-card/32 p-4 shadow-sm backdrop-blur-md")}>
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">1</span>
+                  <span className={cn("flex size-5 items-center justify-center rounded-full text-[11px] font-semibold", onboarding ? "border border-border/70 bg-background/45 text-foreground shadow-sm" : "bg-primary text-primary-foreground")}>1</span>
                   <h4 className="text-sm font-semibold text-foreground">检查运行环境</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
@@ -333,31 +344,37 @@ export function LocalControlServerManager({
                 </div>
               </div>
 
-              <fieldset disabled={busy || !status.platformSupported} className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+              <fieldset disabled={busy || !status.platformSupported} className={cn(onboarding && "rounded-2xl border border-border/50 bg-card/32 p-4 shadow-sm backdrop-blur-md")}>
                 <legend className={cn("flex items-center gap-2 text-sm font-semibold text-foreground", onboarding ? "mb-3 px-1" : "mb-2")}>
-                  <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">2</span>
+                  <span className={cn("flex size-5 items-center justify-center rounded-full text-[11px] font-semibold", onboarding ? "border border-border/70 bg-background/45 text-foreground shadow-sm" : "bg-primary text-primary-foreground")}>2</span>
                   选择访问范围
                 </legend>
                 <div role="radiogroup" aria-label="本地服务访问范围" className="flex flex-col gap-2 sm:flex-row">
-                  <AccessModeOption glass={onboarding} mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允许当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
+                  <AccessModeOption glass={onboarding} mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允���当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
                   <AccessModeOption glass={onboarding} mode="lan" selected={accessMode === "lan"} title="同一局域网" description="允许私有网络中的其他设备连接。" icon={Network} onSelect={handleAccessMode} />
                 </div>
               </fieldset>
 
-              <div className={cn(onboarding && "rounded-2xl bg-background/15 p-4 ring-1 ring-border/35")}>
+              <div className={cn(onboarding && "rounded-2xl border border-border/50 bg-card/32 p-4 shadow-sm backdrop-blur-md")}>
                 <div className="mb-3 flex items-center gap-2">
-                  <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">3</span>
+                  <span className={cn("flex size-5 items-center justify-center rounded-full text-[11px] font-semibold", onboarding ? "border border-border/70 bg-background/45 text-foreground shadow-sm" : "bg-primary text-primary-foreground")}>3</span>
                   <h4 className="text-sm font-semibold text-foreground">确认本机设置</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
-                  <label className={cn("flex items-center justify-between gap-4 rounded-xl border px-3 py-2.5", onboarding ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
+                  <label className={cn("flex items-center justify-between gap-4 rounded-xl border px-3 py-2.5", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
                     <span>
                       <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                       <span className="block text-xs text-muted-foreground">仅写入当前 Windows 用户的 HKCU 启动项</span>
                     </span>
-                    <Switch checked={autoStart} onCheckedChange={setAutoStart} disabled={busy || !status.platformSupported} aria-label="登录后自动启动" />
+                    <Switch
+                      checked={autoStart}
+                      onCheckedChange={setAutoStart}
+                      disabled={busy || !status.platformSupported}
+                      aria-label="登录后自动启动"
+                      className={cn(onboarding && "data-checked:!bg-foreground [&_[data-slot=switch-thumb]]:data-checked:!bg-background")}
+                    />
                   </label>
-                  <label className={cn("rounded-xl border px-3 py-2", onboarding ? "border-border/45 bg-background/15" : "border-border/70 bg-background/30")}>
+                  <label className={cn("rounded-xl border px-3 py-2", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
                     <span className="text-xs font-medium text-muted-foreground">监听端口</span>
                     <Input className="mt-1 h-7 font-mono text-xs" inputMode="numeric" value={port} disabled={busy || !status.platformSupported} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
                   </label>
@@ -372,7 +389,7 @@ export function LocalControlServerManager({
                 </Alert>
               )}
 
-              <Button className={cn("w-full", onboarding ? "h-11 rounded-xl shadow-[0_12px_30px_-16px_color-mix(in_srgb,var(--primary)_70%,transparent)]" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
+              <Button variant={onboarding ? "outline" : "default"} className={cn("w-full", onboarding ? "h-11 rounded-xl" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
                 {operation === "install" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Play data-icon="inline-start" aria-hidden="true" />}
                 {onboarding ? "安装、启动并继续" : "安装并启动本地服务"}
               </Button>
@@ -395,8 +412,8 @@ export function LocalControlServerManager({
               )}
 
               {operation && (
-                <div className="flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/7 px-3 py-2.5 text-sm text-foreground" aria-live="polite">
-                  <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
+                <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm text-foreground", onboarding ? "border-border/50 bg-background/28" : "border-primary/20 bg-primary/7")} aria-live="polite">
+                  <Loader2 className={cn("size-4 animate-spin", onboarding ? "text-foreground/70" : "text-primary")} aria-hidden="true" />
                   {operationCopy[operation]}
                 </div>
               )}
@@ -418,7 +435,7 @@ export function LocalControlServerManager({
                   <Wrench className="size-4" aria-hidden="true" />修复 / 升级
                 </Button>
                 {surface === "onboarding" && status.healthy && status.connection && (
-                  <Button className="h-9 rounded-xl sm:ml-auto" disabled={busy} onClick={() => onConnected?.({ mode: "local", ...status.connection! })}>
+                  <Button variant="outline" className="h-9 rounded-xl sm:ml-auto" disabled={busy} onClick={() => onConnected?.({ mode: "local", ...status.connection! })}>
                     使用此服务继续
                   </Button>
                 )}
