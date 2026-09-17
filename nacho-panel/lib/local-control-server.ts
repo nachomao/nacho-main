@@ -239,6 +239,7 @@ async function runPowerShell(serverDir: string, action: string, port?: number, t
   if (!(await exists(script))) throw new LocalControlServerError("缺少 Windows 本地服务管理脚本", 500)
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Action", action]
   if (port !== undefined) args.push("-Port", String(port))
+  if (process.platform === "win32") args.push("-PanelNodePath", process.execPath)
   return runExecutable("powershell.exe", args, serverDir, timeout)
 }
 
@@ -352,8 +353,8 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const issues: string[] = []
 
   if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
-  if (!node) issues.push(runtime.runtimeInstallerAvailable ? "安装时将自动补齐 Node.js 22+" : "需要 Node.js 22 或更高版本")
-  if (!npm) issues.push(runtime.runtimeInstallerAvailable ? "安装时将自动补齐 npm" : "未检测到 npm")
+  if (!node) issues.push("安装时将重新检测并补齐 Node.js 22+")
+  if (!npm) issues.push("安装时将从 Node.js 目录与 cmd.exe 重新检测并补齐 npm")
   if (!source) issues.push("server 项目源码或 Windows 管理脚本不完整")
   if (envExists !== distExists) issues.push("本地服务安装不完整，需要修复")
   if (configNeedsRepair) issues.push("本地服务配置缺失或不安全，需要修复")
@@ -378,7 +379,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     installed,
     running,
     healthy,
-    needsRepair: !node || !npm || envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
+    needsRepair: (installed && (!node || !npm)) || envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
     pid: runtime.pid || null,
     startedAt: runtime.startedAt || null,
     autoStartEnabled: runtime.autoStartEnabled === true,
@@ -443,9 +444,6 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
 async function ensureRuntimePrerequisites(serverDir: string) {
   const runtime = await windowsRuntimeState(serverDir)
   if (runtime.nodeReady && runtime.npmAvailable) return
-  if (!runtime.runtimeInstallerAvailable) {
-    throw new LocalControlServerError("当前 Windows 架构不支持自动下载 Node.js LTS 便携运行环境", 409)
-  }
 
   await runPowerShell(serverDir, "InstallRuntime", undefined, 15 * 60_000)
   const installedRuntime = await windowsRuntimeState(serverDir)

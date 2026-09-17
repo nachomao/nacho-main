@@ -284,7 +284,7 @@ export function LocalControlServerManager({
 
   const statusStyle = statusCopy[status.runtimeStatus]
   const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
-  const canInstall = status.platformSupported && status.prerequisites.source && (!runtimeMissing || status.prerequisites.installerAvailable)
+  const canInstall = status.platformSupported && status.prerequisites.source
 
   return (
     <div className="flex flex-col gap-4">
@@ -343,13 +343,13 @@ export function LocalControlServerManager({
                     glass={onboarding}
                     ready={status.prerequisites.node}
                     label="Node.js 22+"
-                    detail={status.prerequisites.node ? `当前版本 ${status.prerequisites.nodeVersion}` : status.prerequisites.installerAvailable ? "安装时自动补齐 LTS 版本" : "未检测到兼容版本"}
+                    detail={status.prerequisites.node ? `当前版本 ${status.prerequisites.nodeVersion}` : "安装时重新检测并补齐"}
                   />
                   <Prerequisite
                     glass={onboarding}
                     ready={status.prerequisites.npm}
                     label="npm"
-                    detail={status.prerequisites.npm ? "命令可用" : status.prerequisites.installerAvailable ? "随 Node.js LTS 自动安装" : "未检测到命令"}
+                    detail={status.prerequisites.npm ? "命令可用" : "安装时从 Node.js 目录重新检测"}
                   />
                   <Prerequisite glass={onboarding} ready={status.prerequisites.source} label="server 项目" detail={status.prerequisites.source ? "源码与管理脚本完整" : "目录或文件不完整"} />
                 </div>
@@ -394,12 +394,12 @@ export function LocalControlServerManager({
 
               {runtimeMissing && (
                 <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
-                  {status.prerequisites.installerAvailable ? <ShieldCheck className="text-amber-500" aria-hidden="true" /> : <AlertCircle className="text-amber-500" aria-hidden="true" />}
-                  <AlertTitle>{status.prerequisites.installerAvailable ? "将自动补齐运行环境" : "无法自动安装运行环境"}</AlertTitle>
+                  <ShieldCheck className="text-amber-500" aria-hidden="true" />
+                  <AlertTitle>将重新检测并补齐运行环境</AlertTitle>
                   <AlertDescription>
-                    {status.prerequisites.installerAvailable
-                      ? "继续后将直接下载并校验 Node.js 官方 LTS 便携包（包含 npm），无需 App Installer，也不会修改系统 PATH。"
-                      : "当前 Windows 处理器架构不受 Node.js 官方便携包支持，请手动安装 Node.js 22+ 后重试。"}
+                    {status.prerequisites.node && !status.prerequisites.npm
+                      ? `已检测到 Node.js ${status.prerequisites.nodeVersion}。安装器会从该 Node.js 目录和 cmd.exe 重新查找 npm；仍不可用时才下载官方便携运行环境。`
+                      : "安装器会优先复用面板正在使用的 Node.js 与系统已有 npm；仍不可用时才下载并校验官方便携运行环境。"}
                   </AlertDescription>
                 </Alert>
               )}
