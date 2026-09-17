@@ -252,9 +252,25 @@ async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Prom
   }
 }
 
+export function createNpmInvocation(
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+  commandShell = process.env.ComSpec || process.env.COMSPEC || "cmd.exe",
+) {
+  if (platform === "win32") {
+    return { file: commandShell, args: ["/d", "/s", "/c", "npm.cmd", ...args] }
+  }
+  return { file: "npm", args }
+}
+
+async function runNpm(args: string[], serverDir: string, timeout: number) {
+  const invocation = createNpmInvocation(args)
+  return runExecutable(invocation.file, invocation.args, serverDir, timeout)
+}
+
 async function npmAvailable(serverDir: string) {
   try {
-    await runExecutable(process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], serverDir, 10_000)
+    await runNpm(["--version"], serverDir, 10_000)
     return true
   } catch {
     return false
@@ -421,9 +437,8 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
 }
 
 async function buildServer(serverDir: string) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm"
-  await runExecutable(npm, ["ci", "--no-audit", "--no-fund"], serverDir, 10 * 60_000)
-  await runExecutable(npm, ["run", "build"], serverDir, 5 * 60_000)
+  await runNpm(["ci", "--no-audit", "--no-fund"], serverDir, 10 * 60_000)
+  await runNpm(["run", "build"], serverDir, 5 * 60_000)
 }
 
 let mutationQueue: Promise<unknown> = Promise.resolve()
