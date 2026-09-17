@@ -5,6 +5,7 @@ import path from "node:path"
 import { afterEach, test } from "node:test"
 import {
   createInitialEnvironment,
+  createNpmInvocation,
   ensureManagedEnvironment,
   isValidLocalControlPort,
   parseEnvironmentFile,
@@ -39,6 +40,17 @@ test("local control ports are restricted to the non-privileged TCP range", () =>
   assert.equal(isValidLocalControlPort(65536), false)
   assert.equal(isValidLocalControlPort(8443.5), false)
   assert.equal(isValidLocalControlPort("8443"), false)
+})
+
+test("npm command files are launched through cmd.exe on Windows", () => {
+  assert.deepEqual(createNpmInvocation(["--version"], "win32", "C:\\Windows\\System32\\cmd.exe"), {
+    file: "C:\\Windows\\System32\\cmd.exe",
+    args: ["/d", "/s", "/c", "npm.cmd", "--version"],
+  })
+  assert.deepEqual(createNpmInvocation(["--version"], "linux"), {
+    file: "npm",
+    args: ["--version"],
+  })
 })
 
 test("initial environment uses safe local defaults and independent strong secrets", () => {
