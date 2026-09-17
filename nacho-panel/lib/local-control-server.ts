@@ -32,6 +32,10 @@ type WindowsRuntimeState = {
   autoStartEnabled?: boolean
   firewallPorts?: number[]
   listeningPorts?: number[]
+  nodeReady?: boolean
+  nodeVersion?: string
+  npmAvailable?: boolean
+  runtimeInstallerAvailable?: boolean
 }
 
 export type EnvironmentMap = Map<string, string>
@@ -67,10 +71,6 @@ function serializeEnvironment(values: EnvironmentMap) {
 
 function generateSecret() {
   return randomBytes(32).toString("base64url")
-}
-
-function majorNodeVersion() {
-  return Number.parseInt(process.versions.node.split(".", 1)[0] || "0", 10)
 }
 
 function localIpv4Addresses() {
@@ -233,12 +233,12 @@ async function runExecutable(file: string, args: string[], cwd: string, timeout 
   }
 }
 
-async function runPowerShell(serverDir: string, action: string, port?: number) {
+async function runPowerShell(serverDir: string, action: string, port?: number, timeout = POWERSHELL_TIMEOUT_MS) {
   const script = managementPaths(serverDir).script
   if (!(await exists(script))) throw new LocalControlServerError("缺少 Windows 本地服务管理脚本", 500)
   const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Action", action]
   if (port !== undefined) args.push("-Port", String(port))
-  return runExecutable("powershell.exe", args, serverDir)
+  return runExecutable("powershell.exe", args, serverDir, timeout)
 }
 
 async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Promise<WindowsRuntimeState> {
@@ -266,15 +266,6 @@ export function createNpmInvocation(
 async function runNpm(args: string[], serverDir: string, timeout: number) {
   const invocation = createNpmInvocation(args)
   return runExecutable(invocation.file, invocation.args, serverDir, timeout)
-}
-
-async function npmAvailable(serverDir: string) {
-  try {
-    await runNpm(["--version"], serverDir, 10_000)
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function healthCheck(port: number) {
@@ -323,7 +314,13 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
       databasePath: "",
       localAddresses: [],
       connection: null,
-      prerequisites: { node: majorNodeVersion() >= 22, nodeVersion: process.versions.node, npm: false, source: false },
+      prerequisites: {
+        node: false,
+        nodeVersion: "未检测到",
+        npm: false,
+        source: false,
+        installerAvailable: false,
+      },
       issues: [message],
     }
   }
@@ -331,15 +328,15 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const paths = managementPaths(serverDir)
   const values = await readEnvironment(serverDir)
   const port = portFromEnvironment(values)
-  const [envExists, distExists, lockExists, scriptExists, npm, runtime] = await Promise.all([
+  const [envExists, distExists, lockExists, scriptExists, runtime] = await Promise.all([
     exists(paths.env),
     exists(paths.distEntry),
     exists(paths.packageLock),
     exists(paths.script),
-    npmAvailable(serverDir),
     windowsRuntimeState(serverDir, port),
   ])
-  const node = majorNodeVersion() >= 22
+  const node = runtime.nodeReady === true
+  const npm = runtime.npmAvailable === true
   const source = lockExists && scriptExists
   const platformSupported = process.platform === "win32"
   const accessMode = accessModeFromEnvironment(values)
@@ -354,8 +351,8 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const issues: string[] = []
 
   if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
-  if (!node) issues.push("需要 Node.js 22 或更高版本")
-  if (!npm) issues.push("未检测到 npm")
+  if (!node) issues.push(runtime.runtimeInstallerAvailable ? "安装时将自动补齐 Node.js 22+" : "需要 Node.js 22 或更高版本")
+  if (!npm) issues.push(runtime.runtimeInstallerAvailable ? "安装时将自动补齐 npm" : "未检测到 npm")
   if (!source) issues.push("server 项目源码或 Windows 管理脚本不完整")
   if (envExists !== distExists) issues.push("本地服务安装不完整，需要修复")
   if (configNeedsRepair) issues.push("本地服务配置缺失或不安全，需要修复")
@@ -380,7 +377,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     installed,
     running,
     healthy,
-    needsRepair: envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
+    needsRepair: !node || !npm || envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
     pid: runtime.pid || null,
     startedAt: runtime.startedAt || null,
     autoStartEnabled: runtime.autoStartEnabled === true,
@@ -393,7 +390,13 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     databasePath: databasePathFromEnvironment(serverDir, values),
     localAddresses,
     connection: installed && key ? { api: localApi(port), agentApi: localAgentApi(accessMode, port, localAddresses), key } : null,
-    prerequisites: { node, nodeVersion: process.versions.node, npm, source },
+    prerequisites: {
+      node,
+      nodeVersion: runtime.nodeVersion || "未检测到",
+      npm,
+      source,
+      installerAvailable: runtime.runtimeInstallerAvailable === true,
+    },
     issues,
   }
 }
@@ -436,7 +439,25 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
   await waitForHealth(serverDir, port)
 }
 
+async function ensureRuntimePrerequisites(serverDir: string) {
+  const runtime = await windowsRuntimeState(serverDir)
+  if (runtime.nodeReady && runtime.npmAvailable) return
+  if (!runtime.runtimeInstallerAvailable) {
+    throw new LocalControlServerError("未找到 Windows Package Manager，无法自动安装 Node.js LTS 与 npm", 409)
+  }
+
+  await runPowerShell(serverDir, "InstallRuntime", undefined, 15 * 60_000)
+  const installedRuntime = await windowsRuntimeState(serverDir)
+  if (!installedRuntime.nodeReady || !installedRuntime.npmAvailable) {
+    throw new LocalControlServerError("Node.js LTS 安装完成后仍未检测到可用的 Node.js 22+ 与 npm", 409)
+  }
+}
+
 async function buildServer(serverDir: string) {
+  if (process.platform === "win32") {
+    await runPowerShell(serverDir, "Build", undefined, 15 * 60_000)
+    return
+  }
   await runNpm(["ci", "--no-audit", "--no-fund"], serverDir, 10 * 60_000)
   await runNpm(["run", "build"], serverDir, 5 * 60_000)
 }
@@ -457,13 +478,14 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
     }
     const status = await getLocalControlServerStatus()
     requireWindows(status)
-    if (!status.prerequisites.node || !status.prerequisites.npm || !status.prerequisites.source) {
-      throw new LocalControlServerError("请确保 Node.js 22+、npm 与完整的 server 项目源码可用", 409)
+    if (!status.prerequisites.source) {
+      throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
     }
     if (status.installed) throw new LocalControlServerError("本地服务已经安装", 409)
     if (status.needsRepair) throw new LocalControlServerError("检测到已有配置或构建产物，请使用修复功能以保留现有数据与密钥", 409)
 
     const serverDir = status.serverDir
+    await ensureRuntimePrerequisites(serverDir)
     await buildServer(serverDir)
     if (options.accessMode === "lan") await runPowerShell(serverDir, "SetFirewall", port)
     const values = createInitialEnvironment({ accessMode: options.accessMode, autoStart: options.autoStart, port })
@@ -512,6 +534,10 @@ export function repairLocalControlServer() {
     const status = await getLocalControlServerStatus()
     requireWindows(status)
     const serverDir = status.serverDir
+    if (!status.prerequisites.source) {
+      throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
+    }
+    await ensureRuntimePrerequisites(serverDir)
     const paths = managementPaths(serverDir)
     const envExisted = await exists(paths.env)
     const previousValues = envExisted ? await readEnvironment(serverDir) : new Map<string, string>()

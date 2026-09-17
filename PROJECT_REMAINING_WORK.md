@@ -61,7 +61,7 @@
 
 ## 已确认的工程边界
 
-- Windows 本机控制服务已支持从首次引导与设置页执行环境检查、安装、启动／停止／重启、可回滚修复、HKCU 用户登录自启、loopback／局域网监听切换和彻底卸载；局域网模式只创建 `Private + LocalSubnet + 指定 TCP 端口` 的入站规则，Agent 安装链接使用可达局域网地址，卸载会删除本地 SQLite、日志、依赖和构建产物但保留源码。管理 API 仅接受面板同源 JSON 请求，状态判定同时校验受管 PID、配置端口和健康响应。Linux 与云端预览仅展示不支持状态，不执行模拟安装。
+- Windows 本机控制服务已支持从首次引导与设置页执行环境检查、安装、启动／停止／重启、可回滚修复、HKCU 用户登录自启、loopback／局域网监听切换和彻底卸载；缺少 Node.js 22+ 或 npm 时，安装／修复流程会通过 Windows Package Manager 自动安装官方 Node.js LTS（含 npm），并刷新系统 PATH 后继续构建。局域网模式只创建 `Private + LocalSubnet + 指定 TCP 端口` 的入站规则，Agent 安装链接使用可达局域网地址，卸载会删除本地 SQLite、日志、依赖和构建产物但保留源码。管理 API 仅接受面板同源 JSON 请求，状态判定同时校验受管 PID、配置端口和健康响应。Linux 与云端预览仅展示不支持状态，不执行模拟安装。
 - 首次引导的服务方式与登录方式菜单在展开／收起时使用 `focus({ preventScroll: true })` 交接焦点，避免尚在展开的裁剪容器隐式滚动后回正；卡片扩张、模糊缩放渐显与标题错峰动画保持不变。
 - 首次引导头像仅保留用户提供的“抱心猫娘”“趴趴猫娘”“猫帽猫娘”三款本地 PNG 预设，资源文件和 `avatarId` 已同步改为 `heart`／`lounge`／`hood`；旧预设标识在读取时迁移为默认的“抱心猫娘”。称呼确认、头像确认和上传入口继续复用中性按钮样式，头像动画、自定义上传与面板本机设置保存链路不变。
 - `tasks` 已使用服务端真实 API 完成读取、CRUD、启停和任务下发，不再列为缺口。
@@ -69,7 +69,6 @@
 - `plugins` 的目录读取、CRUD 与启停状态已由服务端持久化；插件包下载、导入和批量安装仍未形成真实包传输与 Agent 执行闭环。
 - WebSSH 与 AI Workspace 仍是前端演示边界，不得在文档或界面中宣称已完成真实执行。
 - 服务端测试应在 Linux／WSL 原生依赖环境中执行；不要使用历史测试数量替代当前验证。
-- 源码编码待修复：`nacho-panel/app/globals.css` 与 `nacho-panel/components/local-control/local-control-server-manager.tsx` 已有 U+FFFD 替换字符，导致 `source-encoding.test.ts` 失败；需单独恢复对应文本，不通过放宽编码守卫处理。
 
 ## 完成与更新规则
 

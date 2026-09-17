@@ -33,6 +33,7 @@ export type LocalControlServerStatus = {
     nodeVersion: string
     npm: boolean
     source: boolean
+    installerAvailable: boolean
   }
   issues: string[]
 }

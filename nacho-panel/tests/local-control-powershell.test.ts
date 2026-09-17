@@ -25,5 +25,17 @@ test("Windows manager keeps elevation scoped to firewall and autostart uses the 
   assert.match(script, /-RemoteAddress LocalSubnet/)
   assert.match(script, /HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run/)
   assert.match(script, /-Action Start -Port \{1\}/)
-  assert.doesNotMatch(script, /Start-Process[^\r\n]+-Verb RunAs[^\r\n]+\$Node/)
+  assert.doesNotMatch(script, /Start-Process[^\r\n]+-Verb RunAs[^\r\n]+\$Runtime\.nodePath/)
+})
+
+test("Windows manager can install and immediately use the supported Node.js runtime", async () => {
+  const script = await readFile(scriptPath, "utf8")
+
+  assert.match(script, /\[Environment\]::GetEnvironmentVariable\("Path", "Machine"\)/)
+  assert.match(script, /"InstallRuntime"/)
+  assert.match(script, /OpenJS\.NodeJS\.LTS/)
+  assert.match(script, /--accept-package-agreements/)
+  assert.match(script, /& \$Runtime\.npmPath ci --no-audit --no-fund/)
+  assert.match(script, /& \$Runtime\.npmPath run build/)
+  assert.match(script, /Start-Process -FilePath \$Runtime\.nodePath/)
 })

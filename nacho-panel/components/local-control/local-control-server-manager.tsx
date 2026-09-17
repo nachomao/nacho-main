@@ -283,7 +283,8 @@ export function LocalControlServerManager({
   }
 
   const statusStyle = statusCopy[status.runtimeStatus]
-  const canInstall = status.platformSupported && status.prerequisites.node && status.prerequisites.npm && status.prerequisites.source
+  const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
+  const canInstall = status.platformSupported && status.prerequisites.source && (!runtimeMissing || status.prerequisites.installerAvailable)
 
   return (
     <div className="flex flex-col gap-4">
@@ -338,8 +339,18 @@ export function LocalControlServerManager({
                   <h4 className="text-sm font-semibold text-foreground">检查运行环境</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <Prerequisite glass={onboarding} ready={status.prerequisites.node} label="Node.js 22+" detail={`当前版本 ${status.prerequisites.nodeVersion}`} />
-                  <Prerequisite glass={onboarding} ready={status.prerequisites.npm} label="npm" detail={status.prerequisites.npm ? "命令可用" : "未检测到命令"} />
+                  <Prerequisite
+                    glass={onboarding}
+                    ready={status.prerequisites.node}
+                    label="Node.js 22+"
+                    detail={status.prerequisites.node ? `当前版本 ${status.prerequisites.nodeVersion}` : status.prerequisites.installerAvailable ? "安装时自动补齐 LTS 版本" : "未检测到兼容版本"}
+                  />
+                  <Prerequisite
+                    glass={onboarding}
+                    ready={status.prerequisites.npm}
+                    label="npm"
+                    detail={status.prerequisites.npm ? "命令可用" : status.prerequisites.installerAvailable ? "随 Node.js LTS 自动安装" : "未检测到命令"}
+                  />
                   <Prerequisite glass={onboarding} ready={status.prerequisites.source} label="server 项目" detail={status.prerequisites.source ? "源码与管理脚本完整" : "目录或文件不完整"} />
                 </div>
               </div>
@@ -350,7 +361,7 @@ export function LocalControlServerManager({
                   选择访问范围
                 </legend>
                 <div role="radiogroup" aria-label="本地服务访问范围" className="flex flex-col gap-2 sm:flex-row">
-                  <AccessModeOption glass={onboarding} mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允���当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
+                  <AccessModeOption glass={onboarding} mode="loopback" selected={accessMode === "loopback"} title="仅此设备" description="默认且更安全；只允许当前电脑访问。" icon={MonitorSmartphone} onSelect={handleAccessMode} />
                   <AccessModeOption glass={onboarding} mode="lan" selected={accessMode === "lan"} title="同一局域网" description="允许私有网络中的其他设备连接。" icon={Network} onSelect={handleAccessMode} />
                 </div>
               </fieldset>
@@ -381,6 +392,18 @@ export function LocalControlServerManager({
                 </div>
               </div>
 
+              {runtimeMissing && (
+                <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+                  {status.prerequisites.installerAvailable ? <ShieldCheck className="text-amber-500" aria-hidden="true" /> : <AlertCircle className="text-amber-500" aria-hidden="true" />}
+                  <AlertTitle>{status.prerequisites.installerAvailable ? "将自动补齐运行环境" : "无法自动安装运行环境"}</AlertTitle>
+                  <AlertDescription>
+                    {status.prerequisites.installerAvailable
+                      ? "继续后将通过 Windows Package Manager 安装官方 Node.js LTS（包含 npm），Windows 可能请求管理员授权。"
+                      : "当前设备未检测到 Windows Package Manager，请先安装 App Installer 后重试。"}
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {accessMode === "lan" && (
                 <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
                   <ShieldCheck className="text-amber-500" aria-hidden="true" />
@@ -391,7 +414,7 @@ export function LocalControlServerManager({
 
               <Button variant={onboarding ? "outline" : "default"} className={cn("w-full", onboarding ? "h-11 rounded-xl" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
                 {operation === "install" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Play data-icon="inline-start" aria-hidden="true" />}
-                {onboarding ? "安装、启动并继续" : "安装并启动本地服务"}
+                {onboarding ? (runtimeMissing ? "安装依赖、启动并继续" : "安装、启动并继续") : runtimeMissing ? "安装依赖与本地服务" : "安装并启动本地服务"}
               </Button>
             </>
           ) : (
