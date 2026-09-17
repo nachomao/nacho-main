@@ -6,6 +6,7 @@ import { test } from "node:test"
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
 const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/local-control-server.ps1")
+const modulePath = path.resolve(testDirectory, "../lib/local-control-server.ts")
 
 test("Windows manager verifies the project, PID ownership, and configured listener", async () => {
   const script = await readFile(scriptPath, "utf8")
@@ -28,10 +29,21 @@ test("Windows manager keeps elevation scoped to firewall and autostart uses the 
   assert.doesNotMatch(script, /Start-Process[^\r\n]+-Verb RunAs[^\r\n]+\$Runtime\.nodePath/)
 })
 
-test("Windows manager can install and immediately use a verified portable Node.js runtime", async () => {
-  const script = await readFile(scriptPath, "utf8")
+test("Windows manager reuses the panel runtime before installing a verified portable Node.js runtime", async () => {
+  const [script, module] = await Promise.all([
+    readFile(scriptPath, "utf8"),
+    readFile(modulePath, "utf8"),
+  ])
 
+  assert.match(module, /args\.push\("-PanelNodePath", process\.execPath\)/)
+  assert.doesNotMatch(module, /当前 Windows 架构不支持自动下载/)
   assert.match(script, /\[Environment\]::GetEnvironmentVariable\("Path", "Machine"\)/)
+  assert.match(script, /\$PanelNodePath/)
+  assert.match(script, /RuntimeInformation\]::OSArchitecture/)
+  assert.match(script, /-p "process\.arch"/)
+  assert.match(script, /Join-Path \(Split-Path -Parent \$NodePath\) "npm\.cmd"/)
+  assert.match(script, /Get-Command where\.exe/)
+  assert.match(script, /& \$NpmPath --version/)
   assert.match(script, /"InstallRuntime"/)
   assert.match(script, /https:\/\/nodejs\.org\/dist\/index\.json/)
   assert.match(script, /SHASUMS256\.txt/)
