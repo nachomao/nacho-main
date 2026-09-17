@@ -114,6 +114,7 @@ function managementPaths(serverDir: string) {
     stateDir,
     backupDist: path.join(stateDir, "backup-dist"),
     backupEnv: path.join(stateDir, "backup.env"),
+    managedRuntime: path.join(serverDir, ".nacho-runtime"),
   }
 }
 
@@ -443,7 +444,7 @@ async function ensureRuntimePrerequisites(serverDir: string) {
   const runtime = await windowsRuntimeState(serverDir)
   if (runtime.nodeReady && runtime.npmAvailable) return
   if (!runtime.runtimeInstallerAvailable) {
-    throw new LocalControlServerError("未找到 Windows Package Manager，无法自动安装 Node.js LTS 与 npm", 409)
+    throw new LocalControlServerError("当前 Windows 架构不支持自动下载 Node.js LTS 便携运行环境", 409)
   }
 
   await runPowerShell(serverDir, "InstallRuntime", undefined, 15 * 60_000)
@@ -647,6 +648,7 @@ export function uninstallLocalControlServer(confirmation: string) {
       rm(path.join(serverDir, "data"), { recursive: true, force: true }),
       rm(path.join(serverDir, "dist"), { recursive: true, force: true }),
       rm(path.join(serverDir, "node_modules"), { recursive: true, force: true }),
+      rm(paths.managedRuntime, { recursive: true, force: true }),
       rm(paths.stateDir, { recursive: true, force: true }),
     ])
     return getLocalControlServerStatus()

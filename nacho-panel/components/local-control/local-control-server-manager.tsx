@@ -398,8 +398,8 @@ export function LocalControlServerManager({
                   <AlertTitle>{status.prerequisites.installerAvailable ? "将自动补齐运行环境" : "无法自动安装运行环境"}</AlertTitle>
                   <AlertDescription>
                     {status.prerequisites.installerAvailable
-                      ? "继续后将通过 Windows Package Manager 安装官方 Node.js LTS（包含 npm），Windows 可能请求管理员授权。"
-                      : "当前设备未检测到 Windows Package Manager，请先安装 App Installer 后重试。"}
+                      ? "继续后将直接下载并校验 Node.js 官方 LTS 便携包（包含 npm），无需 App Installer，也不会修改系统 PATH。"
+                      : "当前 Windows 处理器架构不受 Node.js 官方便携包支持，请手动安装 Node.js 22+ 后重试。"}
                   </AlertDescription>
                 </Alert>
               )}
