@@ -28,13 +28,18 @@ test("Windows manager keeps elevation scoped to firewall and autostart uses the 
   assert.doesNotMatch(script, /Start-Process[^\r\n]+-Verb RunAs[^\r\n]+\$Runtime\.nodePath/)
 })
 
-test("Windows manager can install and immediately use the supported Node.js runtime", async () => {
+test("Windows manager can install and immediately use a verified portable Node.js runtime", async () => {
   const script = await readFile(scriptPath, "utf8")
 
   assert.match(script, /\[Environment\]::GetEnvironmentVariable\("Path", "Machine"\)/)
   assert.match(script, /"InstallRuntime"/)
+  assert.match(script, /https:\/\/nodejs\.org\/dist\/index\.json/)
+  assert.match(script, /SHASUMS256\.txt/)
+  assert.match(script, /Get-FileHash -LiteralPath \$ArchivePath -Algorithm SHA256/)
+  assert.match(script, /\.nacho-runtime/)
   assert.match(script, /OpenJS\.NodeJS\.LTS/)
-  assert.match(script, /--accept-package-agreements/)
+  assert.equal(script.match(/function Get-NodeRuntimeInfo/g)?.length, 1)
+  assert.doesNotMatch(script, /请先安装 Microsoft App Installer/)
   assert.match(script, /& \$Runtime\.npmPath ci --no-audit --no-fund/)
   assert.match(script, /& \$Runtime\.npmPath run build/)
   assert.match(script, /Start-Process -FilePath \$Runtime\.nodePath/)
