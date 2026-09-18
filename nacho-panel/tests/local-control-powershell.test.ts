@@ -9,14 +9,36 @@ const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/loca
 const modulePath = path.resolve(testDirectory, "../lib/local-control-server.ts")
 
 test("Windows manager verifies the project, PID ownership, and configured listener", async () => {
-  const script = await readFile(scriptPath, "utf8")
+  const scriptBytes = await readFile(scriptPath)
+  const script = scriptBytes.toString("utf8")
 
+  assert.deepEqual([...scriptBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf])
+  assert.match(script, /\[Console\]::OutputEncoding = \$Utf8NoBom/)
+  assert.doesNotMatch(script, /\uFFFD/)
   assert.match(script, /Assert-TrustedProject/)
   assert.match(script, /Win32_Process/)
   assert.match(script, /CommandLine\.ToLowerInvariant\(\)\.Contains\(\$Expected\)/)
-  assert.match(script, /Get-NetTCPConnection -State Listen -LocalPort \$Port/)
+  assert.match(script, /Get-NetTCPConnection -State Listen -LocalPort \$SelectedPort/)
   assert.match(script, /Where-Object \{ \$_\.OwningProcess -eq \$Managed\.ProcessId \}/)
   assert.match(script, /listeningPorts = @\(\$ListeningPorts\)/)
+})
+
+test("Windows manager aborts occupied-port installs before mutation and cleans failed installs", async () => {
+  const [script, module] = await Promise.all([
+    readFile(scriptPath, "utf8"),
+    readFile(modulePath, "utf8"),
+  ])
+
+  assert.match(script, /"AssertPortAvailable"/)
+  assert.match(script, /function Assert-PortAvailable/)
+  assert.match(script, /端口 \$SelectedPort 已被其他进程占用，请更换监听端口后重试。/)
+  const preflight = module.indexOf('await runPowerShell(serverDir, "AssertPortAvailable", port)')
+  const runtimeInstall = module.indexOf("await ensureRuntimePrerequisites(serverDir)", preflight)
+  assert.ok(preflight >= 0 && runtimeInstall > preflight)
+  assert.match(module, /await runPowerShell\(serverDir, "ForceStop", port\)\.catch/)
+  assert.match(module, /rm\(paths\.env, \{ force: true \}\)/)
+  assert.match(module, /rm\(path\.dirname\(paths\.distEntry\), \{ recursive: true, force: true \}\)/)
+  assert.match(module, /端口 \\d\+ 已被其他进程占用/)
 })
 
 test("Windows manager keeps elevation scoped to firewall and autostart uses the selected port", async () => {
