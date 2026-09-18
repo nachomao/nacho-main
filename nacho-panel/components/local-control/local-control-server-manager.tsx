@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   AlertCircle,
   Check,
@@ -33,6 +33,7 @@ import {
   uninstallLocalControl,
   updateLocalControlAccessMode,
   updateLocalControlAutoStart,
+  updateLocalControlPort,
   useLocalControlServer,
 } from "@/lib/local-control-server-client"
 import {
@@ -51,7 +52,7 @@ const statusCopy: Record<LocalControlServerStatus["runtimeStatus"], { label: str
   unhealthy: { label: "运行异常", className: "border-destructive/30 bg-destructive/10 text-destructive" },
 }
 
-type Operation = "install" | "start" | "stop" | "restart" | "repair" | "autoStart" | "accessMode" | "uninstall"
+type Operation = "install" | "start" | "stop" | "restart" | "repair" | "autoStart" | "accessMode" | "port" | "uninstall"
 
 const operationCopy: Record<Operation, string> = {
   install: "正在安装依赖并启动服务…",
@@ -61,6 +62,7 @@ const operationCopy: Record<Operation, string> = {
   repair: "正在备份并重新构建服务…",
   autoStart: "正在更新登录后自启…",
   accessMode: "正在更新监听范围与防火墙…",
+  port: "正在更新监听端口…",
   uninstall: "正在彻底卸载并清理本地数据…",
 }
 
@@ -176,6 +178,10 @@ export function LocalControlServerManager({
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [uninstallConfirmation, setUninstallConfirmation] = useState("")
 
+  useEffect(() => {
+    if (status?.port && operation === null) setPort(String(status.port))
+  }, [status?.port, operation])
+
   const busy = operation !== null
   const onboarding = surface === "onboarding"
   const isCurrent = Boolean(
@@ -228,6 +234,11 @@ export function LocalControlServerManager({
       return
     }
     const nextStatus = await perform("accessMode", () => updateLocalControlAccessMode(nextMode))
+    syncCurrentLocalSource(nextStatus)
+  }
+
+  async function handlePort() {
+    const nextStatus = await perform("port", () => updateLocalControlPort(Number(port)))
     syncCurrentLocalSource(nextStatus)
   }
 
@@ -433,6 +444,16 @@ export function LocalControlServerManager({
                   <AlertDescription>{status.issues.join("；")}</AlertDescription>
                 </Alert>
               )}
+
+              <div className={cn("flex flex-wrap items-end gap-2 rounded-xl border p-3", onboarding ? "border-border/50 bg-background/28" : "border-border/70 bg-background/30")}>
+                <label className="min-w-40 flex-1">
+                  <span className="text-xs font-medium text-muted-foreground">监听端口</span>
+                  <Input className="mt-1 h-8 font-mono text-xs" inputMode="numeric" value={port} disabled={busy} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
+                </label>
+                <Button variant="outline" disabled={busy || !port || Number(port) === status.port} onClick={() => void handlePort()}>
+                  <Network className="size-4" aria-hidden="true" />应用端口
+                </Button>
+              </div>
 
               {operation && (
                 <div className={cn("flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm text-foreground", onboarding ? "border-border/50 bg-background/28" : "border-primary/20 bg-primary/7")} aria-live="polite">

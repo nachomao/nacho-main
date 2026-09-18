@@ -1,12 +1,16 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { createServer } from "node:net"
+import { once } from "node:events"
 import {
   createInitialEnvironment,
   createNpmInvocation,
   ensureManagedEnvironment,
+  isLocalControlPortAvailable,
   isValidLocalControlPort,
   parseEnvironmentFile,
   resolveLocalServerDirectory,
@@ -51,6 +55,25 @@ test("npm command files are launched through cmd.exe on Windows", () => {
     file: "npm",
     args: ["--version"],
   })
+})
+
+test("local control port probe distinguishes occupied and available ports", async () => {
+  const listener = createServer()
+  listener.listen(0, "0.0.0.0")
+  await once(listener, "listening")
+  const address = listener.address()
+  assert.ok(address && typeof address === "object")
+  assert.equal(await isLocalControlPortAvailable(address.port), false)
+  await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())))
+  assert.equal(await isLocalControlPortAvailable(address.port), true)
+})
+
+test("Windows management script keeps the UTF-8 BOM required by Windows PowerShell 5.1", async () => {
+  const testDirectory = path.dirname(fileURLToPath(import.meta.url))
+  const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/local-control-server.ps1")
+  const script = await readFile(scriptPath)
+
+  assert.deepEqual([...script.subarray(0, 3)], [0xef, 0xbb, 0xbf])
 })
 
 test("initial environment uses safe local defaults and independent strong secrets", () => {

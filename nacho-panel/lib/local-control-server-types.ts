@@ -24,6 +24,7 @@ export type LocalControlServerStatus = {
   port: number
   firewallEnabled: boolean
   firewallNeedsCleanup: boolean
+  portOwnerPid: number | null
   serverDir: string
   databasePath: string
   localAddresses: string[]

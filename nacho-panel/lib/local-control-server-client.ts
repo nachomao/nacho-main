@@ -70,6 +70,10 @@ export function updateLocalControlAccessMode(accessMode: LocalControlAccessMode)
   return mutateLocalControl("PATCH", { accessMode })
 }
 
+export function updateLocalControlPort(port: number) {
+  return mutateLocalControl("PATCH", { port })
+}
+
 export function uninstallLocalControl(confirmation: string) {
   return mutateLocalControl("DELETE", { confirmation })
 }
