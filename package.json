@@ -11,5 +11,10 @@
     "lint": "pnpm --dir nacho-panel lint",
     "test": "pnpm --dir nacho-panel exec tsx --test tests/*.test.ts",
     "typecheck": "pnpm --dir nacho-panel exec tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
   }
 }
