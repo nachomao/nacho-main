@@ -13,6 +13,7 @@ test("Windows manager verifies the project, PID ownership, and configured listen
   const script = await readFile(scriptPath, "utf8")
 
   assert.match(script, /Assert-TrustedProject/)
+  assert.match(script, /\[System\.IO\.File\]::ReadAllText\(\$ManifestPath, \[System\.Text\.Encoding\]::UTF8\)/)
   assert.match(script, /Win32_Process/)
   assert.match(script, /CommandLine\.ToLowerInvariant\(\)\.Contains\(\$Expected\)/)
   assert.match(script, /Get-NetTCPConnection -State Listen -LocalPort \$Port/)
@@ -23,6 +24,12 @@ test("Windows manager verifies the project, PID ownership, and configured listen
   assert.match(script, /function Import-ManagedEnvironment/)
   assert.match(script, /SetEnvironmentVariable\(\$Matches\.key, \$Matches\.value, "Process"\)/)
   assert.match(script, /Import-ManagedEnvironment\s+[\s\S]*Start-Process -FilePath \$Runtime\.nodePath/)
+})
+
+test("Windows manager script carries a UTF-8 BOM for Windows PowerShell 5.1", async () => {
+  const script = await readFile(scriptPath)
+
+  assert.deepEqual([...script.subarray(0, 3)], [0xef, 0xbb, 0xbf])
 })
 
 test("Windows manager keeps elevation scoped to firewall and autostart uses the selected port", async () => {
