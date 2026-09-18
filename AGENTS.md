@@ -10,7 +10,7 @@
 - 只陈述亲自读取或执行确认的事实。运行结果、服务状态、测试数量、制品版本和哈希均在当前任务中重新获取。
 - 以最小完整改动完成任务：既覆盖必要的三层链路，也保持无关页面、动画、主题、协议和运行配置不变。
 
-## 2. 三层架构与本机拓扑
+## 2. 三层架构与部署拓扑
 
 ### 2.1 面板（Windows）
 
@@ -23,10 +23,10 @@
   - `nacho-panel/tests/`：面板侧纯逻辑与本地设置测试。
 - 本机开发地址：`http://localhost:3000`，客户端管理页为 `/clients`。
 - `nacho-panel/components/server-data-context.tsx` 统一访问控制服务端的 `/api/panel/*`，使用 `Authorization: Bearer <PANEL_API_KEY>`。
-- `nacho-panel/app/api/local-settings/route.ts` 与 `nacho-panel/app/api/settings/test-email/route.ts` 属于面板本机 API；它们与 WSL 控制服务端不是同一进程。
+- `nacho-panel/app/api/local-settings/route.ts` 与 `nacho-panel/app/api/settings/test-email/route.ts` 属于面板本机 API；它们与任一部署模式下的控制服务端都不是同一进程。
 - 本地面板设置默认写入 `%LOCALAPPDATA%/NachoPanel/panel-settings.json`，测试可用 `NACHO_PANEL_SETTINGS_PATH` 指向临时文件。
 
-### 2.2 控制服务端（WSL2 Debian）
+### 2.2 控制服务端（三种部署模式）
 
 - 源码目录：`server/`。
 - 技术栈：Node.js 22+、Express 4、WebSocket、Zod、TypeScript、内置 `node:sqlite`。
@@ -37,10 +37,29 @@
   - `server/src/tests/`：服务端自动化测试。
   - `server/deploy/`：Linux 服务端及 Windows Agent 安装／卸载脚本。
   - `server/artifacts/windows/`：发布脚本生成的 Windows Agent 制品与 `latest.json`。
-- 测试发行版／用户：WSL2 `Debian` / `debian`。普通构建与测试使用该用户。
-- 已部署副本：`/opt/control-server`；systemd 单元：`control-server.service`；默认端口：`8443`；健康检查：`http://localhost:8443/health`。
-- `/opt/control-server` 是运行副本，仓库 `server/` 才是源码来源。先修改和验证源码，再按任务要求同步部署；保持部署侧 `.env`、SQLite 数据库和 systemd 配置原样。
-- 需要提权的部署操作使用当前会话提供的 `WSL_SUDO_PASSWORD`，或由调用方显式选择 WSL root；凭据只经标准输入传递，仓库、脚本、日志和最终摘要均保持无凭据内容。
+- 服务端支持三种互斥选择的运行模式：**Windows 本机部署**、**WSL2 部署**、**独立 Linux 服务器部署**。三种模式使用同一套 `server/` 源码和 API 协议，但进程管理、数据目录、监听地址与验收命令不同。
+- 面板和 Agent 在一次运行中只连接一个选定的控制服务端。不得因普通 Windows 本机任务自动启动 WSL，也不得把某一模式的运行状态当作另一模式的状态。
+- 多种模式在同一设备并存时必须使用不同端口；修改端口后同步更新面板连接地址、Agent `serverUrl`、防火墙与自启配置。
+
+#### 2.2.1 Windows 本机部署
+
+- 由 Windows 上的面板首次引导或“设置 → 连接”管理，运行仓库中的 `server/dist/index.js`。
+- 管理脚本：`server/deploy/windows/local-control-server.ps1`；配置：`server/.env`；状态与日志：`server/.nacho-local/`；默认地址：`http://127.0.0.1:8443`，端口冲突时从面板修改。
+- 进程使用当前 Windows 用户的 HKCU 登录自启，不依赖 WSL、systemd 或 `/opt/control-server`。
+- 安装、启动、停止、修复、端口迁移和卸载均走面板本机 API；只在配置局域网防火墙规则时请求 UAC。
+
+#### 2.2.2 WSL2 部署
+
+- 当前测试发行版／用户为 WSL2 `Debian` / `debian`；运行副本为 `/opt/control-server`，systemd 单元为 `control-server.service`，默认端口为 `8443`。
+- WSL 模式适合本机 Linux 兼容验证或明确选择的 WSL 常驻服务。只有任务明确指向 WSL、`/opt/control-server` 或 `control-server.service` 时才启动发行版。
+- `/opt/control-server` 是运行副本，仓库 `server/` 才是源码来源。先验证源码，再备份运行态并同步部署；保持部署侧 `.env`、SQLite 数据库和 systemd 配置原样。
+- 需要提权时使用当前会话提供的 `WSL_SUDO_PASSWORD`，或由调用方显式选择 WSL root；凭据只经标准输入传递，不进入仓库、日志或摘要。
+
+#### 2.2.3 独立 Linux 服务器部署
+
+- 支持 Ubuntu、Debian、CentOS、RHEL、Rocky Linux、AlmaLinux 与 Fedora；使用 `server/deploy/install.sh` 安装 Node.js、系统用户和 `control-server.service`。
+- 默认安装目录为 `/opt/control-server`，数据库与持久化目录按部署脚本配置；面板和 Agent 使用服务器可达的 HTTP(S) 地址，不得使用浏览器所在机器的 `localhost`。
+- 远程部署遵循“源码验证 → 备份配置/数据库 → 同步或执行安装脚本 → 重启 systemd → 健康/API 验证 → 失败回滚”，并保持远程 `.env` 与凭据不出现在聊天输出。
 
 ### 2.3 Windows Agent 客户端（当前 Windows 设备）
 
@@ -102,7 +121,7 @@
 2. 服务端类型、Zod schema、路由、service、持久化和日志。
 3. Agent 模型、处理器、平台实现、本机策略、journal 恢复和结果契约。
 4. 三层单元测试／集成测试、README 或协议说明。
-5. Windows + WSL + 浏览器的最小真实链路验证。
+5. Windows Agent + 当前选定的服务端部署模式 + 浏览器的最小真实链路验证；无需同时启动三种服务端模式。
 
 若某层与任务无关，在最终摘要中说明经过核对后无需变更的原因。
 
@@ -144,17 +163,41 @@ Pop-Location
 - UI 变更还需在真实浏览器访问 `http://localhost:3000`，核对目标页面、控制台、网络请求、桌面和 `390x844` 视口。
 - 已有 dev 服务运行时，构建可能改写 `nacho-panel/.next/`；先确认运行进程，必要时在独立副本构建并保持原 dev 服务状态。
 
-### 7.2 服务端：在 WSL2 Debian 中运行
+### 7.2 服务端：按部署模式验证
+
+源码级测试在 `server/` 中执行：
 
 ```bash
 npm test
 npm run build
+```
+
+Windows 本机部署：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:PORT/health
+Invoke-RestMethod http://localhost:3000/api/local-control-server -Headers @{ Origin = "http://localhost:3000" }
+```
+
+WSL2 Debian 部署：
+
+```bash
 curl -fsS http://localhost:8443/health
 systemctl is-active control-server.service
 ```
 
 - `server/node_modules` 可能由 Windows npm 安装，其中 `esbuild` 原生包与 Linux 不兼容。WSL 测试使用 WSL 文件系统中的隔离目录：复制 `server/package*.json`、`server/tsconfig.json`、`server/src/`，执行 `npm ci --no-audit --no-fund`、测试和构建，完成后校验临时路径位于 `/tmp/` 再清理。
 - 服务端测试不直接覆盖 `/opt/control-server`。部署验收按“源码通过 -> 备份运行态 -> 同步部署副本 -> 重启服务 -> 健康/API 验证 -> 失败则回滚”的顺序执行。
+
+独立 Linux 服务器部署在目标主机执行：
+
+```bash
+systemctl is-active control-server.service
+curl -fsS http://127.0.0.1:PORT/health
+```
+
+- 远程健康检查还需从面板或 Agent 所在网络访问其公开地址，验证监听、防火墙、反向代理与 TLS；不要用本机 `localhost` 代替远程服务器地址。
+- 验证前先确认当前任务选择的部署模式；其他模式保持原状态，不为凑齐拓扑而启动。
 
 ### 7.3 Agent：在当前 Windows 设备运行
 
@@ -173,7 +216,7 @@ powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1
 
 ### 7.4 三层联调顺序
 
-1. 服务端 `/health` 返回成功，`control-server.service` 状态符合预期。
+1. 当前选定模式的服务端 `/health` 返回成功；Windows 本机模式核对受管 PID，WSL/Linux 模式核对 `control-server.service`。
 2. Windows `NachoAgent` 服务状态符合预期，心跳能更新客户端版本与在线状态。
 3. 直接调用 Panel API 验证请求／响应和 SQLite 命令状态。
 4. 验证 WebSocket 推送；断开实时通道后验证 HTTP 回退。
@@ -185,7 +228,7 @@ powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1
 1. **Current**：用一行写明当前对象、最近确认结果和下一动作。
 2. **Inspect**：读取相关源码、测试、配置和运行态；列出真实调用链与现有边界。
 3. **Implement**：直接修改必要文件，保持协议一致；工具失败后说明失败步骤并立即改用修正命令。
-4. **Verify**：先做目标测试，再做受影响层的全量检查；需要联调时按 Windows／WSL／浏览器拓扑执行。
+4. **Verify**：先做目标测试，再做受影响层的全量检查；需要联调时按 Windows Agent／选定服务端模式／浏览器拓扑执行。
 5. **Restore**：真机测试结束后恢复服务状态、配置、制品和临时夹具，清理已验证的临时目录。
 6. **Report**：最终摘要包含改动文件、行为变化、执行过的命令及结果、真实运行证据、剩余演示边界或下一步。
 

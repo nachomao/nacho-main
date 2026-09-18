@@ -61,14 +61,15 @@
 
 ## 已确认的工程边界
 
-- Windows 本机控制服务已支持从首次引导与设置页执行环境检查、安装、启动／停止／重启、可回滚修复、HKCU 用户登录自启、loopback／局域网监听切换和彻底卸载；运行环境检测会复用面板当前 `process.execPath`、Node.js 同目录 npm、系统 PATH、`where.exe` 与常见安装目录，不因一次 npm 或处理器架构探测失败禁用安装。仍缺少 Node.js 22+ 或 npm 时，安装／修复流程才下载 Node.js 官方 LTS 便携包，校验官方 SHA-256 后放入项目受管目录，无需 App Installer、管理员权限或修改系统 PATH，下载失败且 winget 可用时再回退到系统安装。局域网模式只创建 `Private + LocalSubnet + 指定 TCP 端口` 的入站规则，Agent 安装链接使用可达局域网地址，卸载会删除本地 SQLite、日志、依赖、受管运行环境和构建产物但保留源码。管理 API 仅接受面板同源 JSON 请求，状态判定同时校验受管 PID、配置端口和健康响应。Linux 与云端预览仅展示不支持状态，不执行模拟安装。
+- 控制服务端支持 Windows 本机、WSL2 和独立 Linux 服务器三种部署模式；三者共用 `server/` 源码与 API 协议，但进程、配置、SQLite、端口和验收状态相互独立。面板与 Agent 一次只连接一个选定服务端；Windows 本机任务不自动启动 WSL，多模式同机并存时使用不同端口。
+- Windows 本机控制服务已支持从首次引导与设置页执行环境检查、安装、启动／停止／重启、可回滚修复、端口迁移、HKCU 用户登录自启、loopback／局域网监听切换和彻底卸载；Windows 管理脚本保留 UTF-8 BOM、显式按 UTF-8 读取项目清单并以 UTF-8 输出错误，兼容 Windows PowerShell 5.1。运行环境检测通过隐藏、非交互的 PowerShell 进程执行，优先复用面板当前 `process.execPath` 与 Node.js 同目录 npm；检测 `npm.cmd` 时由 `node.exe` 直接执行 `npm-cli.js`，命中后停止继续枚举，避免状态轮询周期性创建可见的 `cmd.exe` 窗口。系统 PATH、`where.exe` 与常见安装目录仅作为回退，并在执行 npm 后立即保存退出码，不因后续管道命令覆盖 `$LASTEXITCODE` 或一次处理器架构探测失败而误判。安装和启动会先做真实端口占用预检，状态页显示占用 PID；受管 Node 子进程显式载入 `server/.env`，避免继承面板 `PORT`／`NODE_ENV` 导致监听错误。仍缺少 Node.js 22+ 或 npm 时，安装／修复流程才下载 Node.js 官方 LTS 便携包，校验官方 SHA-256 后放入项目受管目录，无需 App Installer、管理员权限或修改系统 PATH，下载失败且 winget 可用时再回退到系统安装。局域网模式只创建 `Private + LocalSubnet + 指定 TCP 端口` 的入站规则，Agent 安装链接使用可达局域网地址，卸载会删除本地 SQLite、日志、依赖、受管运行环境和构建产物但保留源码。管理 API 仅接受面板同源 JSON 请求，状态判定同时校验受管 PID、配置端口和健康响应。WSL2 与独立 Linux 服务器通过 `install.sh` 和 systemd 管理，不由 Windows 本机管理卡片模拟操作。
 - 首次引导的服务方式与登录方式菜单在展开／收起时使用 `focus({ preventScroll: true })` 交接焦点，避免尚在展开的裁剪容器隐式滚动后回正；卡片扩张、模糊缩放渐显与标题错峰动画保持不变。
 - 首次引导头像仅保留用户提供的“抱心猫娘”“趴趴猫娘”“猫帽猫娘”三款本地 PNG 预设，资源文件和 `avatarId` 已同步改为 `heart`／`lounge`／`hood`；旧预设标识在读取时迁移为默认的“抱心猫娘”。称呼确认、头像确认和上传入口继续复用中性按钮样式，头像动画、自定义上传与面板本机设置保存链路不变。
 - `tasks` 已使用服务端真实 API 完成读取、CRUD、启停和任务下发，不再列为缺口。
 - `health` 已使用服务端真实 API 完成发现项、采集、下载、重分析和重采集，不再列为缺口。
 - `plugins` 的目录读取、CRUD 与启停状态已由服务端持久化；插件包下载、导入和批量安装仍未形成真实包传输与 Agent 执行闭环。
 - WebSSH 与 AI Workspace 仍是前端演示边界，不得在文档或界面中宣称已完成真实执行。
-- 服务端测试应在 Linux／WSL 原生依赖环境中执行；不要使用历史测试数量替代当前验证。
+- 服务端源码测试按当前任务选择的 Windows、WSL2 或独立 Linux 环境执行；涉及 Linux 部署链路时使用 Linux／WSL 原生依赖，不要使用历史测试数量替代当前验证。
 
 ## 完成与更新规则
 

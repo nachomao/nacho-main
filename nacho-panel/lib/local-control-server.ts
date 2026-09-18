@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
+import { createServer } from "node:net"
 import { constants } from "node:fs"
 import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -32,6 +33,7 @@ type WindowsRuntimeState = {
   autoStartEnabled?: boolean
   firewallPorts?: number[]
   listeningPorts?: number[]
+  portOwnerPid?: number | null
   nodeReady?: boolean
   nodeVersion?: string
   npmAvailable?: boolean
@@ -51,6 +53,20 @@ function exists(filePath: string) {
 
 export function isValidLocalControlPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= MIN_PORT && value <= MAX_PORT
+}
+
+export function isLocalControlPortAvailable(port: number, host = "0.0.0.0") {
+  return new Promise<boolean>((resolve, reject) => {
+    const probe = createServer()
+    probe.unref()
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") resolve(false)
+      else reject(error)
+    })
+    probe.listen({ port, host, exclusive: true }, () => {
+      probe.close((error) => (error ? reject(error) : resolve(true)))
+    })
+  })
 }
 
 export function parseEnvironmentFile(raw: string): EnvironmentMap {
@@ -237,7 +253,19 @@ async function runExecutable(file: string, args: string[], cwd: string, timeout 
 async function runPowerShell(serverDir: string, action: string, port?: number, timeout = POWERSHELL_TIMEOUT_MS) {
   const script = managementPaths(serverDir).script
   if (!(await exists(script))) throw new LocalControlServerError("缺少 Windows 本地服务管理脚本", 500)
-  const args = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Action", action]
+  const args = [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-WindowStyle",
+    "Hidden",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    script,
+    "-Action",
+    action,
+  ]
   if (port !== undefined) args.push("-Port", String(port))
   if (process.platform === "win32") args.push("-PanelNodePath", process.execPath)
   return runExecutable("powershell.exe", args, serverDir, timeout)
@@ -312,6 +340,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
       port: DEFAULT_PORT,
       firewallEnabled: false,
       firewallNeedsCleanup: false,
+      portOwnerPid: null,
       serverDir: "",
       databasePath: "",
       localAddresses: [],
@@ -350,6 +379,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const firewallPorts = runtime.firewallPorts || []
   const firewallEnabled = firewallPorts.includes(port)
   const firewallNeedsCleanup = accessMode === "loopback" && firewallPorts.length > 0
+  const portOwnerPid = runtime.portOwnerPid || null
   const issues: string[] = []
 
   if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
@@ -362,6 +392,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   else if (running && !healthy) issues.push("进程正在运行，但健康检查失败")
   if (accessMode === "lan" && !firewallEnabled) issues.push("局域网模式尚未完成 Windows 防火墙放行")
   if (firewallNeedsCleanup) issues.push("检测到不再需要的 Windows 防火墙规则")
+  if (!running && portOwnerPid) issues.push(`端口 ${port} 已被进程 ${portOwnerPid} 占用`)
 
   let runtimeStatus: LocalControlServerStatus["runtimeStatus"] = "unsupported"
   if (platformSupported) {
@@ -388,6 +419,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     port,
     firewallEnabled,
     firewallNeedsCleanup,
+    portOwnerPid,
     serverDir,
     databasePath: databasePathFromEnvironment(serverDir, values),
     localAddresses,
@@ -437,6 +469,9 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
     throw new LocalControlServerError("缺少服务端构建产物，请先安装或修复", 409)
   }
   const port = portFromEnvironment(values)
+  if (!(await isLocalControlPortAvailable(port))) {
+    throw new LocalControlServerError(`端口 ${port} 已被其他进程占用，请更换监听端口后重试`, 409)
+  }
   await runPowerShell(serverDir, "Start", port)
   await waitForHealth(serverDir, port)
 }
@@ -479,6 +514,9 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
     requireWindows(status)
     if (!status.prerequisites.source) {
       throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
+    }
+    if (!(await isLocalControlPortAvailable(port))) {
+      throw new LocalControlServerError(`端口 ${port} 已被其他进程占用，请更换监听端口后重试`, 409)
     }
     if (status.installed) throw new LocalControlServerError("本地服务已经安装", 409)
     if (status.needsRepair) throw new LocalControlServerError("检测到已有配置或构建产物，请使用修复功能以保留现有数据与密钥", 409)
@@ -624,6 +662,45 @@ export function setLocalControlAccessMode(accessMode: LocalControlAccessMode) {
       if (status.running && (stopped || startedWithNewEnvironment)) {
         await startUnlocked(status.serverDir, previousValues).catch(() => undefined)
       }
+      throw error
+    }
+  })
+}
+
+export function setLocalControlPort(port: number) {
+  return withMutationLock(async () => {
+    if (!isValidLocalControlPort(port)) throw new LocalControlServerError("端口必须是 1024-65535 之间的整数", 400)
+    const status = await getLocalControlServerStatus()
+    requireWindows(status)
+    if (!status.installed) throw new LocalControlServerError("本地服务尚未安装", 409)
+    if (status.port === port) return status
+    if (!(await isLocalControlPortAvailable(port))) {
+      throw new LocalControlServerError(`端口 ${port} 已被其他进程占用，请更换监听端口后重试`, 409)
+    }
+
+    const previousValues = await readEnvironment(status.serverDir)
+    const values = new Map(previousValues)
+    const wasRunning = status.running
+    let wroteEnvironment = false
+    let startedWithNewPort = false
+    try {
+      if (wasRunning) await stopUnlocked(status.serverDir, previousValues)
+      values.set("PORT", String(port))
+      await writeEnvironment(status.serverDir, values)
+      wroteEnvironment = true
+      if (status.autoStartEnabled) await runPowerShell(status.serverDir, "EnableAutostart", port)
+      if (status.accessMode === "lan") await runPowerShell(status.serverDir, "SetFirewall", port)
+      if (wasRunning) {
+        await startUnlocked(status.serverDir, values)
+        startedWithNewPort = true
+      }
+      return getLocalControlServerStatus()
+    } catch (error) {
+      if (startedWithNewPort) await stopUnlocked(status.serverDir, values).catch(() => undefined)
+      if (wroteEnvironment) await writeEnvironment(status.serverDir, previousValues).catch(() => undefined)
+      if (status.autoStartEnabled) await runPowerShell(status.serverDir, "EnableAutostart", status.port).catch(() => undefined)
+      if (status.accessMode === "lan") await runPowerShell(status.serverDir, "SetFirewall", status.port).catch(() => undefined)
+      if (wasRunning) await startUnlocked(status.serverDir, previousValues).catch(() => undefined)
       throw error
     }
   })

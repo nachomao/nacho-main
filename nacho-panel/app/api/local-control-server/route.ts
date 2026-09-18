@@ -7,6 +7,7 @@ import {
   restartLocalControlServer,
   setLocalControlAccessMode,
   setLocalControlAutoStart,
+  setLocalControlPort,
   startLocalControlServer,
   stopLocalControlServer,
   uninstallLocalControlServer,
@@ -141,6 +142,9 @@ export async function PATCH(request: NextRequest) {
         throw new LocalControlServerError("连接范围无效", 400)
       }
       data = await setLocalControlAccessMode(body.accessMode)
+    } else if (Object.hasOwn(body, "port")) {
+      if (typeof body.port !== "number") throw new LocalControlServerError("端口必须是数字", 400)
+      data = await setLocalControlPort(body.port)
     } else {
       throw new LocalControlServerError("本地服务设置项无效", 400)
     }

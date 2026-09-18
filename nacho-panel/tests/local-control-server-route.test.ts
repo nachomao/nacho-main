@@ -53,6 +53,12 @@ test("settings reject non-boolean auto-start values", async () => {
   assert.match((await response.json()).message, /布尔值/)
 })
 
+test("settings reject non-numeric port values", async () => {
+  const response = await PATCH(mutationRequest("PATCH", { port: "8444" }))
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).message, /端口必须是数字/)
+})
+
 test("uninstall rejects extra fields and non-string confirmations", async () => {
   const extraField = await DELETE(mutationRequest("DELETE", { confirmation: "x", deleteSource: true }))
   assert.equal(extraField.status, 400)
