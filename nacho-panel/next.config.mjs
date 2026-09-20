@@ -1,15 +1,8 @@
-import path from "node:path"
-
-const repositoryRoot = path.resolve(process.cwd(), "..")
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
-  outputFileTracingExcludes: {
-    "/api/local-control-server": ["../server/**/*"],
-  },
   turbopack: {
-    root: repositoryRoot,
+    root: process.cwd(),
   },
   experimental: {
     cpus: 2,
