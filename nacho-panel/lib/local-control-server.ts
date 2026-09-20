@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto"
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { createServer } from "node:net"
 import { constants } from "node:fs"
 import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
@@ -9,6 +9,7 @@ import { promisify } from "node:util"
 import {
   LOCAL_CONTROL_UNINSTALL_CONFIRMATION,
   type LocalControlAccessMode,
+  type LocalControlInstallLog,
   type LocalControlInstallOptions,
   type LocalControlServerStatus,
 } from "./local-control-server-types"
@@ -25,6 +26,8 @@ export class LocalControlServerError extends Error {
     super(message)
   }
 }
+
+type LocalControlProgressReporter = (entry: LocalControlInstallLog) => void
 
 type WindowsRuntimeState = {
   running?: boolean
@@ -235,22 +238,102 @@ function configurationNeedsRepair(values: EnvironmentMap, envExists: boolean) {
   )
 }
 
-async function runExecutable(file: string, args: string[], cwd: string, timeout = POWERSHELL_TIMEOUT_MS) {
+function reportProgress(
+  onProgress: LocalControlProgressReporter | undefined,
+  stream: LocalControlInstallLog["stream"],
+  message: string,
+) {
+  if (!message || !onProgress) return
   try {
-    return await execFileAsync(file, args, {
-      cwd,
-      timeout,
-      windowsHide: true,
-      maxBuffer: 4 * 1024 * 1024,
+    onProgress({ stream, message })
+  } catch {}
+}
+
+function formatCommandArgument(value: string) {
+  if (/^[A-Za-z0-9_./:\\-]+$/.test(value)) return value
+  return `"${value.replaceAll('"', '\\"')}"`
+}
+
+export function formatExecutableCommand(file: string, args: string[]) {
+  return [file, ...args].map(formatCommandArgument).join(" ")
+}
+
+async function runExecutable(
+  file: string,
+  args: string[],
+  cwd: string,
+  timeout = POWERSHELL_TIMEOUT_MS,
+  onProgress?: LocalControlProgressReporter,
+) {
+  try {
+    if (!onProgress) {
+      return await execFileAsync(file, args, {
+        cwd,
+        timeout,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+      })
+    }
+
+    reportProgress(onProgress, "command", `$ ${formatExecutableCommand(file, args)}\n`)
+    return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(file, args, { cwd, windowsHide: true })
+      let stdout = ""
+      let stderr = ""
+      let outputBytes = 0
+      let timedOut = false
+      let outputExceeded = false
+      let finished = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        child.kill()
+      }, timeout)
+      timer.unref()
+
+      const append = (stream: "stdout" | "stderr", chunk: Buffer | string) => {
+        const value = chunk.toString()
+        outputBytes += Buffer.byteLength(value)
+        if (stream === "stdout") stdout += value
+        else stderr += value
+        reportProgress(onProgress, stream, value)
+        if (outputBytes > 4 * 1024 * 1024) {
+          outputExceeded = true
+          child.kill()
+        }
+      }
+      child.stdout.on("data", (chunk) => append("stdout", chunk))
+      child.stderr.on("data", (chunk) => append("stderr", chunk))
+      child.once("error", (error) => {
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        reject(error)
+      })
+      child.once("close", (code) => {
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        if (timedOut) reject(new Error(`命令执行超时（${Math.ceil(timeout / 1000)} 秒）`))
+        else if (outputExceeded) reject(new Error("命令输出超过 4 MiB 限制"))
+        else if (code === 0) resolve({ stdout, stderr })
+        else reject(new Error(stderr.trim() || stdout.trim() || `命令执行失败（退出码 ${code ?? "未知"}）`))
+      })
     })
   } catch (error) {
+    if (error instanceof LocalControlServerError) throw error
     const detail = error as { stderr?: string; stdout?: string; message?: string }
     const message = detail.stderr?.trim() || detail.stdout?.trim() || detail.message || "本地命令执行失败"
     throw new LocalControlServerError(message)
   }
 }
 
-async function runPowerShell(serverDir: string, action: string, port?: number, timeout = POWERSHELL_TIMEOUT_MS) {
+async function runPowerShell(
+  serverDir: string,
+  action: string,
+  port?: number,
+  timeout = POWERSHELL_TIMEOUT_MS,
+  onProgress?: LocalControlProgressReporter,
+) {
   const script = managementPaths(serverDir).script
   if (!(await exists(script))) throw new LocalControlServerError("缺少 Windows 本地服务管理脚本", 500)
   const args = [
@@ -269,7 +352,7 @@ async function runPowerShell(serverDir: string, action: string, port?: number, t
   if (port !== undefined) args.push("-Port", String(port))
   if (process.platform === "win32") args.push("-PanelNodePath", process.execPath)
   try {
-    return await runExecutable("powershell.exe", args, serverDir, timeout)
+    return await runExecutable("powershell.exe", args, serverDir, timeout, onProgress)
   } catch (error) {
     if (error instanceof LocalControlServerError && /端口 \d+ 已被其他进程占用/.test(error.message)) {
       throw new LocalControlServerError(error.message, 409)
@@ -300,9 +383,14 @@ export function createNpmInvocation(
   return { file: "npm", args }
 }
 
-async function runNpm(args: string[], serverDir: string, timeout: number) {
+async function runNpm(
+  args: string[],
+  serverDir: string,
+  timeout: number,
+  onProgress?: LocalControlProgressReporter,
+) {
   const invocation = createNpmInvocation(args)
-  return runExecutable(invocation.file, invocation.args, serverDir, timeout)
+  return runExecutable(invocation.file, invocation.args, serverDir, timeout, onProgress)
 }
 
 async function healthCheck(port: number) {
@@ -471,7 +559,11 @@ async function stopUnlocked(serverDir: string, values: EnvironmentMap) {
   await runPowerShell(serverDir, "ForceStop")
 }
 
-async function startUnlocked(serverDir: string, values: EnvironmentMap) {
+async function startUnlocked(
+  serverDir: string,
+  values: EnvironmentMap,
+  onProgress?: LocalControlProgressReporter,
+) {
   if (!(await exists(managementPaths(serverDir).distEntry))) {
     throw new LocalControlServerError("缺少服务端构建产物，请先安装或修复", 409)
   }
@@ -479,28 +571,41 @@ async function startUnlocked(serverDir: string, values: EnvironmentMap) {
   if (!(await isLocalControlPortAvailable(port))) {
     throw new LocalControlServerError(`端口 ${port} 已被其他进程占用，请更换监听端口后重试`, 409)
   }
-  await runPowerShell(serverDir, "Start", port)
+  await runPowerShell(serverDir, "Start", port, POWERSHELL_TIMEOUT_MS, onProgress)
+  reportProgress(onProgress, "system", `正在等待端口 ${port} 通过健康检查…\n`)
   await waitForHealth(serverDir, port)
+  reportProgress(onProgress, "system", `控制服务已在端口 ${port} 上通过健康检查。\n`)
 }
 
-async function ensureRuntimePrerequisites(serverDir: string) {
+async function ensureRuntimePrerequisites(
+  serverDir: string,
+  onProgress?: LocalControlProgressReporter,
+) {
+  reportProgress(onProgress, "system", "正在检查 Node.js 22+ 与 npm…\n")
   const runtime = await windowsRuntimeState(serverDir)
-  if (runtime.nodeReady && runtime.npmAvailable) return
+  if (runtime.nodeReady && runtime.npmAvailable) {
+    reportProgress(onProgress, "system", `已检测到可用运行环境：Node.js ${runtime.nodeVersion || "22+"}、npm。\n`)
+    return
+  }
 
-  await runPowerShell(serverDir, "InstallRuntime", undefined, 15 * 60_000)
+  reportProgress(onProgress, "system", "未检测到完整运行环境，正在安装并校验 Node.js LTS 与 npm…\n")
+  await runPowerShell(serverDir, "InstallRuntime", undefined, 15 * 60_000, onProgress)
   const installedRuntime = await windowsRuntimeState(serverDir)
   if (!installedRuntime.nodeReady || !installedRuntime.npmAvailable) {
     throw new LocalControlServerError("Node.js LTS 安装完成后仍未检测到可用的 Node.js 22+ 与 npm", 409)
   }
+  reportProgress(onProgress, "system", `运行环境准备完成：Node.js ${installedRuntime.nodeVersion || "22+"}、npm。\n`)
 }
 
-async function buildServer(serverDir: string) {
+async function buildServer(serverDir: string, onProgress?: LocalControlProgressReporter) {
+  reportProgress(onProgress, "system", "正在安装服务端依赖并生成构建产物…\n")
   if (process.platform === "win32") {
-    await runPowerShell(serverDir, "Build", undefined, 15 * 60_000)
-    return
+    await runPowerShell(serverDir, "Build", undefined, 15 * 60_000, onProgress)
+  } else {
+    await runNpm(["ci", "--no-audit", "--no-fund"], serverDir, 10 * 60_000, onProgress)
+    await runNpm(["run", "build"], serverDir, 5 * 60_000, onProgress)
   }
-  await runNpm(["ci", "--no-audit", "--no-fund"], serverDir, 10 * 60_000)
-  await runNpm(["run", "build"], serverDir, 5 * 60_000)
+  reportProgress(onProgress, "system", "依赖安装与服务端构建已完成。\n")
 }
 
 let mutationQueue: Promise<unknown> = Promise.resolve()
@@ -510,8 +615,12 @@ function withMutationLock<T>(operation: () => Promise<T>) {
   return result
 }
 
-export function installLocalControlServer(options: LocalControlInstallOptions) {
+export function installLocalControlServer(
+  options: LocalControlInstallOptions,
+  onProgress?: LocalControlProgressReporter,
+) {
   return withMutationLock(async () => {
+    reportProgress(onProgress, "system", "正在检查本机安装环境与监听端口…\n")
     const port = options.port ?? DEFAULT_PORT
     if (!isValidLocalControlPort(port)) throw new LocalControlServerError("端口必须是 1024-65535 之间的整数", 400)
     if (options.accessMode !== "loopback" && options.accessMode !== "lan") {
@@ -537,26 +646,34 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
       exists(paths.managedRuntime),
       exists(paths.stateDir),
     ])
-    await runPowerShell(serverDir, "AssertPortAvailable", port)
+    await runPowerShell(serverDir, "AssertPortAvailable", port, POWERSHELL_TIMEOUT_MS, onProgress)
+    reportProgress(onProgress, "system", `端口 ${port} 可用，开始安装。\n`)
 
     let firewallConfigured = false
     let autoStartConfigured = false
     try {
-      await ensureRuntimePrerequisites(serverDir)
-      await buildServer(serverDir)
+      await ensureRuntimePrerequisites(serverDir, onProgress)
+      await buildServer(serverDir, onProgress)
       if (options.accessMode === "lan") {
-        await runPowerShell(serverDir, "SetFirewall", port)
+        reportProgress(onProgress, "system", "正在配置仅限 Private 网络与 LocalSubnet 的防火墙规则…\n")
+        await runPowerShell(serverDir, "SetFirewall", port, POWERSHELL_TIMEOUT_MS, onProgress)
         firewallConfigured = true
       }
+      reportProgress(onProgress, "system", "正在写入本机服务配置…\n")
       const values = createInitialEnvironment({ accessMode: options.accessMode, autoStart: options.autoStart, port })
       await writeEnvironment(serverDir, values)
       if (options.autoStart) {
-        await runPowerShell(serverDir, "EnableAutostart", port)
+        reportProgress(onProgress, "system", "正在配置当前 Windows 用户登录后自动启动…\n")
+        await runPowerShell(serverDir, "EnableAutostart", port, POWERSHELL_TIMEOUT_MS, onProgress)
         autoStartConfigured = true
       }
-      await startUnlocked(serverDir, values)
-      return getLocalControlServerStatus()
+      reportProgress(onProgress, "system", "正在启动本机控制服务…\n")
+      await startUnlocked(serverDir, values, onProgress)
+      const finalStatus = await getLocalControlServerStatus()
+      reportProgress(onProgress, "system", "安装完成，正在载入运行状态与访问参数。\n")
+      return finalStatus
     } catch (error) {
+      reportProgress(onProgress, "system", "安装未完成，正在回滚本次创建的文件与设置…\n")
       await runPowerShell(serverDir, "ForceStop", port).catch(() => undefined)
       if (autoStartConfigured) await runPowerShell(serverDir, "DisableAutostart", port).catch(() => undefined)
       if (firewallConfigured) await runPowerShell(serverDir, "RemoveFirewall", port).catch(() => undefined)
@@ -567,6 +684,7 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
         managedRuntimeExisted ? Promise.resolve() : rm(paths.managedRuntime, { recursive: true, force: true }),
         stateDirectoryExisted ? Promise.resolve() : rm(paths.stateDir, { recursive: true, force: true }),
       ])
+      reportProgress(onProgress, "system", "回滚完成。\n")
       throw error
     }
   })
