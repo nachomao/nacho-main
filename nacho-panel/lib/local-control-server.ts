@@ -130,6 +130,7 @@ function managementPaths(serverDir: string) {
     distEntry: path.join(serverDir, "dist", "index.js"),
     packageLock: path.join(serverDir, "package-lock.json"),
     script: path.join(serverDir, "deploy", "windows", "local-control-server.ps1"),
+    launcher: path.join(serverDir, "deploy", "windows", "start-local-control-server.cjs"),
     stateDir,
     backupDist: path.join(stateDir, "backup-dist"),
     backupEnv: path.join(stateDir, "backup.env"),
@@ -454,16 +455,17 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const paths = managementPaths(serverDir)
   const values = await readEnvironment(serverDir)
   const port = portFromEnvironment(values)
-  const [envExists, distExists, lockExists, scriptExists, runtime] = await Promise.all([
+  const [envExists, distExists, lockExists, scriptExists, launcherExists, runtime] = await Promise.all([
     exists(paths.env),
     exists(paths.distEntry),
     exists(paths.packageLock),
     exists(paths.script),
+    exists(paths.launcher),
     windowsRuntimeState(serverDir, port),
   ])
   const node = runtime.nodeReady === true
   const npm = runtime.npmAvailable === true
-  const source = lockExists && scriptExists
+  const source = lockExists && scriptExists && launcherExists
   const platformSupported = process.platform === "win32"
   const accessMode = accessModeFromEnvironment(values)
   const running = runtime.running === true

@@ -6,6 +6,7 @@ import { test } from "node:test"
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
 const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/local-control-server.ps1")
+const launcherPath = path.resolve(testDirectory, "../../server/deploy/windows/start-local-control-server.cjs")
 const modulePath = path.resolve(testDirectory, "../lib/local-control-server.ts")
 const managerPath = path.resolve(testDirectory, "../components/local-control/local-control-server-manager.tsx")
 
@@ -26,7 +27,17 @@ test("Windows manager verifies the project, PID ownership, and configured listen
   assert.match(script, /portOwnerPid = if \(\$PortOwner\)/)
   assert.match(script, /function Import-ManagedEnvironment/)
   assert.match(script, /SetEnvironmentVariable\(\$Matches\.key, \$Matches\.value, "Process"\)/)
-  assert.match(script, /Import-ManagedEnvironment\s+[\s\S]*Start-Process -FilePath \$Runtime\.nodePath/)
+  assert.match(script, /Import-ManagedEnvironment\s+[\s\S]*& \$Runtime\.nodePath \$LauncherPath/)
+  assert.match(script, /本机控制服务启动器未返回有效 PID/)
+})
+
+test("Windows manager launches the service without inheriting the install stream", async () => {
+  const launcher = await readFile(launcherPath, "utf8")
+
+  assert.match(launcher, /detached: true/)
+  assert.match(launcher, /stdio: \["ignore", stdoutDescriptor, stderrDescriptor\]/)
+  assert.match(launcher, /child\.unref\(\)/)
+  assert.doesNotMatch(launcher, /shell: true/)
 })
 
 test("Windows manager script carries a UTF-8 BOM for Windows PowerShell 5.1", async () => {
@@ -95,7 +106,8 @@ test("Windows manager reuses the panel runtime before installing a verified port
   assert.match(script, /& \$Runtime\.npmPath ci --no-audit --no-fund/)
   assert.match(script, /Write-Output '\$ npm run build'/)
   assert.match(script, /& \$Runtime\.npmPath run build/)
-  assert.match(script, /Start-Process -FilePath \$Runtime\.nodePath/)
+  assert.match(script, /& \$Runtime\.nodePath \$LauncherPath/)
+  assert.doesNotMatch(script, /RedirectStandardOutput \$StdoutPath/)
 })
 
 test("installed local service exposes validated port migration", async () => {
