@@ -1,11 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useOnboarding } from "./onboarding-context"
 import { IntroLogo } from "./intro-logo"
 import { NameRegister } from "./name-register"
 import { ServerRegister } from "./server-register"
-import { LocalDeploy } from "./local-deploy"
 import { AuthRegister } from "./auth-register"
 import { LockScreen } from "./lock-screen"
 
@@ -16,18 +15,14 @@ const EASE = "cubic-bezier(0.32, 0.72, 0.24, 1)"
  * 品牌开场（N 描边 + Nacho Panel 组排）→ 用户名注册 → 服务端注册 → 登录方式注册，
  * 完成后以模糊渐隐的方式原地离场，露出下方主页。
  * 若处于退出登录状态（locked），则跳过完整流程，直接显示锁屏。
+ * 本地部署的真实安装进度由 ServerRegister 内嵌的 LocalControlServerManager 完成，
+ * 确认后直接进入登录方式注册，不再叠加额外的模拟终端页。
  */
 export function Onboarding() {
-  const { phase, startUnlock, serverSource } = useOnboarding()
-  const [step, setStep] = useState<"logo" | "name" | "server" | "deploy" | "auth">("logo")
+  const { phase, startUnlock } = useOnboarding()
+  const [step, setStep] = useState<"logo" | "name" | "server" | "auth">("logo")
   // 进入 locked 后固定走锁屏分支，unlocking 期间也保持渲染锁屏直至卸载
   const [lockFlow, setLockFlow] = useState(false)
-
-  // 用 ref 读取最新的服务端来源，避免 ServerRegister 内部延时回调捕获旧闭包
-  const serverSourceRef = useRef(serverSource)
-  useEffect(() => {
-    serverSourceRef.current = serverSource
-  }, [serverSource])
 
   useEffect(() => {
     if (phase === "locked") setLockFlow(true)
@@ -36,10 +31,6 @@ export function Onboarding() {
   const toName = useCallback(() => setStep("name"), [])
   const toServer = useCallback(() => setStep("server"), [])
   const toAuth = useCallback(() => setStep("auth"), [])
-  // 服务端来源确认后：本地部署 → 先走部署模拟页；云端对接 → 直接进入登录方式注册
-  const afterServer = useCallback(() => {
-    setStep(serverSourceRef.current?.mode === "local" ? "deploy" : "auth")
-  }, [])
 
   if (phase === "done") return null
 
@@ -66,8 +57,7 @@ export function Onboarding() {
         <>
           {step === "logo" && <IntroLogo onDone={toName} />}
           {step === "name" && <NameRegister onDone={toServer} />}
-          {step === "server" && <ServerRegister onDone={afterServer} />}
-          {step === "deploy" && <LocalDeploy onDone={toAuth} />}
+          {step === "server" && <ServerRegister onDone={toAuth} />}
           {step === "auth" && <AuthRegister onDone={startUnlock} />}
         </>
       )}

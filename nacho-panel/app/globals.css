@@ -496,24 +496,6 @@
   animation: text-push-down 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* 鏈湴閮ㄧ讲缁堢锛氭棩蹇楄閫愭潯浠庢ā绯?+ 杞诲井涓嬬Щ涓笎鏄?*/
-@keyframes deploy-line-in {
-  0% {
-    opacity: 0;
-    filter: blur(6px);
-    transform: translateY(6px);
-  }
-  100% {
-    opacity: 1;
-    filter: blur(0);
-    transform: translateY(0);
-  }
-}
-
-.animate-deploy-line {
-  animation: deploy-line-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
 /* 閿佸睆瀵嗛挜/瀵嗙爜杈撳叆閿欒鏃剁殑姘村钩鎶栧姩 */
 @keyframes lock-shake {
   0%,
