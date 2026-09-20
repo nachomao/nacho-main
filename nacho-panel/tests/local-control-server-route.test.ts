@@ -47,6 +47,24 @@ test("install rejects coerced option types", async () => {
   assert.match((await response.json()).message, /autoStart/)
 })
 
+test("install can stream command output as NDJSON", async () => {
+  const response = await POST(mutationRequest("POST", {
+    action: "install",
+    accessMode: "loopback",
+    autoStart: true,
+    port: 8443,
+  }, { accept: "application/x-ndjson" }))
+
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get("content-type") || "", /application\/x-ndjson/)
+  const events = (await response.text())
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { type: string; message?: string })
+  assert.equal(events.at(-1)?.type, "error")
+  assert.match(events.at(-1)?.message || "", /Windows/)
+})
+
 test("settings reject non-boolean auto-start values", async () => {
   const response = await PATCH(mutationRequest("PATCH", { autoStart: "false" }))
   assert.equal(response.status, 400)

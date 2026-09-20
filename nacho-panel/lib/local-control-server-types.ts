@@ -46,3 +46,13 @@ export type LocalControlInstallOptions = {
 }
 
 export type LocalControlAction = "install" | "start" | "stop" | "restart" | "repair"
+
+export type LocalControlInstallLog = {
+  stream: "system" | "command" | "stdout" | "stderr"
+  message: string
+}
+
+export type LocalControlInstallStreamEvent =
+  | { type: "log"; data: LocalControlInstallLog }
+  | { type: "complete"; data: LocalControlServerStatus }
+  | { type: "error"; message: string }

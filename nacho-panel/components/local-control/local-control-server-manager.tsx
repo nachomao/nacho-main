@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   AlertCircle,
   Check,
@@ -39,6 +39,7 @@ import {
 import {
   LOCAL_CONTROL_UNINSTALL_CONFIRMATION,
   type LocalControlAccessMode,
+  type LocalControlInstallLog,
   type LocalControlServerStatus,
 } from "@/lib/local-control-server-types"
 import type { ServerSource } from "@/components/onboarding/onboarding-context"
@@ -155,6 +156,40 @@ function Prerequisite({ ready, label, detail, glass = false }: { ready: boolean;
   )
 }
 
+function InstallationConsole({ output, active }: { output: string; active: boolean }) {
+  const consoleRef = useRef<HTMLPreElement>(null)
+
+  useEffect(() => {
+    const element = consoleRef.current
+    if (element) element.scrollTop = element.scrollHeight
+  }, [output])
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border/60 bg-background/55 shadow-inner">
+      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className={cn("size-2 shrink-0 rounded-full", active ? "animate-pulse bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
+          <div className="min-w-0">
+            <h4 className="text-sm font-semibold text-foreground">安装命令实时输出</h4>
+            <p className="truncate text-xs text-muted-foreground" aria-live="polite">
+              {active ? "正在执行，请保持此页面打开" : "安装未完成，可查看下方输出定位问题"}
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline">{active ? "执行中" : "已停止"}</Badge>
+      </div>
+      <pre
+        ref={consoleRef}
+        tabIndex={0}
+        aria-label="安装命令实时输出"
+        className="min-h-64 max-h-[26rem] overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-72"
+      >
+        <code>{output || "[Nacho] 正在准备安装命令…\n"}</code>
+      </pre>
+    </section>
+  )
+}
+
 export function LocalControlServerManager({
   surface = "settings",
   currentSource,
@@ -174,6 +209,8 @@ export function LocalControlServerManager({
   const [port, setPort] = useState("8443")
   const [operation, setOperation] = useState<Operation | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [installOutput, setInstallOutput] = useState("")
+  const [installFailed, setInstallFailed] = useState(false)
   const [copied, setCopied] = useState<"api" | "key" | null>(null)
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const [uninstallConfirmation, setUninstallConfirmation] = useState("")
@@ -212,11 +249,34 @@ export function LocalControlServerManager({
   }
 
   async function handleInstall() {
+    setOperation("install")
+    setOperationError(null)
+    setInstallFailed(false)
+    setInstallOutput("")
     const selectedPort = Number(port)
-    const nextStatus = await perform("install", () => installLocalControl({ accessMode, autoStart, port: selectedPort }))
-    if (nextStatus?.healthy && nextStatus.connection && onConnected) {
-      onConnected({ mode: "local", ...nextStatus.connection })
+    const appendOutput = (entry: LocalControlInstallLog) => {
+      const content = entry.stream === "system" ? `[Nacho] ${entry.message}` : entry.message
+      setInstallOutput((current) => current + content)
     }
+
+    try {
+      const nextStatus = await installLocalControl({ accessMode, autoStart, port: selectedPort }, appendOutput)
+      setInstallOutput("")
+      if (surface !== "onboarding" && nextStatus.healthy && nextStatus.connection && onConnected) {
+        onConnected({ mode: "local", ...nextStatus.connection })
+      }
+    } catch (error) {
+      setInstallFailed(true)
+      setOperationError(error instanceof Error ? error.message : "安装失败，请重试")
+    } finally {
+      setOperation(null)
+    }
+  }
+
+  function resetInstallAttempt() {
+    setInstallFailed(false)
+    setInstallOutput("")
+    setOperationError(null)
   }
 
   async function handleAction(action: "start" | "stop" | "restart" | "repair") {
@@ -293,9 +353,12 @@ export function LocalControlServerManager({
     )
   }
 
-  const statusStyle = statusCopy[status.runtimeStatus]
+  const statusStyle = operation === "install"
+    ? { label: "正在安装", className: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300" }
+    : statusCopy[status.runtimeStatus]
   const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
   const canInstall = status.platformSupported && status.prerequisites.source
+  const showInstallConsole = operation === "install" || installFailed
 
   return (
     <div className="flex flex-col gap-4">
@@ -332,6 +395,17 @@ export function LocalControlServerManager({
         </div>
 
         <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-4")}>
+          {showInstallConsole ? (
+            <>
+              <InstallationConsole output={installOutput} active={operation === "install"} />
+              {installFailed && (
+                <Button variant="outline" className="self-start" onClick={resetInstallAttempt}>
+                  返回安装设置
+                </Button>
+              )}
+            </>
+          ) : (
+            <>
           {!status.platformSupported && (
             <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
               <AlertCircle className="text-amber-500" aria-hidden="true" />
@@ -424,8 +498,8 @@ export function LocalControlServerManager({
               )}
 
               <Button variant={onboarding ? "outline" : "default"} className={cn("w-full", onboarding ? "h-11 rounded-xl" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
-                {operation === "install" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Play data-icon="inline-start" aria-hidden="true" />}
-                {onboarding ? (runtimeMissing ? "安装依赖、启动并继续" : "安装、启动并继续") : runtimeMissing ? "安装依赖与本地服务" : "安装并启动本地服务"}
+                <Play data-icon="inline-start" aria-hidden="true" />
+                {onboarding ? (runtimeMissing ? "安装依赖并启动" : "安装并启动") : runtimeMissing ? "安装依赖与本地服务" : "安装并启动本地服务"}
               </Button>
             </>
           ) : (
@@ -489,6 +563,8 @@ export function LocalControlServerManager({
                   </Button>
                 )}
               </div>
+            </>
+          )}
             </>
           )}
 

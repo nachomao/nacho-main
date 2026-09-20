@@ -10,6 +10,7 @@ import {
   createInitialEnvironment,
   createNpmInvocation,
   ensureManagedEnvironment,
+  formatExecutableCommand,
   isLocalControlPortAvailable,
   isValidLocalControlPort,
   parseEnvironmentFile,
@@ -55,6 +56,13 @@ test("npm command files are launched through cmd.exe on Windows", () => {
     file: "npm",
     args: ["--version"],
   })
+})
+
+test("streamed command lines quote paths containing spaces", () => {
+  assert.equal(
+    formatExecutableCommand("powershell.exe", ["-File", "C:\\Nacho Panel\\local-control-server.ps1", "-Port", "8443"]),
+    'powershell.exe -File "C:\\Nacho Panel\\local-control-server.ps1" -Port 8443',
+  )
 })
 
 test("local control port probe distinguishes occupied and available ports", async () => {

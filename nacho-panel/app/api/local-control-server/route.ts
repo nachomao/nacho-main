@@ -13,12 +13,51 @@ import {
   uninstallLocalControlServer,
 } from "@/lib/local-control-server"
 import { isSameOriginRequest } from "@/lib/same-origin"
+import type {
+  LocalControlInstallOptions,
+  LocalControlInstallStreamEvent,
+} from "@/lib/local-control-server-types"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 const MAX_REQUEST_LENGTH = 2_048
+const INSTALL_STREAM_CONTENT_TYPE = "application/x-ndjson"
 const noStoreHeaders = { "Cache-Control": "no-store" }
+
+function streamInstall(options: LocalControlInstallOptions) {
+  const encoder = new TextEncoder()
+  let connected = true
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: LocalControlInstallStreamEvent) => {
+        if (connected) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+      }
+      void installLocalControlServer(options, (data) => send({ type: "log", data }))
+        .then((data) => send({ type: "complete", data }))
+        .catch((error: unknown) => {
+          send({ type: "error", message: error instanceof Error ? error.message : "本地服务安装失败" })
+        })
+        .finally(() => {
+          if (!connected) return
+          connected = false
+          controller.close()
+        })
+    },
+    cancel() {
+      connected = false
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      ...noStoreHeaders,
+      "Content-Type": `${INSTALL_STREAM_CONTENT_TYPE}; charset=utf-8`,
+      Vary: "Accept",
+      "X-Accel-Buffering": "no",
+    },
+  })
+}
 
 function json(data: unknown, init?: ResponseInit) {
   return NextResponse.json(data, {
@@ -94,6 +133,13 @@ export async function POST(request: NextRequest) {
         }
         if (body.port !== undefined && typeof body.port !== "number") {
           throw new LocalControlServerError("端口必须是数字", 400)
+        }
+        if (request.headers.get("accept")?.includes(INSTALL_STREAM_CONTENT_TYPE)) {
+          return streamInstall({
+            accessMode: body.accessMode,
+            autoStart: body.autoStart,
+            port: body.port,
+          })
         }
         data = await installLocalControlServer({
           accessMode: body.accessMode,
