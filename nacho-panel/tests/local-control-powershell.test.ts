@@ -29,6 +29,7 @@ test("Windows manager verifies the project, PID ownership, and configured listen
   assert.match(script, /SetEnvironmentVariable\(\$Matches\.key, \$Matches\.value, "Process"\)/)
   assert.match(script, /Import-ManagedEnvironment\s+[\s\S]*& \$Runtime\.nodePath \$LauncherPath/)
   assert.match(script, /本机控制服务启动器未返回有效 PID/)
+  assert.match(script, /Write-Output "控制服务进程已启动（PID \$ChildPid）"\s+exit 0/)
 })
 
 test("Windows manager launches the service without inheriting the install stream", async () => {
