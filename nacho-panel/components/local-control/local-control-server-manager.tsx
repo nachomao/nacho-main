@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import {
   AlertCircle,
   Check,
@@ -199,13 +199,75 @@ function Prerequisite({ ready, label, detail, glass = false }: { ready: boolean;
   )
 }
 
-function InstallationConsole({ output, active }: { output: string; active: boolean }) {
+type InstallationOutputChunk = {
+  id: number
+  content: string
+}
+
+function InstallationOutputLine({ chunk }: { chunk: InstallationOutputChunk }) {
+  const lineRef = useRef<HTMLSpanElement>(null)
+
+  useLayoutEffect(() => {
+    const element = lineRef.current
+    if (!element) return
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const animation = element.animate(
+      reducedMotion
+        ? [{ opacity: 0.55 }, { opacity: 1 }]
+        : [
+            { opacity: 0, filter: "blur(8px)", transform: "translateY(7px)" },
+            { opacity: 1, filter: "blur(0px)", transform: "translateY(0)" },
+          ],
+      {
+        duration: reducedMotion ? 160 : 480,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      },
+    )
+
+    return () => animation.cancel()
+  }, [chunk.id])
+
+  return (
+    <span ref={lineRef} className="block max-w-full">
+      {chunk.content.replace(/\r?\n$/, "")}
+    </span>
+  )
+}
+
+function InstallationConsole({ output, active }: { output: InstallationOutputChunk[]; active: boolean }) {
   const consoleRef = useRef<HTMLPreElement>(null)
+  const [consoleHeight, setConsoleHeight] = useState<number | null>(null)
+  const [reducedMotion, setReducedMotion] = useState(false)
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const updateMotionPreference = () => setReducedMotion(media.matches)
+
+    updateMotionPreference()
+    media.addEventListener("change", updateMotionPreference)
+    return () => media.removeEventListener("change", updateMotionPreference)
+  }, [])
 
   useEffect(() => {
     const element = consoleRef.current
-    if (element) element.scrollTop = element.scrollHeight
-  }, [output])
+    if (!element) return
+
+    const updateConsoleViewport = () => {
+      const minimumHeight = window.matchMedia("(min-width: 640px)").matches ? 288 : 256
+      const maximumHeight = 416
+      const nextHeight = Math.min(Math.max(element.scrollHeight, minimumHeight), maximumHeight)
+
+      setConsoleHeight(nextHeight)
+      requestAnimationFrame(() => {
+        element.scrollTo({ top: element.scrollHeight, behavior: reducedMotion ? "auto" : "smooth" })
+      })
+    }
+
+    updateConsoleViewport()
+    window.addEventListener("resize", updateConsoleViewport)
+    return () => window.removeEventListener("resize", updateConsoleViewport)
+  }, [output, reducedMotion])
 
   return (
     <section className="overflow-hidden rounded-2xl border border-border/60 bg-background/55 shadow-inner">
@@ -226,8 +288,18 @@ function InstallationConsole({ output, active }: { output: string; active: boole
         tabIndex={0}
         aria-label="安装命令实时输出"
         className="min-h-64 max-h-[26rem] overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-72"
+        style={{
+          height: consoleHeight ?? undefined,
+          overflowAnchor: "none",
+          scrollbarGutter: "stable",
+          transition: reducedMotion ? "none" : `height 460ms ${LOCAL_CONTROL_STAGE_EASE}`,
+        }}
       >
-        <code>{output || "[Nacho] 正在准备安装命令…\n"}</code>
+        <code aria-live="polite" aria-relevant="additions text">
+          {output.length === 0
+            ? "[Nacho] 正在准备安装命令…\n"
+            : output.map((chunk) => <InstallationOutputLine key={chunk.id} chunk={chunk} />)}
+        </code>
       </pre>
     </section>
   )
@@ -252,7 +324,8 @@ export function LocalControlServerManager({
   const [port, setPort] = useState("8443")
   const [operation, setOperation] = useState<Operation | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
-  const [installOutput, setInstallOutput] = useState("")
+  const [installOutput, setInstallOutput] = useState<InstallationOutputChunk[]>([])
+  const installOutputIdRef = useRef(0)
   const [installFailed, setInstallFailed] = useState(false)
   const [copied, setCopied] = useState<"api" | "key" | null>(null)
   const [uninstallOpen, setUninstallOpen] = useState(false)
@@ -295,11 +368,13 @@ export function LocalControlServerManager({
     setOperation("install")
     setOperationError(null)
     setInstallFailed(false)
-    setInstallOutput("")
+    setInstallOutput([])
     const selectedPort = Number(port)
     const appendOutput = (entry: LocalControlInstallLog) => {
       const content = entry.stream === "system" ? `[Nacho] ${entry.message}` : entry.message
-      setInstallOutput((current) => current + content)
+      installOutputIdRef.current += 1
+      const id = installOutputIdRef.current
+      setInstallOutput((current) => [...current, { id, content }])
     }
 
     try {
@@ -317,7 +392,7 @@ export function LocalControlServerManager({
 
   function resetInstallAttempt() {
     setInstallFailed(false)
-    setInstallOutput("")
+    setInstallOutput([])
     setOperationError(null)
   }
 
