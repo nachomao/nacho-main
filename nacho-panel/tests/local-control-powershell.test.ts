@@ -111,6 +111,25 @@ test("Windows manager reuses the panel runtime before installing a verified port
   assert.doesNotMatch(script, /RedirectStandardOutput \$StdoutPath/)
 })
 
+test("local control install stages preserve the card transition motion", async () => {
+  const manager = await readFile(managerPath, "utf8")
+  const setupStage = manager.indexOf('stage="setup"')
+  const installStage = manager.indexOf('stage="install"')
+  const installedStage = manager.indexOf('stage="installed"')
+  const completion = manager.match(/const nextStatus = await installLocalControl[\s\S]*?if \(surface !== "onboarding"/)
+
+  assert.ok(setupStage >= 0 && installStage > setupStage && installedStage > installStage)
+  assert.match(manager, /const activeStage: LocalControlStage = showInstallConsole \? "install" : status\.installed \? "installed" : "setup"/)
+  assert.match(manager, /grid-template-rows 720ms \$\{LOCAL_CONTROL_STAGE_EASE\}/)
+  assert.match(manager, /opacity 440ms ease/)
+  assert.match(manager, /filter 520ms ease/)
+  assert.match(manager, /transform 620ms \$\{LOCAL_CONTROL_STAGE_EASE\}/)
+  assert.match(manager, /translateY\(8px\) scale\(0\.975\)/)
+  assert.match(manager, /inert=\{!active\}/)
+  assert.ok(completion)
+  assert.doesNotMatch(completion[0], /setInstallOutput\(""\)/)
+})
+
 test("installed local service exposes validated port migration", async () => {
   const [module, manager] = await Promise.all([
     readFile(modulePath, "utf8"),

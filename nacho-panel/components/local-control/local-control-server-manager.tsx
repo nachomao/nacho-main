@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import {
   AlertCircle,
   Check,
@@ -65,6 +65,49 @@ const operationCopy: Record<Operation, string> = {
   accessMode: "正在更新监听范围与防火墙…",
   port: "正在更新监听端口…",
   uninstall: "正在彻底卸载并清理本地数据…",
+}
+
+const LOCAL_CONTROL_STAGE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)"
+type LocalControlStage = "setup" | "install" | "installed"
+
+function LocalControlStagePanel({
+  stage,
+  active,
+  compact = false,
+  children,
+}: {
+  stage: LocalControlStage
+  active: boolean
+  compact?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-local-control-stage={stage}
+      data-active={active}
+      aria-hidden={!active}
+      inert={!active}
+      className={cn("grid motion-reduce:transition-none", !active && "pointer-events-none")}
+      style={{
+        gridTemplateRows: active ? "1fr" : "0fr",
+        transition: `grid-template-rows 720ms ${LOCAL_CONTROL_STAGE_EASE}`,
+      }}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div
+          className={cn("flex flex-col motion-reduce:transition-none", compact ? "gap-4" : "gap-5")}
+          style={{
+            opacity: active ? 1 : 0,
+            filter: active ? "blur(0px)" : "blur(14px)",
+            transform: active ? "translateY(0) scale(1)" : "translateY(8px) scale(0.975)",
+            transition: `opacity 440ms ease ${active ? "160ms" : "0ms"}, filter 520ms ease ${active ? "160ms" : "0ms"}, transform 620ms ${LOCAL_CONTROL_STAGE_EASE} ${active ? "140ms" : "0ms"}`,
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function copyText(value: string) {
@@ -261,7 +304,6 @@ export function LocalControlServerManager({
 
     try {
       const nextStatus = await installLocalControl({ accessMode, autoStart, port: selectedPort }, appendOutput)
-      setInstallOutput("")
       if (surface !== "onboarding" && nextStatus.healthy && nextStatus.connection && onConnected) {
         onConnected({ mode: "local", ...nextStatus.connection })
       }
@@ -359,6 +401,7 @@ export function LocalControlServerManager({
   const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
   const canInstall = status.platformSupported && status.prerequisites.source
   const showInstallConsole = operation === "install" || installFailed
+  const activeStage: LocalControlStage = showInstallConsole ? "install" : status.installed ? "installed" : "setup"
 
   return (
     <div className="flex flex-col gap-4">
@@ -395,29 +438,17 @@ export function LocalControlServerManager({
         </div>
 
         <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-4")}>
-          {showInstallConsole ? (
-            <>
-              <InstallationConsole output={installOutput} active={operation === "install"} />
-              {installFailed && (
-                <Button variant="outline" className="self-start" onClick={resetInstallAttempt}>
-                  返回安装设置
-                </Button>
+          <div>
+            <LocalControlStagePanel stage="setup" active={activeStage === "setup"} compact={!onboarding}>
+              {!status.platformSupported && (
+                <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+                  <AlertCircle className="text-amber-500" aria-hidden="true" />
+                  <AlertTitle>需要在 Windows 本机运行面板</AlertTitle>
+                  <AlertDescription>
+                    当前系统不能执行 Windows 服务管理。请使用 Windows 上的 NachoPanel，并确保完整的 server 项目目录与 Node.js 22+ 可用。
+                  </AlertDescription>
+                </Alert>
               )}
-            </>
-          ) : (
-            <>
-          {!status.platformSupported && (
-            <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
-              <AlertCircle className="text-amber-500" aria-hidden="true" />
-              <AlertTitle>需要在 Windows 本机运行面板</AlertTitle>
-              <AlertDescription>
-                当前系统不能执行 Windows 服务管理。请使用 Windows 上的 NachoPanel，并确保完整的 server 项目目录与 Node.js 22+ 可用。
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {!status.installed ? (
-            <>
               <div className={cn(onboarding && "rounded-2xl border border-border/50 bg-card/32 p-4 shadow-sm backdrop-blur-md")}>
                 <div className="mb-3 flex items-center gap-2">
                   <span className={cn("flex size-5 items-center justify-center rounded-full text-[11px] font-semibold", onboarding ? "border border-border/70 bg-background/45 text-foreground shadow-sm" : "bg-primary text-primary-foreground")}>1</span>
@@ -501,9 +532,18 @@ export function LocalControlServerManager({
                 <Play data-icon="inline-start" aria-hidden="true" />
                 {onboarding ? (runtimeMissing ? "安装依赖并启动" : "安装并启动") : runtimeMissing ? "安装依赖与本地服务" : "安装并启动本地服务"}
               </Button>
-            </>
-          ) : (
-            <>
+            </LocalControlStagePanel>
+
+            <LocalControlStagePanel stage="install" active={activeStage === "install"} compact={!onboarding}>
+              <InstallationConsole output={installOutput} active={operation === "install"} />
+              {installFailed && (
+                <Button variant="outline" className="self-start" onClick={resetInstallAttempt}>
+                  返回安装设置
+                </Button>
+              )}
+            </LocalControlStagePanel>
+
+            <LocalControlStagePanel stage="installed" active={activeStage === "installed"} compact={!onboarding}>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                 <InfoCell glass={onboarding} label="运行状态" value={status.healthy ? "健康" : status.running ? "异常" : "已停止"} />
                 <InfoCell glass={onboarding} label="登录后自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
@@ -563,10 +603,8 @@ export function LocalControlServerManager({
                   </Button>
                 )}
               </div>
-            </>
-          )}
-            </>
-          )}
+            </LocalControlStagePanel>
+          </div>
 
           {operationError && (
             <Alert variant="destructive">
