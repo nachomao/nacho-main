@@ -259,15 +259,16 @@ export function formatExecutableCommand(file: string, args: string[]) {
   return [file, ...args].map(formatCommandArgument).join(" ")
 }
 
-async function runExecutable(
+export async function runExecutable(
   file: string,
   args: string[],
   cwd: string,
   timeout = POWERSHELL_TIMEOUT_MS,
   onProgress?: LocalControlProgressReporter,
+  completion: "close" | "exit" = "close",
 ) {
   try {
-    if (!onProgress) {
+    if (!onProgress && completion === "close") {
       return await execFileAsync(file, args, {
         cwd,
         timeout,
@@ -304,13 +305,7 @@ async function runExecutable(
       }
       child.stdout.on("data", (chunk) => append("stdout", chunk))
       child.stderr.on("data", (chunk) => append("stderr", chunk))
-      child.once("error", (error) => {
-        if (finished) return
-        finished = true
-        clearTimeout(timer)
-        reject(error)
-      })
-      child.once("close", (code) => {
+      const finish = (code: number | null) => {
         if (finished) return
         finished = true
         clearTimeout(timer)
@@ -318,7 +313,20 @@ async function runExecutable(
         else if (outputExceeded) reject(new Error("命令输出超过 4 MiB 限制"))
         else if (code === 0) resolve({ stdout, stderr })
         else reject(new Error(stderr.trim() || stdout.trim() || `命令执行失败（退出码 ${code ?? "未知"}）`))
+      }
+      child.once("error", (error) => {
+        if (finished) return
+        finished = true
+        clearTimeout(timer)
+        reject(error)
       })
+      child.once("exit", (code) => {
+        if (completion !== "exit") return
+        finish(code)
+        child.stdout.destroy()
+        child.stderr.destroy()
+      })
+      child.once("close", finish)
     })
   } catch (error) {
     if (error instanceof LocalControlServerError) throw error
@@ -353,7 +361,14 @@ async function runPowerShell(
   if (port !== undefined) args.push("-Port", String(port))
   if (process.platform === "win32") args.push("-PanelNodePath", process.execPath)
   try {
-    return await runExecutable("powershell.exe", args, serverDir, timeout, onProgress)
+    return await runExecutable(
+      "powershell.exe",
+      args,
+      serverDir,
+      timeout,
+      onProgress,
+      action === "Start" ? "exit" : "close",
+    )
   } catch (error) {
     if (error instanceof LocalControlServerError && /端口 \d+ 已被其他进程占用/.test(error.message)) {
       throw new LocalControlServerError(error.message, 409)

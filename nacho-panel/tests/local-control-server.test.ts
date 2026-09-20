@@ -15,6 +15,7 @@ import {
   isValidLocalControlPort,
   parseEnvironmentFile,
   resolveLocalServerDirectory,
+  runExecutable,
 } from "../lib/local-control-server"
 
 const temporaryDirectories: string[] = []
@@ -63,6 +64,20 @@ test("streamed command lines quote paths containing spaces", () => {
     formatExecutableCommand("powershell.exe", ["-File", "C:\\Nacho Panel\\local-control-server.ps1", "-Port", "8443"]),
     'powershell.exe -File "C:\\Nacho Panel\\local-control-server.ps1" -Port 8443',
   )
+})
+
+test("start commands complete on process exit even when a descendant keeps stdout open", async () => {
+  const parentScript = [
+    'const { spawn } = require("node:child_process")',
+    'const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 2500)"], { detached: true, stdio: ["ignore", process.stdout, "ignore"] })',
+    "child.unref()",
+    'process.stdout.write("service-started\\n")',
+  ].join(";")
+  const startedAt = Date.now()
+  const result = await runExecutable(process.execPath, ["-e", parentScript], process.cwd(), 5_000, undefined, "exit")
+
+  assert.match(result.stdout, /service-started/)
+  assert.ok(Date.now() - startedAt < 1_500, "启动命令不应等待后代进程关闭 stdout")
 })
 
 test("local control port probe distinguishes occupied and available ports", async () => {
