@@ -268,7 +268,14 @@ async function runPowerShell(serverDir: string, action: string, port?: number, t
   ]
   if (port !== undefined) args.push("-Port", String(port))
   if (process.platform === "win32") args.push("-PanelNodePath", process.execPath)
-  return runExecutable("powershell.exe", args, serverDir, timeout)
+  try {
+    return await runExecutable("powershell.exe", args, serverDir, timeout)
+  } catch (error) {
+    if (error instanceof LocalControlServerError && /端口 \d+ 已被其他进程占用/.test(error.message)) {
+      throw new LocalControlServerError(error.message, 409)
+    }
+    throw error
+  }
 }
 
 async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Promise<WindowsRuntimeState> {
@@ -522,14 +529,46 @@ export function installLocalControlServer(options: LocalControlInstallOptions) {
     if (status.needsRepair) throw new LocalControlServerError("检测到已有配置或构建产物，请使用修复功能以保留现有数据与密钥", 409)
 
     const serverDir = status.serverDir
-    await ensureRuntimePrerequisites(serverDir)
-    await buildServer(serverDir)
-    if (options.accessMode === "lan") await runPowerShell(serverDir, "SetFirewall", port)
-    const values = createInitialEnvironment({ accessMode: options.accessMode, autoStart: options.autoStart, port })
-    await writeEnvironment(serverDir, values)
-    if (options.autoStart) await runPowerShell(serverDir, "EnableAutostart", port)
-    await startUnlocked(serverDir, values)
-    return getLocalControlServerStatus()
+    const paths = managementPaths(serverDir)
+    const [environmentExisted, distDirectoryExisted, nodeModulesExisted, managedRuntimeExisted, stateDirectoryExisted] = await Promise.all([
+      exists(paths.env),
+      exists(path.dirname(paths.distEntry)),
+      exists(path.join(serverDir, "node_modules")),
+      exists(paths.managedRuntime),
+      exists(paths.stateDir),
+    ])
+    await runPowerShell(serverDir, "AssertPortAvailable", port)
+
+    let firewallConfigured = false
+    let autoStartConfigured = false
+    try {
+      await ensureRuntimePrerequisites(serverDir)
+      await buildServer(serverDir)
+      if (options.accessMode === "lan") {
+        await runPowerShell(serverDir, "SetFirewall", port)
+        firewallConfigured = true
+      }
+      const values = createInitialEnvironment({ accessMode: options.accessMode, autoStart: options.autoStart, port })
+      await writeEnvironment(serverDir, values)
+      if (options.autoStart) {
+        await runPowerShell(serverDir, "EnableAutostart", port)
+        autoStartConfigured = true
+      }
+      await startUnlocked(serverDir, values)
+      return getLocalControlServerStatus()
+    } catch (error) {
+      await runPowerShell(serverDir, "ForceStop", port).catch(() => undefined)
+      if (autoStartConfigured) await runPowerShell(serverDir, "DisableAutostart", port).catch(() => undefined)
+      if (firewallConfigured) await runPowerShell(serverDir, "RemoveFirewall", port).catch(() => undefined)
+      await Promise.all([
+        environmentExisted ? Promise.resolve() : rm(paths.env, { force: true }),
+        distDirectoryExisted ? Promise.resolve() : rm(path.dirname(paths.distEntry), { recursive: true, force: true }),
+        nodeModulesExisted ? Promise.resolve() : rm(path.join(serverDir, "node_modules"), { recursive: true, force: true }),
+        managedRuntimeExisted ? Promise.resolve() : rm(paths.managedRuntime, { recursive: true, force: true }),
+        stateDirectoryExisted ? Promise.resolve() : rm(paths.stateDir, { recursive: true, force: true }),
+      ])
+      throw error
+    }
   })
 }
 
@@ -574,7 +613,6 @@ export function repairLocalControlServer() {
     if (!status.prerequisites.source) {
       throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
     }
-    await ensureRuntimePrerequisites(serverDir)
     const paths = managementPaths(serverDir)
     const envExisted = await exists(paths.env)
     const previousValues = envExisted ? await readEnvironment(serverDir) : new Map<string, string>()
@@ -582,6 +620,10 @@ export function repairLocalControlServer() {
       ? ensureManagedEnvironment(previousValues)
       : createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: DEFAULT_PORT })
     const wasRunning = status.running
+    if (!status.installed && !wasRunning) {
+      await runPowerShell(serverDir, "AssertPortAvailable", portFromEnvironment(values))
+    }
+    await ensureRuntimePrerequisites(serverDir)
     if (wasRunning) await stopUnlocked(serverDir, previousValues)
     await mkdir(paths.stateDir, { recursive: true })
     await Promise.all([
