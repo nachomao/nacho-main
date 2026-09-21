@@ -261,6 +261,7 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                         tabIndex={active ? -1 : 0}
                         className={cn(
                           "group flex min-h-64 w-full flex-col p-5 text-left outline-none transition-[min-height,padding] duration-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-6",
+                          !displaced && "sm:min-h-80",
                           displaced && "sm:min-h-52 sm:p-4",
                         )}
                         style={{

@@ -11,6 +11,13 @@ for (const { file, label, detailId, collapseAttribute } of menus) {
   const source = readFileSync(new URL(`../components/onboarding/${file}.tsx`, import.meta.url), "utf8")
   const toggleMode = source.match(/const toggleMode = \(mode: Mode\) => \{([\s\S]*?)\n  \}/)?.[1]
 
+  if (file === "auth-register") {
+    test("未展开的登录方式卡片在桌面端保持等高", () => {
+      assert.match(source, /!displaced && "sm:min-h-80"/)
+      assert.match(source, /displaced && "sm:min-h-52 sm:p-4"/)
+    })
+  }
+
   test(`${label}展开与收起保留焦点交接，但不滚动尚在动画中的裁剪容器`, () => {
     assert.ok(toggleMode, "应保留菜单切换处理器")
     assert.match(toggleMode, /window\.requestAnimationFrame\(/)
