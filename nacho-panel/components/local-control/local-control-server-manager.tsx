@@ -110,6 +110,45 @@ function LocalControlStagePanel({
   )
 }
 
+function LocalControlExpandable({
+  open,
+  compact = false,
+  children,
+}: {
+  open: boolean
+  compact?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-local-control-expandable
+      data-open={open}
+      aria-hidden={!open}
+      inert={!open}
+      className={cn("grid motion-reduce:transition-none", !open && "pointer-events-none")}
+      style={{
+        gridTemplateRows: open ? "1fr" : "0fr",
+        marginBottom: open ? "0px" : compact ? "-1rem" : "-1.25rem",
+        transition: `grid-template-rows 560ms ${LOCAL_CONTROL_STAGE_EASE}, margin-bottom 560ms ${LOCAL_CONTROL_STAGE_EASE}`,
+      }}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div
+          className="motion-reduce:transition-none"
+          style={{
+            opacity: open ? 1 : 0,
+            filter: open ? "blur(0px)" : "blur(8px)",
+            transform: open ? "translateY(0)" : "translateY(-10px)",
+            transition: `opacity 320ms ease ${open ? "130ms" : "0ms"}, filter 420ms ease ${open ? "100ms" : "0ms"}, transform 480ms ${LOCAL_CONTROL_STAGE_EASE} ${open ? "80ms" : "0ms"}`,
+          }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function copyText(value: string) {
   return navigator.clipboard.writeText(value)
 }
@@ -583,7 +622,7 @@ export function LocalControlServerManager({
                 </div>
               </div>
 
-              {runtimeMissing && (
+              <LocalControlExpandable open={runtimeMissing} compact={!onboarding}>
                 <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
                   <ShieldCheck className="text-amber-500" aria-hidden="true" />
                   <AlertTitle>将重新检测并补齐运行环境</AlertTitle>
@@ -593,15 +632,15 @@ export function LocalControlServerManager({
                       : "安装器会优先复用面板正在使用的 Node.js 与系统已有 npm；仍不可用时才下载并校验官方便携运行环境。"}
                   </AlertDescription>
                 </Alert>
-              )}
+              </LocalControlExpandable>
 
-              {accessMode === "lan" && (
+              <LocalControlExpandable open={accessMode === "lan"} compact={!onboarding}>
                 <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
                   <ShieldCheck className="text-amber-500" aria-hidden="true" />
                   <AlertTitle>安装时会请求一次管理员授权</AlertTitle>
                   <AlertDescription>仅用于创建当前端口、Private 网络、LocalSubnet 范围的 Windows 防火墙入站规则。</AlertDescription>
                 </Alert>
-              )}
+              </LocalControlExpandable>
 
               <Button variant={onboarding ? "outline" : "default"} className={cn("w-full", onboarding ? "h-11 rounded-xl" : "h-10")} disabled={!canInstall || busy || !port} onClick={() => void handleInstall()}>
                 <Play data-icon="inline-start" aria-hidden="true" />
