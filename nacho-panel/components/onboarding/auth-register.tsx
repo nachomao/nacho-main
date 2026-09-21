@@ -11,6 +11,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react"
+import { BlurText } from "@/components/blur-text"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -383,9 +384,9 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                                     <span className="font-normal text-muted-foreground">仅本次完整显示</span>
                                   </span>
                                   <div className="flex h-12 items-center gap-1 rounded-xl border border-border/55 bg-background/30 px-3 shadow-none backdrop-blur-sm">
-                                    <span className="relative min-w-0 flex-1 px-1">
+                                    <span className="relative flex min-w-0 flex-1 self-stretch items-center overflow-hidden px-1">
                                       <span
-                                        className="block truncate whitespace-nowrap font-mono text-sm tracking-wider text-foreground"
+                                        className="block min-w-0 truncate whitespace-nowrap font-mono text-sm tracking-wider text-foreground"
                                         style={{
                                           opacity: copied ? 0 : 1,
                                           filter: copied ? "blur(5px)" : "blur(0px)",
@@ -393,7 +394,11 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                                         }}
                                         aria-hidden={copied}
                                       >
-                                        {genKey || "…"}
+                                        {genKey ? (
+                                          <BlurText key={genKey} text={genKey} delay={42} className="whitespace-nowrap" />
+                                        ) : (
+                                          "…"
+                                        )}
                                       </span>
                                       <span
                                         className="absolute inset-0 flex items-center whitespace-nowrap px-1 text-sm font-medium text-foreground"
