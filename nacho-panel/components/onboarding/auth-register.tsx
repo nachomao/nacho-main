@@ -11,7 +11,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react"
-import { BlurText } from "@/components/blur-text"
+import { SplitFlapText } from "@/components/split-flap-text"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -395,7 +395,7 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                                         aria-hidden={copied}
                                       >
                                         {genKey ? (
-                                          <BlurText key={genKey} text={genKey} delay={42} className="whitespace-nowrap" />
+                                          <SplitFlapText key={genKey} text={genKey} className="whitespace-nowrap" />
                                         ) : (
                                           "…"
                                         )}
