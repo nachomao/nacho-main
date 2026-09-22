@@ -38,7 +38,7 @@ export function ConnectionPanel() {
       : "选择 Windows 本机控制服务或已有的云端服务。"
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-4">
       <div>
         <h2 className="text-base font-semibold text-foreground">连接设置</h2>
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
@@ -56,10 +56,10 @@ export function ConnectionPanel() {
       )}
 
       {showCloudOperations && (
-        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+        <div className="card-glow rounded-3xl bg-card p-6">
           <div className="mb-5 flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-violet-500/10 text-violet-400">
-              <Cloud className="size-4" aria-hidden="true" />
+            <div className="flex size-10 items-center justify-center rounded-2xl border border-border text-foreground">
+              <Cloud className="size-5" aria-hidden="true" />
             </div>
             <div>
               <p className="text-sm font-semibold text-foreground">云端服务</p>
@@ -78,14 +78,14 @@ export function ConnectionPanel() {
               <input
                 value={cloudApi}
                 onChange={(event) => setCloudApi(event.target.value)}
-                className="h-9 w-full rounded-xl border border-border bg-background px-3 font-mono text-xs text-foreground outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
+                className="h-9 w-full rounded-xl border border-border bg-surface/60 px-3 font-mono text-xs text-foreground outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                 placeholder="https://api.example.com"
                 autoComplete="url"
               />
             </label>
             <label className="block">
               <span className="mb-1.5 block text-xs text-muted-foreground">API Key</span>
-              <div className="flex h-9 items-center rounded-xl border border-border bg-background px-3 transition focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/15">
+              <div className="flex h-9 items-center rounded-xl border border-border bg-surface/60 px-3 transition focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/15">
                 <input
                   value={cloudKey}
                   onChange={(event) => setCloudKey(event.target.value)}
@@ -122,7 +122,7 @@ export function ConnectionPanel() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-border bg-card p-4" aria-live="polite">
+      <section className="card-glow rounded-3xl bg-card p-6" aria-live="polite">
         <div className="flex flex-wrap items-center gap-3">
           <RefreshCw className={refreshing ? "size-3.5 animate-spin text-primary" : "size-3.5 text-muted-foreground"} aria-hidden="true" />
           <div className="min-w-0 flex-1">

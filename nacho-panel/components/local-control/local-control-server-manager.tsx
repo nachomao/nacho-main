@@ -155,7 +155,7 @@ function copyText(value: string) {
 
 function InfoCell({ label, value, mono = false, glass = false }: { label: string; value: string; mono?: boolean; glass?: boolean }) {
   return (
-    <div className={cn("rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/35")}>
+    <div className={cn("rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border bg-surface/60")}>
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={cn("mt-1 truncate text-sm font-medium text-foreground", mono && "font-mono text-xs")}>{value}</p>
     </div>
@@ -196,7 +196,7 @@ function AccessModeOption({
             : "border-primary/50 bg-primary/8"
           : glass
             ? "border-border/45 bg-background/20 hover:border-foreground/15 hover:bg-background/32"
-            : "border-border/70 bg-background/30 hover:border-border hover:bg-muted/40",
+            : "border-border bg-surface/60 hover:border-border hover:bg-surface",
       )}
     >
       <span
@@ -226,7 +226,7 @@ function AccessModeOption({
 
 function Prerequisite({ ready, label, detail, glass = false }: { ready: boolean; label: string; detail: string; glass?: boolean }) {
   return (
-    <div className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
+    <div className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", glass ? "border-border/50 bg-background/28 shadow-sm" : "border-border bg-surface/60")}>
       <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full", ready ? "bg-emerald-500/12 text-emerald-500" : "bg-destructive/10 text-destructive")}>
         {ready ? <Check className="size-3.5" aria-hidden="true" /> : <X className="size-3.5" aria-hidden="true" />}
       </span>
@@ -477,7 +477,7 @@ export function LocalControlServerManager({
       <div
         className={cn(
           "relative flex min-h-52 items-center justify-center border",
-          onboarding ? "border-0 bg-transparent px-5 py-6" : "rounded-2xl border-border bg-card/50",
+          onboarding ? "border-0 bg-transparent px-5 py-6" : "card-glow rounded-3xl border-0 bg-card",
         )}
         aria-live="polite"
       >
@@ -495,7 +495,7 @@ export function LocalControlServerManager({
 
   if (!status) {
     return (
-      <div className={cn("flex flex-col gap-3", onboarding && "p-5 sm:p-6")}>
+      <div className={cn("flex flex-col gap-3", onboarding ? "p-5 sm:p-6" : "card-glow rounded-3xl bg-card p-6")}>
         {onboarding && onCollapse && (
           <div className="flex justify-end">
             <Button type="button" variant="ghost" size="sm" className="rounded-xl" data-source-collapse onClick={onCollapse}>
@@ -519,10 +519,10 @@ export function LocalControlServerManager({
 
   return (
     <div className="flex flex-col gap-4">
-      <section className={cn("overflow-hidden border", onboarding ? "border-0 bg-transparent" : "rounded-2xl border-border bg-card/72 shadow-sm")}>
-        <div className={cn("flex flex-col gap-3 border-b sm:flex-row sm:items-center sm:justify-between", onboarding ? "border-border/45 bg-foreground/[0.018] px-5 py-5 sm:px-6" : "border-border/70 bg-gradient-to-br from-primary/7 via-transparent to-transparent px-4 py-4")}>
+      <section className={cn("overflow-hidden", onboarding ? "border-0 bg-transparent" : "card-glow rounded-3xl bg-card")}>
+        <div className={cn("flex flex-col gap-3 border-b sm:flex-row sm:items-center sm:justify-between", onboarding ? "border-border/45 bg-foreground/[0.018] px-5 py-5 sm:px-6" : "border-border px-6 py-5")}>
           <div className="flex min-w-0 items-center gap-3">
-            <span className={cn("flex shrink-0 items-center justify-center border shadow-sm", onboarding ? "size-11 rounded-2xl border-border/55 bg-background/35 text-foreground" : "size-10 rounded-xl border-primary/15 bg-primary/10 text-primary")}>
+            <span className={cn("flex shrink-0 items-center justify-center border", onboarding ? "size-11 rounded-2xl border-border/55 bg-background/35 text-foreground shadow-sm" : "size-10 rounded-2xl border-border text-foreground")}>
               <ServerCog className="size-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
@@ -551,7 +551,7 @@ export function LocalControlServerManager({
           </div>
         </div>
 
-        <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-4")}>
+        <div className={cn("flex flex-col", onboarding ? "gap-5 p-5 sm:p-6" : "gap-4 p-6")}>
           <div>
             <LocalControlStagePanel stage="setup" active={activeStage === "setup"} compact={!onboarding}>
               {!status.platformSupported && (
@@ -602,7 +602,7 @@ export function LocalControlServerManager({
                   <h4 className="text-sm font-semibold text-foreground">确认本机设置</h4>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
-                  <label className={cn("flex items-center justify-between gap-4 rounded-xl border px-3 py-2.5", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
+                  <label className={cn("flex items-center justify-between gap-4 rounded-xl border px-3 py-2.5", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border bg-surface/60")}>
                     <span>
                       <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                       <span className="block text-xs text-muted-foreground">仅写入当前 Windows 用户的 HKCU 启动项</span>
@@ -615,7 +615,7 @@ export function LocalControlServerManager({
                       className={cn(onboarding && "data-checked:!bg-foreground [&_[data-slot=switch-thumb]]:data-checked:!bg-background")}
                     />
                   </label>
-                  <label className={cn("rounded-xl border px-3 py-2", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border/70 bg-background/30")}>
+                  <label className={cn("rounded-xl border px-3 py-2", onboarding ? "border-border/50 bg-background/28 shadow-sm" : "border-border bg-surface/60")}>
                     <span className="text-xs font-medium text-muted-foreground">监听端口</span>
                     <Input className="mt-1 h-7 font-mono text-xs" inputMode="numeric" value={port} disabled={busy || !status.platformSupported} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
                   </label>
@@ -673,7 +673,7 @@ export function LocalControlServerManager({
                 </Alert>
               )}
 
-              <div className={cn("flex flex-wrap items-end gap-2 rounded-xl border p-3", onboarding ? "border-border/50 bg-background/28" : "border-border/70 bg-background/30")}>
+              <div className={cn("flex flex-wrap items-end gap-2 rounded-xl border p-3", onboarding ? "border-border/50 bg-background/28" : "border-border bg-surface/60")}>
                 <label className="min-w-40 flex-1">
                   <span className="text-xs font-medium text-muted-foreground">监听端口</span>
                   <Input className="mt-1 h-8 font-mono text-xs" inputMode="numeric" value={port} disabled={busy} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
@@ -732,13 +732,13 @@ export function LocalControlServerManager({
 
       {status.installed && surface === "settings" && (
         <>
-          <section className="rounded-2xl border border-border bg-card/72 p-4 shadow-sm">
+          <section className="card-glow rounded-3xl bg-card p-6">
             <div className="mb-3 flex items-center gap-2">
               <ShieldCheck className="size-4 text-primary" aria-hidden="true" />
               <h3 className="text-sm font-semibold text-foreground">运行与访问</h3>
             </div>
             <div className="space-y-3">
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5">
+              <label className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface/60 px-3 py-2.5">
                 <span>
                   <span className="block text-sm font-medium text-foreground">登录后自动启动</span>
                   <span className="block text-xs text-muted-foreground">当前 Windows 用户登录后自动启动</span>
@@ -755,20 +755,20 @@ export function LocalControlServerManager({
             </div>
           </section>
 
-          <section className="rounded-2xl border border-border bg-card/72 p-4 shadow-sm">
+          <section className="card-glow rounded-3xl bg-card p-6">
             <div className="mb-3 flex items-center gap-2">
               <Database className="size-4 text-primary" aria-hidden="true" />
               <h3 className="text-sm font-semibold text-foreground">本地连接与数据</h3>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <div className="rounded-xl border border-border/70 bg-background/30 p-3">
+              <div className="rounded-xl border border-border bg-surface/60 p-3">
                 <p className="text-xs font-medium text-muted-foreground">API 地址</p>
                 <div className="mt-1 flex items-center gap-2">
                   <code className="min-w-0 flex-1 truncate text-xs text-foreground">{status.connection?.api || "—"}</code>
                   {status.connection?.api && <Button size="icon-xs" variant="ghost" aria-label="复制 API 地址" onClick={() => void handleCopy("api", status.connection!.api)}>{copied === "api" ? <Check /> : <Copy />}</Button>}
                 </div>
               </div>
-              <div className="rounded-xl border border-border/70 bg-background/30 p-3">
+              <div className="rounded-xl border border-border bg-surface/60 p-3">
                 <p className="text-xs font-medium text-muted-foreground">Panel API Key</p>
                 <div className="mt-1 flex items-center gap-2">
                   <code className="min-w-0 flex-1 truncate text-xs text-foreground">{status.connection ? "••••••••••••••••" : "—"}</code>
@@ -783,7 +783,7 @@ export function LocalControlServerManager({
             )}
           </section>
 
-          <section className="rounded-2xl border border-destructive/25 bg-destructive/4 p-4">
+          <section className="card-glow rounded-3xl bg-card p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-destructive">危险操作</h3>
