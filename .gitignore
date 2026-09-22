@@ -26,3 +26,4 @@ package-lock.json
 desktop/app/
 desktop/dist/
 desktop/build/
+package-lock.json
