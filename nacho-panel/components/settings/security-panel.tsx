@@ -12,6 +12,7 @@ import {
   Fingerprint,
   Network,
   Lock,
+  AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SettingCard, SettingRow, Toggle, NumberStepper, TextField } from "./primitives"
@@ -243,6 +244,18 @@ export function SecurityPanel({
             <Toggle checked={value.ipAllowlist} onChange={(v) => onChange({ ipAllowlist: v })} />
           </div>
         </SettingRow>
+        <SettingRow
+          label="允许客户端免密注册"
+          hint="关闭时，Agent 首次注册必须提供服务端入网密钥。"
+        >
+          <Toggle checked={value.openEnrollment} onChange={(v) => onChange({ openEnrollment: v })} label="允许客户端免密注册" />
+        </SettingRow>
+        {value.openEnrollment && (
+          <div className="-mt-1 mb-2 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-relaxed text-warning">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>开启后，任何能访问此服务端的陌生客户端都可以无需入网密钥直接注册。仅建议在可信网络或临时部署时使用。</span>
+          </div>
+        )}
         <SettingRow label="登出所有其他会话" hint="立即使当前设备之外的所有已登录会话失效。">
           <button
             type="button"

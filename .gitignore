@@ -20,6 +20,7 @@ node_modules
 **/tsconfig.tsbuildinfo
 nacho-panel/tmp/
 tmp-*.ps1
+package-lock.json
 
 # Desktop (Electron) build artifacts
 desktop/app/

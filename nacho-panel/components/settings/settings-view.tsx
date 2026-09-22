@@ -12,6 +12,7 @@ import { ConnectionPanel } from "./connection-panel"
 import { defaultSettings, type SettingsState } from "./settings-data"
 import { cn } from "@/lib/utils"
 import { useLocalSettings } from "@/components/local-settings-provider"
+import { useServerData } from "@/components/server-data-context"
 
 type TabId = "general" | "connection" | "notifications" | "security" | "ai" | "about"
 
@@ -26,6 +27,7 @@ const tabs: readonly SegmentedOption<TabId>[] = [
 
 export function SettingsView() {
   const local = useLocalSettings()
+  const { apiRequest } = useServerData()
   const [tab, setTab] = useState<TabId>("general")
   // 内容跟随药丸滑动方向水平平移进场
   const [enterAnim, setEnterAnim] = useState("animate-slide-in-right")
@@ -46,16 +48,49 @@ export function SettingsView() {
   }
   const [saved, setSaved] = useState<SettingsState>(defaultSettings)
   const [justSaved, setJustSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void apiRequest<Record<string, unknown>>("/settings")
+      .then((remote) => {
+        const security = remote.security
+        if (!security || typeof security !== "object" || Array.isArray(security)) return
+        const openEnrollment = (security as Record<string, unknown>).openEnrollment
+        if (typeof openEnrollment !== "boolean" || !active) return
+        setSettings((current) => ({ ...current, security: { ...current.security, openEnrollment } }))
+        setSaved((current) => ({ ...current, security: { ...current.security, openEnrollment } }))
+      })
+      .catch(() => {
+        // 服务端尚未连接时保留默认关闭状态，连接恢复后会再次加载。
+      })
+    return () => { active = false }
+  }, [apiRequest])
 
   const dirty = useMemo(() => JSON.stringify(settings) !== JSON.stringify(saved), [settings, saved])
 
   const patch = <K extends keyof SettingsState>(key: K, value: Partial<SettingsState[K]>) =>
     setSettings((s) => ({ ...s, [key]: { ...s[key], ...value } }))
 
-  const handleSave = () => {
-    setSaved(settings)
-    setJustSaved(true)
-    setTimeout(() => setJustSaved(false), 2000)
+  const handleSave = async () => {
+    setSaveError(null)
+    setSaving(true)
+    try {
+      if (settings.security.openEnrollment !== saved.security.openEnrollment) {
+        await apiRequest("/settings", {
+          method: "PUT",
+          body: JSON.stringify({ security: { openEnrollment: settings.security.openEnrollment } }),
+        })
+      }
+      setSaved(settings)
+      setJustSaved(true)
+      setTimeout(() => setJustSaved(false), 2000)
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "设置保存失败")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleReset = () => setSettings(saved)
@@ -109,7 +144,7 @@ export function SettingsView() {
               </span>
             ) : (
               <>
-                <span className="hidden text-sm text-muted-foreground sm:block">你有未保存的更改</span>
+                <span className={cn("hidden text-sm sm:block", saveError ? "text-negative" : "text-muted-foreground")}>{saveError || "你有未保存的更改"}</span>
                 <button
                   type="button"
                   onClick={handleReset}
@@ -120,11 +155,12 @@ export function SettingsView() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSave}
-                  className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-105 active:scale-95"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-105 active:scale-95 disabled:cursor-wait disabled:opacity-60"
                 >
                   <Save className="h-4 w-4" />
-                  保存更改
+                  {saving ? "保存中…" : "保存更改"}
                 </button>
               </>
             )}

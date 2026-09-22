@@ -43,6 +43,7 @@ export type SecuritySettings = {
   ipAllowlist: boolean
   forceHttps: boolean
   loginLockout: boolean
+  openEnrollment: boolean
 }
 
 export type ApiKey = {
@@ -102,6 +103,7 @@ export const defaultSettings: SettingsState = {
     ipAllowlist: false,
     forceHttps: true,
     loginLockout: true,
+    openEnrollment: false,
   },
 }
 
