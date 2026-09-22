@@ -11,10 +11,10 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react"
+import { AnimatedPasswordInput } from "@/components/animated-password-input"
 import { SplitFlapText } from "@/components/split-flap-text"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useOnboarding } from "./onboarding-context"
 
@@ -467,18 +467,13 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                                       登录密码
                                       <span className="font-normal text-muted-foreground">至少 4 位字符</span>
                                     </span>
-                                    <span className="relative block">
-                                      <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                                      <Input
-                                        id="auth-password"
-                                        type="password"
-                                        value={pwd}
-                                        onChange={(event) => setPwd(event.target.value)}
-                                        placeholder="输入登录密码"
-                                        autoComplete="new-password"
-                                        className="h-11 rounded-xl border-border/55 bg-background/30 pl-10 shadow-none backdrop-blur-sm"
-                                      />
-                                    </span>
+                                    <AnimatedPasswordInput
+                                      id="auth-password"
+                                      value={pwd}
+                                      onChange={(event) => setPwd(event.target.value)}
+                                      placeholder="输入登录密码"
+                                      autoComplete="new-password"
+                                    />
                                   </label>
 
                                   <label htmlFor="auth-password-confirm" className="flex flex-col gap-2">
@@ -486,23 +481,18 @@ export function AuthRegister({ onDone }: { onDone: () => void }) {
                                       确认密码
                                       <span className="font-normal text-muted-foreground">再次输入相同密码</span>
                                     </span>
-                                    <span className="relative block">
-                                      <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                                      <Input
-                                        id="auth-password-confirm"
-                                        type="password"
-                                        value={pwd2}
-                                        onChange={(event) => setPwd2(event.target.value)}
-                                        onKeyDown={(event) => {
-                                          if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && pwdReady) confirm("password")
-                                        }}
-                                        placeholder="再次输入密码"
-                                        autoComplete="new-password"
-                                        aria-describedby="auth-password-status"
-                                        aria-invalid={passwordMismatch}
-                                        className="h-11 rounded-xl border-border/55 bg-background/30 pl-10 shadow-none backdrop-blur-sm"
-                                      />
-                                    </span>
+                                    <AnimatedPasswordInput
+                                      id="auth-password-confirm"
+                                      value={pwd2}
+                                      onChange={(event) => setPwd2(event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && pwdReady) confirm("password")
+                                      }}
+                                      placeholder="再次输入密码"
+                                      autoComplete="new-password"
+                                      aria-describedby="auth-password-status"
+                                      aria-invalid={passwordMismatch}
+                                    />
                                   </label>
                                 </div>
 
