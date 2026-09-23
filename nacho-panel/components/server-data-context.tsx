@@ -43,8 +43,8 @@ export type LogEntry = {
 
 export type ServerNotification = {
   id: string
-  type: "offline" | "health" | "task"
-  severity: "warning" | "error" | "critical"
+  type: "offline" | "health" | "task" | "log"
+  severity: "info" | "warning" | "error" | "critical"
   title: string
   desc: string
   detail: string
