@@ -15,6 +15,7 @@ import {
   isValidLocalControlPort,
   parseEnvironmentFile,
   resolveLocalServerDirectory,
+  resolveLocalControlRuntimeStatus,
   runExecutable,
 } from "../lib/local-control-server"
 
@@ -46,6 +47,23 @@ test("local control ports are restricted to the non-privileged TCP range", () =>
   assert.equal(isValidLocalControlPort(65536), false)
   assert.equal(isValidLocalControlPort(8443.5), false)
   assert.equal(isValidLocalControlPort("8443"), false)
+})
+
+test("runtime probe failures are not reported as a stopped service", () => {
+  assert.equal(resolveLocalControlRuntimeStatus({
+    platformSupported: true,
+    installed: true,
+    runtimeProbeSucceeded: false,
+    running: false,
+    healthy: false,
+  }), "unhealthy")
+  assert.equal(resolveLocalControlRuntimeStatus({
+    platformSupported: true,
+    installed: true,
+    runtimeProbeSucceeded: true,
+    running: false,
+    healthy: false,
+  }), "stopped")
 })
 
 test("npm command files are launched through cmd.exe on Windows", () => {

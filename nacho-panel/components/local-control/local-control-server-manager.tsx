@@ -514,6 +514,7 @@ export function LocalControlServerManager({
     : statusCopy[status.runtimeStatus]
   const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
   const canInstall = status.platformSupported && status.prerequisites.source
+  const runtimeStateUnavailable = status.runtimeStatus === "unhealthy" && !status.running
   const showInstallConsole = operation === "install" || installFailed
   const activeStage: LocalControlStage = showInstallConsole ? "install" : status.installed ? "installed" : "setup"
 
@@ -659,7 +660,7 @@ export function LocalControlServerManager({
 
             <LocalControlStagePanel stage="installed" active={activeStage === "installed"} compact={!onboarding}>
               <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                <InfoCell glass={onboarding} label="运行状态" value={status.healthy ? "健康" : status.running ? "异常" : "已停止"} />
+                <InfoCell glass={onboarding} label="运行状态" value={statusStyle.label} />
                 <InfoCell glass={onboarding} label="登录后自启" value={status.autoStartEnabled ? "已开启" : "未开启"} />
                 <InfoCell glass={onboarding} label="访问范围" value={status.accessMode === "loopback" ? "仅此设备" : "同一局域网"} />
                 <InfoCell glass={onboarding} label="监听端口" value={String(status.port)} mono />
@@ -676,9 +677,9 @@ export function LocalControlServerManager({
               <div className={cn("flex flex-wrap items-end gap-2 rounded-xl border p-3", onboarding ? "border-border/50 bg-background/28" : "border-border bg-surface/60")}>
                 <label className="min-w-40 flex-1">
                   <span className="text-xs font-medium text-muted-foreground">监听端口</span>
-                  <Input className="mt-1 h-8 font-mono text-xs" inputMode="numeric" value={port} disabled={busy} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
+                  <Input className="mt-1 h-8 font-mono text-xs" inputMode="numeric" value={port} disabled={busy || runtimeStateUnavailable} onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))} aria-label="监听端口" />
                 </label>
-                <Button variant="outline" disabled={busy || !port || Number(port) === status.port} onClick={() => void handlePort()}>
+                <Button variant="outline" disabled={busy || runtimeStateUnavailable || !port || Number(port) === status.port} onClick={() => void handlePort()}>
                   <Network className="size-4" aria-hidden="true" />应用端口
                 </Button>
               </div>
@@ -691,19 +692,19 @@ export function LocalControlServerManager({
               )}
 
               <div className="flex flex-wrap gap-2">
-                {!status.running ? (
+                {status.runtimeStatus === "stopped" ? (
                   <Button disabled={busy} onClick={() => void handleAction("start")}>
                     <Play className="size-4" aria-hidden="true" />启动
                   </Button>
-                ) : (
+                ) : status.running ? (
                   <Button variant="outline" disabled={busy} onClick={() => void handleAction("stop")}>
                     <CircleStop className="size-4" aria-hidden="true" />停止
                   </Button>
-                )}
-                <Button variant="outline" disabled={busy} onClick={() => void handleAction("restart")}>
+                ) : null}
+                <Button variant="outline" disabled={busy || runtimeStateUnavailable} onClick={() => void handleAction("restart")}>
                   <RotateCw className="size-4" aria-hidden="true" />重启
                 </Button>
-                <Button variant="outline" disabled={busy} onClick={() => void handleAction("repair")}>
+                <Button variant="outline" disabled={busy || runtimeStateUnavailable} onClick={() => void handleAction("repair")}>
                   <Wrench className="size-4" aria-hidden="true" />修复 / 升级
                 </Button>
                 {surface === "onboarding" && status.healthy && status.connection && (

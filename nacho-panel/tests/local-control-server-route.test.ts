@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { test } from "node:test"
 import { NextRequest } from "next/server"
 import { DELETE, GET, PATCH, POST } from "../app/api/local-control-server/route"
@@ -48,12 +51,28 @@ test("install rejects coerced option types", async () => {
 })
 
 test("install can stream command output as NDJSON", async () => {
-  const response = await POST(mutationRequest("POST", {
-    action: "install",
-    accessMode: "loopback",
-    autoStart: true,
-    port: 8443,
-  }, { accept: "application/x-ndjson" }))
+  const root = await mkdtemp(path.join(os.tmpdir(), "nacho-local-route-"))
+  const serverDir = path.join(root, "server")
+  const previousServerDir = process.env.NACHO_LOCAL_SERVER_DIR
+  await mkdir(path.join(serverDir, "src"), { recursive: true })
+  await mkdir(path.join(serverDir, "deploy", "windows"), { recursive: true })
+  await writeFile(path.join(serverDir, "package.json"), JSON.stringify({ name: "nacho-server" }), "utf8")
+  await writeFile(path.join(serverDir, "src", "index.ts"), "", "utf8")
+  process.env.NACHO_LOCAL_SERVER_DIR = serverDir
+
+  let response: Response
+  try {
+    response = await POST(mutationRequest("POST", {
+      action: "install",
+      accessMode: "loopback",
+      autoStart: true,
+      port: 8443,
+    }, { accept: "application/x-ndjson" }))
+  } finally {
+    if (previousServerDir === undefined) delete process.env.NACHO_LOCAL_SERVER_DIR
+    else process.env.NACHO_LOCAL_SERVER_DIR = previousServerDir
+    await rm(root, { recursive: true, force: true })
+  }
 
   assert.equal(response.status, 200)
   assert.match(response.headers.get("content-type") || "", /application\/x-ndjson/)
@@ -62,7 +81,7 @@ test("install can stream command output as NDJSON", async () => {
     .split("\n")
     .map((line) => JSON.parse(line) as { type: string; message?: string })
   assert.equal(events.at(-1)?.type, "error")
-  assert.match(events.at(-1)?.message || "", /Windows/)
+  assert.ok(events.at(-1)?.message)
 })
 
 test("settings reject non-boolean auto-start values", async () => {

@@ -20,6 +20,7 @@ const MIN_PORT = 1024
 const MAX_PORT = 65535
 const HEALTH_TIMEOUT_MS = 15_000
 const POWERSHELL_TIMEOUT_MS = 60_000
+const STATUS_POWERSHELL_TIMEOUT_MS = 5_000
 
 export class LocalControlServerError extends Error {
   constructor(message: string, readonly status = 500) {
@@ -30,6 +31,7 @@ export class LocalControlServerError extends Error {
 type LocalControlProgressReporter = (entry: LocalControlInstallLog) => void
 
 type WindowsRuntimeState = {
+  probeError?: string
   running?: boolean
   pid?: number | null
   startedAt?: string | null
@@ -380,12 +382,27 @@ async function runPowerShell(
 async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Promise<WindowsRuntimeState> {
   if (process.platform !== "win32") return {}
   try {
-    const { stdout } = await runPowerShell(serverDir, "Status", port)
+    const { stdout } = await runPowerShell(serverDir, "Status", port, STATUS_POWERSHELL_TIMEOUT_MS)
     const line = stdout.trim().split(/\r?\n/).at(-1)
-    return line ? (JSON.parse(line) as WindowsRuntimeState) : {}
-  } catch {
-    return {}
+    if (!line) return { probeError: "状态命令未返回结果" }
+    return JSON.parse(line) as WindowsRuntimeState
+  } catch (error) {
+    return { probeError: error instanceof Error ? error.message : "状态命令执行失败" }
   }
+}
+
+export function resolveLocalControlRuntimeStatus(input: {
+  platformSupported: boolean
+  installed: boolean
+  runtimeProbeSucceeded: boolean
+  running: boolean
+  healthy: boolean
+}): LocalControlServerStatus["runtimeStatus"] {
+  if (!input.platformSupported) return "unsupported"
+  if (!input.installed) return "not-installed"
+  if (!input.runtimeProbeSucceeded) return "unhealthy"
+  if (!input.running) return "stopped"
+  return input.healthy ? "running" : "unhealthy"
 }
 
 export function createNpmInvocation(
@@ -480,6 +497,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   ])
   const node = runtime.nodeReady === true
   const npm = runtime.npmAvailable === true
+  const runtimeProbeSucceeded = runtime.probeError === undefined
   const source = lockExists && scriptExists && launcherExists
   const platformSupported = process.platform === "win32"
   const accessMode = accessModeFromEnvironment(values)
@@ -495,8 +513,9 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   const issues: string[] = []
 
   if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
-  if (!node) issues.push("安装时将重新检测并补齐 Node.js 22+")
-  if (!npm) issues.push("安装时将从 Node.js 目录与 cmd.exe 重新检测并补齐 npm")
+  if (!runtimeProbeSucceeded) issues.push("本机服务状态检测失败，请刷新后重试")
+  if (runtimeProbeSucceeded && !node) issues.push("安装时将重新检测并补齐 Node.js 22+")
+  if (runtimeProbeSucceeded && !npm) issues.push("安装时将从 Node.js 目录与 cmd.exe 重新检测并补齐 npm")
   if (!source) issues.push("server 项目源码或 Windows 管理脚本不完整")
   if (envExists !== distExists) issues.push("本地服务安装不完整，需要修复")
   if (configNeedsRepair) issues.push("本地服务配置缺失或不安全，需要修复")
@@ -506,13 +525,13 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   if (firewallNeedsCleanup) issues.push("检测到不再需要的 Windows 防火墙规则")
   if (!running && portOwnerPid) issues.push(`端口 ${port} 已被进程 ${portOwnerPid} 占用`)
 
-  let runtimeStatus: LocalControlServerStatus["runtimeStatus"] = "unsupported"
-  if (platformSupported) {
-    if (!installed) runtimeStatus = "not-installed"
-    else if (!running) runtimeStatus = "stopped"
-    else if (!healthy) runtimeStatus = "unhealthy"
-    else runtimeStatus = "running"
-  }
+  const runtimeStatus = resolveLocalControlRuntimeStatus({
+    platformSupported,
+    installed,
+    runtimeProbeSucceeded,
+    running,
+    healthy,
+  })
 
   const key = values.get("PANEL_API_KEY")
   const localAddresses = localIpv4Addresses()
@@ -522,7 +541,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     installed,
     running,
     healthy,
-    needsRepair: (installed && (!node || !npm)) || envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
+    needsRepair: (runtimeProbeSucceeded && installed && (!node || !npm)) || envExists !== distExists || configNeedsRepair || firewallNeedsCleanup || (running && !healthy),
     pid: runtime.pid || null,
     startedAt: runtime.startedAt || null,
     autoStartEnabled: runtime.autoStartEnabled === true,
