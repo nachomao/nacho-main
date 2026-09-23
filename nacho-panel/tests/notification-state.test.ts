@@ -163,6 +163,12 @@ test("通知卡片的圆角、描边和高遮蔽玻璃共用同一裁切层", ()
   assert.doesNotMatch(drawerSource, /notice\.read && "opacity-75"/)
 })
 
+test("通知中心把系统日志显示为绿色提示事件", () => {
+  assert.match(serverDataSource, /type: "offline" \| "health" \| "task" \| "log"/)
+  assert.match(drawerSource, /notice\.type === "log" \? Clock3/)
+  assert.match(drawerSource, /info: "text-positive bg-positive\/10"/)
+})
+
 test("通知中心从真实服务端接口读取数据且不保留临时模拟分支", () => {
   assert.doesNotMatch(serverDataSource, /USE_MOCK_SERVER_DATA|createMockNotifications|mock-notice-/)
   assert.match(serverDataSource, /fetch\(`\$\{connection\.baseUrl\}\/api\/panel\$\{path\}`/)

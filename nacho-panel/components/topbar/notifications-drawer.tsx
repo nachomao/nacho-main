@@ -9,8 +9,8 @@ import { playNotificationAnimation } from "@/lib/notification-animation"
 
 type NoticeItem = {
   id: string
-  type: "offline" | "health" | "task"
-  severity: "warning" | "error" | "critical"
+  type: "offline" | "health" | "task" | "log"
+  severity: "info" | "warning" | "error" | "critical"
   title: string
   desc: string
   detail: string
@@ -47,12 +47,14 @@ type ItemActionProps = {
 }
 
 const severityTone = {
+  info: "text-positive bg-positive/10",
   critical: "text-negative bg-negative/10",
   error: "text-negative bg-negative/10",
   warning: "text-warning bg-warning/10",
 } as const
 
 const severityBorder = {
+  info: "border-positive/25",
   critical: "border-negative/30",
   error: "border-negative/25",
   warning: "border-warning/25",
@@ -72,7 +74,7 @@ function formatRelativeTime(timestamp: number) {
 }
 
 function NoticeGlyph({ notice, count }: { notice: NoticeItem; count?: number }) {
-  const Icon = notice.type === "offline" ? WifiOff : notice.type === "task" ? CircleAlert : TriangleAlert
+  const Icon = notice.type === "offline" ? WifiOff : notice.type === "task" ? CircleAlert : notice.type === "log" ? Clock3 : TriangleAlert
   return (
     <span className="relative flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted/85 text-foreground shadow-inner shadow-foreground/5">
       <Icon className={cn("size-5", severityTone[notice.severity].split(" ")[0])} />
