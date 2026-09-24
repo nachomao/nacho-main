@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { resolve4 } from "node:dns/promises"
 import { createReadStream } from "node:fs"
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { isIP } from "node:net"
@@ -18,14 +19,39 @@ export class CloudDeploymentError extends Error {
 }
 
 export function validateCloudHost(value: unknown) {
-  if (typeof value !== "string" || isIP(value) !== 4) {
-    throw new CloudDeploymentError("请输入目标 Linux 服务器的 IPv4 地址")
+  if (typeof value !== "string") {
+    throw new CloudDeploymentError("请输入目标 Linux 服务器的 IPv4 地址或域名")
   }
+  if (isIP(value) === 4) return validateCloudIPv4(value)
+  const host = value.toLowerCase()
+  if (host.length > 253 || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(host)) {
+    throw new CloudDeploymentError("请输入有效的服务器 IPv4 地址或域名")
+  }
+  return host
+}
+
+function validateCloudIPv4(value: string) {
+  if (isIP(value) !== 4) throw new CloudDeploymentError("域名解析结果不是有效的 IPv4 地址", 502)
   const [first, second] = value.split(".").map(Number)
   if (first === 0 || first === 127 || first >= 224 || (first === 169 && second === 254)) {
     throw new CloudDeploymentError("不支持回环、链路本地或保留地址")
   }
   return value
+}
+
+export async function resolveCloudHost(host: string, resolver: (hostname: string) => Promise<string[]> = resolve4) {
+  const target = validateCloudHost(host)
+  if (isIP(target) === 4) return target
+  let addresses: string[]
+  try {
+    addresses = await resolver(target)
+  } catch {
+    throw new CloudDeploymentError("域名解析失败，请检查 DNS A 记录", 502)
+  }
+  if (!addresses.length) throw new CloudDeploymentError("域名没有可用的 IPv4 A 记录", 502)
+  // 检查全部 A 记录；SSH 仅连接本次校验过的地址，避免连接时再次解析。
+  addresses.forEach((address) => validateCloudIPv4(address))
+  return addresses.sort()[0]
 }
 
 export function validateCloudDeployInput(value: unknown): Target {
@@ -51,15 +77,15 @@ function sha256Fingerprint(key: Buffer) {
   return `SHA256:${createHash("sha256").update(key).digest("base64").replace(/=+$/, "")}`
 }
 
-export function inspectCloudHost(host: string): Promise<string> {
-  const target = validateCloudHost(host)
+export async function inspectCloudHost(host: string): Promise<string> {
+  const target = await resolveCloudHost(host)
   return new Promise((resolve, reject) => {
     const client = new Client()
     let fingerprint: string | null = null
     client.on("error", () => {
       client.end()
       if (fingerprint) resolve(fingerprint)
-      else reject(new CloudDeploymentError("无法连接目标 SSH 服务，请检查 IP 与 22 端口", 502))
+      else reject(new CloudDeploymentError("无法连接目标 SSH 服务，请检查服务器地址与 22 端口", 502))
     })
     client.on("ready", () => {
       client.end()
@@ -78,7 +104,8 @@ export function inspectCloudHost(host: string): Promise<string> {
   })
 }
 
-function connectCloudHost(target: Target): Promise<Client> {
+async function connectCloudHost(target: Target): Promise<Client> {
+  const address = await resolveCloudHost(target.host)
   return new Promise((resolve, reject) => {
     const client = new Client()
     let mismatch = false
@@ -86,12 +113,12 @@ function connectCloudHost(target: Target): Promise<Client> {
     client.once("error", () => {
       client.end()
       reject(new CloudDeploymentError(
-        mismatch ? "SSH 主机指纹已变化，已中止连接；请重新核对服务器身份" : "SSH 登录失败，请检查 IP、用户名、密码及 22 端口",
+        mismatch ? "SSH 主机指纹已变化，已中止连接；请重新核对服务器身份" : "SSH 登录失败，请检查服务器地址、用户名、密码及 22 端口",
         mismatch ? 409 : 502,
       ))
     })
     client.connect({
-      host: target.host,
+      host: address,
       port: 22,
       username: target.username,
       password: target.password,
@@ -170,6 +197,7 @@ export async function createBundle(directory: string, destination: string) {
   }
   await createTar({ cwd: directory, file: destination, gzip: true, portable: true }, [
     "package.json", "package-lock.json", "tsconfig.json", "src", "deploy/install.sh", "deploy/uninstall.sh",
+    "deploy/napl", "deploy/napl-release-public.pem",
     "artifacts/windows/latest.json", `artifacts/windows/${manifest.fileName}`,
   ])
 }

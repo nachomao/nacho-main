@@ -344,7 +344,7 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                                       <h2 className="text-base font-semibold text-foreground">{cloudChoice === "deploy" ? "自动部署云端控制服务" : "连接云端控制服务"}</h2>
                                       <Badge variant="outline" className="border-border/55 bg-background/25 text-muted-foreground">{cloudChoice === "deploy" ? "SSH 部署" : "远程 API"}</Badge>
                                     </div>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{cloudChoice === "deploy" ? "输入目标设备 IP、用户名与密码，核对主机身份后自动安装。" : "输入部署地址与访问密钥，验证通过后即可继续。"}</p>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{cloudChoice === "deploy" ? "输入目标服务器 IPv4 地址或域名、用户名与密码，核对主机身份后自动安装。" : "输入部署地址与访问密钥，验证通过后即可继续。"}</p>
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">

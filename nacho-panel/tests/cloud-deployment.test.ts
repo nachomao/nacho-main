@@ -7,7 +7,7 @@ import { test } from "node:test"
 import { NextRequest } from "next/server"
 import { extract } from "tar"
 import { POST } from "../app/api/cloud-deployment/route"
-import { CloudDeploymentError, createBundle, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
+import { CloudDeploymentError, createBundle, resolveCloudHost, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
 
 const input = {
   action: "deploy",
@@ -17,12 +17,28 @@ const input = {
   fingerprint: `SHA256:${"A".repeat(43)}`,
 }
 
-test("only literal IPv4 cloud hosts are accepted; local and metadata targets are rejected", () => {
+test("IPv4 and DNS hostnames are accepted; local, reserved and malformed targets are rejected", () => {
   assert.equal(validateCloudHost("192.0.2.12"), "192.0.2.12")
   assert.equal(validateCloudHost("10.1.2.3"), "10.1.2.3")
-  for (const host of ["localhost", "server.example.com", "127.0.0.1", "0.0.0.0", "169.254.169.254", "224.0.0.1", "::ffff:127.0.0.1", "1.2.3.4;id"]) {
+  assert.equal(validateCloudHost("MaoJiu.CC"), "maojiu.cc")
+  assert.equal(validateCloudHost("server.example.com"), "server.example.com")
+  for (const host of ["localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", "224.0.0.1", "::ffff:127.0.0.1", "1.2.3.4;id", "https://example.com", "example.com:22", "bad_name.example", "-bad.example", "example..com", "example.123", "a".repeat(64) + ".example"]) {
     assert.throws(() => validateCloudHost(host), CloudDeploymentError)
   }
+})
+
+test("domain A records are validated and pinned before SSH; literals bypass DNS", async () => {
+  const resolver = async (host: string) => {
+    assert.equal(host, "server.example.com")
+    return ["192.0.2.12", "192.0.2.10"]
+  }
+  assert.equal(await resolveCloudHost("SERVER.EXAMPLE.COM", resolver), "192.0.2.10")
+  assert.equal(await resolveCloudHost("192.0.2.12", async () => { throw new Error("DNS should not run") }), "192.0.2.12")
+  for (const addresses of [[], ["127.0.0.1"], ["192.0.2.10", "169.254.169.254"], ["::1"]]) {
+    await assert.rejects(resolveCloudHost("server.example.com", async () => addresses), CloudDeploymentError)
+  }
+  await assert.rejects(resolveCloudHost("localhost.localdomain", async () => ["127.0.0.1"]), /回环/)
+  await assert.rejects(resolveCloudHost("server.example.com", async () => { throw new Error("NXDOMAIN") }), /DNS A 记录/)
 })
 
 test("SSH credentials and confirmed fingerprint have strict shapes", () => {
@@ -32,6 +48,7 @@ test("SSH credentials and confirmed fingerprint have strict shapes", () => {
     password: input.password,
     fingerprint: input.fingerprint,
   })
+  assert.equal(validateCloudDeployInput({ ...input, host: "MaoJiu.CC" }).host, "maojiu.cc")
   for (const invalid of [
     { username: "root; whoami" },
     { password: "line1\nline2" },
@@ -64,11 +81,14 @@ test("bundle contains only required source and verified Agent artifact, never lo
     await writeFile(path.join(server, "src/index.ts"), "export {}")
     await writeFile(path.join(server, "deploy/install.sh"), "#!/bin/sh")
     await writeFile(path.join(server, "deploy/uninstall.sh"), "#!/bin/sh")
+    await writeFile(path.join(server, "deploy/napl"), "#!/usr/bin/env bash")
+    await writeFile(path.join(server, "deploy/napl-release-public.pem"), "test public key")
     await writeFile(path.join(server, ".env"), "PANEL_API_KEY=secret")
     const bundle = path.join(root, "bundle.tar.gz")
     await createBundle(server, bundle)
     await extract({ file: bundle, cwd: unpack })
     assert.deepEqual(await readFile(path.join(unpack, "artifacts/windows", fileName)), artifact)
+    assert.equal(await readFile(path.join(unpack, "deploy/napl"), "utf8"), "#!/usr/bin/env bash")
     await assert.rejects(access(path.join(unpack, ".env")))
     await writeFile(path.join(server, "artifacts/windows/latest.json"), JSON.stringify({ fileName, sha256: "0".repeat(64) }))
     await assert.rejects(createBundle(server, bundle), /SHA-256/)

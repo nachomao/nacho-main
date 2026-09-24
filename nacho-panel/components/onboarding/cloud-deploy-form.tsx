@@ -125,8 +125,8 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
 
       <FieldGroup className="gap-4">
         <Field>
-          <FieldLabel htmlFor="deploy-host" className="text-xs">服务器 IPv4 地址</FieldLabel>
-          <Input id="deploy-host" inputMode="decimal" placeholder="203.0.113.10" autoComplete="off" value={host} disabled={busy !== null || !!result} onChange={(event) => { setHost(event.target.value); setFingerprint(""); setError("") }} className="h-11 rounded-xl border-border/55 bg-background/30 font-mono shadow-none" />
+          <FieldLabel htmlFor="deploy-host" className="text-xs">服务器 IPv4 地址或域名</FieldLabel>
+          <Input id="deploy-host" inputMode="url" placeholder="server.example.com 或 203.0.113.10" autoComplete="off" value={host} disabled={busy !== null || !!result} onChange={(event) => { setHost(event.target.value); setFingerprint(""); setError("") }} className="h-11 rounded-xl border-border/55 bg-background/30 font-mono shadow-none" />
         </Field>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field>

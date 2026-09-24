@@ -48,7 +48,7 @@ curl -fsS http://localhost:8443/health
 
 ### 独立 Linux 服务器部署
 
-Windows 本机面板的首次引导或“设置 → 连接”里可选择“云端服务 → 云端部署”：输入全新 Linux 主机的 IPv4 地址、SSH 用户名和密码（非 root 用户需可用相同密码执行 `sudo`），核对主机 SHA-256 指纹后，面板会通过 SSH/SFTP 传输当前仓库的服务端源码及 Windows Agent 发布制品，执行 `install.sh` 并验证服务。SSH 密码不会保存；成功后面板按原云端连接方式保存生成的 Panel API Key。自动部署仅在 Windows 本机面板开放，Vercel 预览／部署环境不提供远程 SSH 安装功能；已有控制服务请使用“云端对接”输入 API 地址与 Panel API Key，不会覆盖现有服务器。默认 API 为 `http://主机IP:8443`，公网使用前请配置 HTTPS、访问控制和云服务商防火墙。
+Windows 本机面板的首次引导或“设置 → 连接”里可选择“云端服务 → 云端部署”：输入全新 Linux 主机的 IPv4 地址或有 IPv4 A 记录的域名、SSH 用户名和密码（非 root 用户需可用相同密码执行 `sudo`），核对主机 SHA-256 指纹后，面板会通过 SSH/SFTP 传输当前仓库的服务端源码及 Windows Agent 发布制品，执行 `install.sh` 并验证服务。域名的全部 A 记录在每次 SSH 连接前校验，连接使用本次校验的 IPv4 地址；指纹变更会中止部署。SSH 密码不会保存；成功后面板按原云端连接方式保存生成的 Panel API Key。自动部署仅在 Windows 本机面板开放，Vercel 预览／部署环境不提供远程 SSH 安装功能；已有控制服务请使用“云端对接”输入 API 地址与 Panel API Key，不会覆盖现有服务器。默认 API 为 `http://主机地址:8443`，公网使用前请配置 HTTPS、访问控制和云服务商防火墙。
 
 也可以手动将 `server/` 放到受支持的 Linux 主机后执行同一安装脚本。部署完成后，面板与 Agent 使用该服务器的局域网地址、域名或 HTTPS 地址，而不是各自机器上的 `localhost`。
 
@@ -56,6 +56,18 @@ Windows 本机面板的首次引导或“设置 → 连接”里可选择“云�
 cd server
 sudo ./deploy/install.sh
 ```
+
+安装完成后可直接使用 Linux 运维入口：
+
+```bash
+napl
+napl status
+napl logs --follow
+napl backup list
+napl update check
+```
+
+配置、密钥、恢复、升级和卸载操作要求 root 或可用的 `sudo`；无终端时不会交互提权。入口为 `/usr/local/bin/napl`，卸载时仅移除指向本次安装的入口。备份默认保存在 `/var/backups/control-server`，升级包使用 Ed25519 签名和 manifest 文件哈希校验。在线升级只读取公开仓库 `nachomao/nacho-main` 的稳定 GitHub Release；没有公开可用 Release 时显示“暂无可用在线版本”。
 
 ## 服务端开发运行
 
