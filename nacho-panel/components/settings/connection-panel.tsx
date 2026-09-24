@@ -1,7 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { Cloud, Copy, Eye, EyeOff, RefreshCw } from "lucide-react"
+import { Cloud, Copy, Eye, EyeOff, RefreshCw, ServerCog } from "lucide-react"
+import { CloudDeployForm } from "@/components/onboarding/cloud-deploy-form"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useServerData } from "@/components/server-data-context"
 import { LocalControlServerManager } from "@/components/local-control/local-control-server-manager"
@@ -11,6 +13,7 @@ export function ConnectionPanel() {
   const { error, loading, refreshing, refresh } = useServerData()
   const [showKey, setShowKey] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [cloudChoice, setCloudChoice] = useState<"deploy" | "connect">("connect")
   const [cloudApi, setCloudApi] = useState(serverSource?.mode === "cloud" ? serverSource.api : "")
   const [cloudKey, setCloudKey] = useState(serverSource?.mode === "cloud" ? serverSource.key : "")
 
@@ -29,13 +32,20 @@ export function ConnectionPanel() {
     window.setTimeout(() => void refresh(), 0)
   }
 
+  const useDeployedCloud = (source: { mode: "cloud"; api: string; key: string }) => {
+    setCloudApi(source.api)
+    setCloudKey(source.key)
+    setServerSource(source)
+    window.setTimeout(() => void refresh(), 0)
+  }
+
   const showLocalOperations = !serverSource || serverSource.mode === "local"
   const showCloudOperations = !serverSource || serverSource.mode === "cloud"
   const description = serverSource?.mode === "local"
     ? "管理当前 Windows 本机控制服务。"
     : serverSource?.mode === "cloud"
       ? "管理当前云端控制服务连接。"
-      : "选择 Windows 本机控制服务或已有的云端服务。"
+      : "选择 Windows 本机服务，或部署与对接云端控制服务。"
 
   return (
     <div className="flex flex-col gap-4">
@@ -72,7 +82,27 @@ export function ConnectionPanel() {
               </span>
             )}
           </div>
-          <div className="space-y-4">
+          <ToggleGroup
+            value={[cloudChoice]}
+            onValueChange={(value) => { if (value.length) setCloudChoice(value[0] as "deploy" | "connect") }}
+            variant="outline"
+            aria-label="云端服务方式"
+            className="mb-5 grid w-full grid-cols-2 rounded-xl bg-background/25 p-1"
+          >
+            <ToggleGroupItem value="deploy" className="min-w-0 text-xs"><ServerCog aria-hidden="true" />云端部署</ToggleGroupItem>
+            <ToggleGroupItem value="connect" className="min-w-0 text-xs"><Cloud aria-hidden="true" />云端对接</ToggleGroupItem>
+          </ToggleGroup>
+          <div className="flex flex-col">
+            <div className="cloud-mode-panel" data-active={cloudChoice === "deploy"} aria-hidden={cloudChoice !== "deploy"} inert={cloudChoice !== "deploy"}>
+              <div className="min-h-0 overflow-hidden">
+                <div className="cloud-mode-content">
+                  <CloudDeployForm onConnected={useDeployedCloud} />
+                </div>
+              </div>
+            </div>
+            <div className="cloud-mode-panel" data-active={cloudChoice === "connect"} aria-hidden={cloudChoice !== "connect"} inert={cloudChoice !== "connect"}>
+              <div className="min-h-0 overflow-hidden">
+                <div className="cloud-mode-content flex flex-col gap-4">
             <label className="block">
               <span className="mb-1.5 block text-xs text-muted-foreground">API 地址</span>
               <input
@@ -117,6 +147,9 @@ export function ConnectionPanel() {
                   状态：{loading ? "连接中" : error ? "连接失败" : "已连接"}
                 </span>
               )}
+            </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
