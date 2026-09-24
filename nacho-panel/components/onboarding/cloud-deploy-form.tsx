@@ -1,13 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { AlertCircle, ArrowRight, Check, Copy, Fingerprint, Loader2, ServerCog, ShieldCheck } from "lucide-react"
+import { InstallationConsole, DeploymentStagePanel, type InstallationOutputChunk } from "@/components/local-control/deployment-progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 type DeploymentResult = { api: string; key: string }
-type DeployEvent = { type: "progress"; step: string } | { type: "complete"; data: DeploymentResult } | { type: "error"; message: string }
+type DeployEvent = { type: "progress"; step: string } | { type: "log"; content: string } | { type: "complete"; data: DeploymentResult } | { type: "error"; message: string }
 
 async function readResponse<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => null)) as { ok?: boolean; data?: T; message?: string } | null
@@ -21,10 +22,18 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
   const [password, setPassword] = useState("")
   const [fingerprint, setFingerprint] = useState("")
   const [busy, setBusy] = useState<"inspect" | "deploy" | "verify" | null>(null)
-  const [step, setStep] = useState("")
+  const [attemptStarted, setAttemptStarted] = useState(false)
+  const [output, setOutput] = useState<InstallationOutputChunk[]>([])
+  const outputId = useRef(0)
   const [error, setError] = useState("")
   const [result, setResult] = useState<DeploymentResult | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const appendOutput = (content: string) => {
+    outputId.current += 1
+    const id = outputId.current
+    setOutput((current) => [...current.slice(-599), { id, content }])
+  }
 
   const inspect = async () => {
     if (busy || !host.trim()) return
@@ -69,7 +78,9 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
     if (busy || !fingerprint || !username.trim() || !password || result) return
     setBusy("deploy")
     setError("")
-    setStep("正在连接已核对的 SSH 主机")
+    setAttemptStarted(true)
+    outputId.current += 1
+    setOutput([{ id: outputId.current, content: "[Nacho] 正在连接已核对的 SSH 主机" }])
     try {
       const response = await fetch("/api/cloud-deployment", {
         method: "POST",
@@ -84,11 +95,13 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
       const decoder = new TextDecoder()
       let buffer = ""
       let installed: DeploymentResult | null = null
+      let streamError = ""
       const consume = (line: string) => {
         if (!line.trim()) return
         const event = JSON.parse(line) as DeployEvent
-        if (event.type === "progress") setStep(event.step)
-        if (event.type === "error") throw new Error(event.message)
+        if (event.type === "progress") appendOutput(`[Nacho] ${event.step}`)
+        if (event.type === "log") appendOutput(event.content)
+        if (event.type === "error") streamError = event.message
         if (event.type === "complete") installed = event.data
       }
       while (true) {
@@ -100,6 +113,7 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
         if (done) break
       }
       consume(buffer)
+      if (streamError) throw new Error(streamError)
       if (!installed) throw new Error("部署连接已结束，但未收到服务端确认")
       setPassword("")
       setResult(installed)
@@ -111,8 +125,17 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
     }
   }
 
+  const errorAlert = error && (
+    <Alert variant="destructive" className="border-destructive/25 bg-destructive/5" aria-live="polite">
+      <AlertCircle aria-hidden="true" />
+      <AlertTitle>{result ? "服务已安装，连接待验证" : "云端部署未完成"}</AlertTitle>
+      <AlertDescription>{error}</AlertDescription>
+    </Alert>
+  )
+
   return (
     <section className="flex flex-col gap-5" aria-label="自动部署 Linux 控制服务">
+      <DeploymentStagePanel stage="setup" active={!attemptStarted && !result}>
       <div className="flex items-start gap-3 rounded-2xl border border-border/50 bg-background/25 p-4">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/5 text-foreground">
           <ServerCog className="size-4" aria-hidden="true" />
@@ -172,28 +195,36 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
         </div>
       )}
 
-      {step && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">{busy && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}{step}</p>}
-      {error && (
-        <Alert variant="destructive" className="border-destructive/25 bg-destructive/5" aria-live="polite">
-          <AlertCircle aria-hidden="true" />
-          <AlertTitle>{result ? "服务已安装，连接待验证" : "云端部署未完成"}</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      {result && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-background/20 p-4">
-          <span className="flex items-center gap-2 text-sm font-medium text-foreground"><Check className="size-4" aria-hidden="true" />服务已部署至 {result.api}</span>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void verify(result)}>
-              {busy === "verify" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <ArrowRight data-icon="inline-start" aria-hidden="true" />}
-              {busy === "verify" ? "正在验证连接" : "重试验证并继续"}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => { void navigator.clipboard.writeText(result.key).then(() => setCopied(true)).catch(() => setError("复制失败，请检查剪贴板权限")) }}>
-              <Copy data-icon="inline-start" aria-hidden="true" />{copied ? "已复制 API Key" : "复制 API Key"}
-            </Button>
+      {!attemptStarted && errorAlert}
+      </DeploymentStagePanel>
+
+      <DeploymentStagePanel stage="install" active={attemptStarted && !result}>
+        <InstallationConsole output={output} active={busy === "deploy"} title="云端部署命令实时输出" placeholder="[Nacho] 正在连接 SSH 服务器…\n" />
+        {attemptStarted && !result && errorAlert}
+        {error && (
+          <Button type="button" variant="outline" className="self-start" onClick={() => { setAttemptStarted(false); setError("") }}>
+            返回部署设置
+          </Button>
+        )}
+      </DeploymentStagePanel>
+
+      <DeploymentStagePanel stage="installed" active={!!result}>
+        {result && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-background/20 p-4">
+            <span className="flex items-center gap-2 text-sm font-medium text-foreground"><Check className="size-4" aria-hidden="true" />服务已部署至 {result.api}</span>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void verify(result)}>
+                {busy === "verify" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <ArrowRight data-icon="inline-start" aria-hidden="true" />}
+                {busy === "verify" ? "正在验证连接" : "重试验证并继续"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => { void navigator.clipboard.writeText(result.key).then(() => setCopied(true)).catch(() => setError("复制失败，请检查剪贴板权限")) }}>
+                <Copy data-icon="inline-start" aria-hidden="true" />{copied ? "已复制 API Key" : "复制 API Key"}
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        {result && errorAlert}
+      </DeploymentStagePanel>
       <p className="text-xs leading-5 text-muted-foreground">默认通过 HTTP 监听 8443 端口。跨公网长期使用前，请为服务端配置 HTTPS 并限制网络访问。</p>
     </section>
   )

@@ -1,13 +1,15 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
+import { EventEmitter } from "node:events"
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { NextRequest } from "next/server"
+import type { Client } from "ssh2"
 import { extract } from "tar"
 import { POST } from "../app/api/cloud-deployment/route"
-import { CloudDeploymentError, createBundle, resolveCloudHost, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
+import { CloudDeploymentError, createBundle, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
 
 const input = {
   action: "deploy",
@@ -117,6 +119,46 @@ test("Windows local endpoint enforces same-origin and validates input before SSH
     if (vercel === undefined) delete process.env.VERCEL
     else process.env.VERCEL = vercel
   }
+})
+
+test("SSH stdout and stderr stream by line without losing split UTF-8 or exposing secrets", async () => {
+  const lines: string[] = []
+  const channel = new EventEmitter() as EventEmitter & { stderr: EventEmitter; end: (value?: string) => void; close: () => void }
+  channel.stderr = new EventEmitter()
+  channel.close = () => channel.emit("close", -1)
+  channel.end = (value) => {
+    assert.equal(value, "ssh-secret\n")
+    channel.emit("data", Buffer.from("npm ci\r\n"))
+    assert.deepEqual(lines, ["npm ci"])
+    const unicode = Buffer.from("编译完成\n")
+    channel.emit("data", unicode.subarray(0, 2))
+    channel.emit("data", unicode.subarray(2))
+    channel.stderr.emit("data", Buffer.from("PANEL_API_KEY=private-key\n错误详情\n"))
+    channel.emit("data", Buffer.from("ssh-secret\n"))
+    channel.emit("close", 0)
+  }
+  const client = { exec(_command: string, callback: (error: Error | null, stream: typeof channel) => void) { callback(null, channel) } } as unknown as Client
+  const result = await runRemote(client, "sudo bash install.sh", "ssh-secret", (line) => lines.push(sanitizeCloudInstallLine(line, "ssh-secret")))
+  assert.equal(result.code, 0)
+  assert.deepEqual(lines, ["npm ci", "编译完成", "[Nacho] 已隐藏敏感输出", "错误详情", "[Nacho] 已隐藏敏感输出"])
+  assert.doesNotMatch(lines.join(" "), /private-key|ssh-secret/)
+  assert.equal(sanitizeCloudInstallLine("\u001b[1;32m[install]\u001b[0m 构建完成", "ssh-secret"), "[install] 构建完成")
+  assert.equal(sanitizeCloudInstallLine("注册密钥: private-key", "ssh-secret"), "[Nacho] 已隐藏敏感输出")
+})
+
+test("cloud install streams real output but keeps installer keys out of its summary", async () => {
+  const [source, script, route, form] = await Promise.all([
+    readFile(new URL("../lib/cloud-deployment.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../server/deploy/install.sh", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/cloud-deployment/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../components/onboarding/cloud-deploy-form.tsx", import.meta.url), "utf8"),
+  ])
+  assert.match(source, /NACHO_HIDE_INSTALL_SECRETS=1 bash/)
+  assert.doesNotMatch(source, /deploy\/install\.sh >\/dev\/null 2>&1/)
+  assert.match(script, /if \[ "\$\{NACHO_HIDE_INSTALL_SECRETS:-0\}" != "1" \]; then/)
+  assert.match(route, /type: "log", content/)
+  assert.match(form, /<DeploymentStagePanel stage="install" active=\{attemptStarted && !result\}>/)
+  assert.match(form, /<InstallationConsole output=\{output\} active=\{busy === "deploy"\}/)
 })
 
 test("remote deployment endpoint refuses to run outside the local Windows panel", async () => {

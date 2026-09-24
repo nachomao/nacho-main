@@ -131,23 +131,67 @@ async function connectCloudHost(target: Target): Promise<Client> {
   })
 }
 
-function runRemote(client: Client, command: string, sudoPassword?: string): Promise<{ code: number; output: string }> {
+export function sanitizeCloudInstallLine(line: string, password: string) {
+  const withoutAnsi = line.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g"), "")
+  const text = Array.from(withoutAnsi).filter((character) => character.charCodeAt(0) >= 32 || character === "\t").join("")
+  if (/(?:PANEL_API_KEY|ENROLLMENT_KEY|(?:api[ _-]?key|token|secret|password|注册密钥|密码)\s*[:=])/i.test(text) || (password && text.includes(password))) {
+    return "[Nacho] 已隐藏敏感输出"
+  }
+  return text
+}
+
+export function runRemote(client: Client, command: string, sudoPassword?: string, onOutput?: (line: string) => void): Promise<{ code: number; output: string }> {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, channel) => {
       if (error) return reject(new CloudDeploymentError("无法执行远程部署命令", 502))
       let output = ""
+      const lineReader = () => {
+        const decoder = new TextDecoder()
+        let pending = ""
+        let skippingLongLine = false
+        const consume = (text: string) => {
+          pending += text
+          const lines = pending.split(/\r\n|\r|\n/)
+          pending = lines.pop() || ""
+          for (const line of lines) {
+            if (skippingLongLine) { skippingLongLine = false; continue }
+            onOutput?.(line.length <= 2048 ? line : "[Nacho] 已省略过长输出行")
+          }
+          if (pending.length > 2048) {
+            pending = ""
+            skippingLongLine = true
+            onOutput?.("[Nacho] 已省略过长输出行")
+          }
+        }
+        return {
+          write: (chunk: Buffer) => { if (onOutput) consume(decoder.decode(chunk, { stream: true })) },
+          flush: () => {
+            if (!onOutput) return
+            consume(decoder.decode())
+            if (pending && !skippingLongLine) onOutput(pending)
+          },
+        }
+      }
+      const stdout = lineReader()
+      const stderr = lineReader()
       const timeout = setTimeout(() => {
         channel.close()
         reject(new CloudDeploymentError("远程命令执行超时，请检查目标系统", 504))
       }, 15 * 60_000)
       timeout.unref()
-      channel.on("data", (chunk: Buffer) => { output = (output + chunk.toString("utf8")).slice(-4096) })
+      channel.on("data", (chunk: Buffer) => {
+        output = (output + chunk.toString("utf8")).slice(-4096)
+        stdout.write(chunk)
+      })
+      channel.stderr.on("data", (chunk: Buffer) => stderr.write(chunk))
       channel.on("error", () => {
         clearTimeout(timeout)
         reject(new CloudDeploymentError("远程命令连接中断", 502))
       })
       channel.on("close", (code: number | null) => {
         clearTimeout(timeout)
+        stdout.flush()
+        stderr.flush()
         resolve({ code: code ?? -1, output: output.trim() })
       })
       if (sudoPassword !== undefined) channel.end(`${sudoPassword}\n`)
@@ -156,10 +200,11 @@ function runRemote(client: Client, command: string, sudoPassword?: string): Prom
   })
 }
 
-function runAsRoot(client: Client, username: string, password: string, script: string) {
+function runAsRoot(client: Client, username: string, password: string, script: string, onOutput?: (line: string) => void) {
   const quoted = `'${script.replaceAll("'", "'\\''")}'`
   const command = username === "root" ? `sh -c ${quoted}` : `sudo -S -p '' sh -c ${quoted}`
-  return runRemote(client, command, username === "root" ? undefined : password)
+  return runRemote(client, command, username === "root" ? undefined : password,
+    onOutput ? (line) => onOutput(sanitizeCloudInstallLine(line, password)) : undefined)
 }
 
 function openSftp(client: Client): Promise<SFTPWrapper> {
@@ -202,7 +247,7 @@ export async function createBundle(directory: string, destination: string) {
   ])
 }
 
-export async function deployCloudServer(target: Target, onProgress: (step: string) => void): Promise<CloudDeploymentResult> {
+export async function deployCloudServer(target: Target, onProgress: (step: string) => void, onLog: (line: string) => void): Promise<CloudDeploymentResult> {
   const client = await connectCloudHost(target)
   let remoteDirectory: string | null = null
   let localDirectory: string | null = null
@@ -238,8 +283,15 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     await upload(await openSftp(client), bundle, `${remoteDirectory}/bundle.tar.gz`)
 
     onProgress("安装 Node.js、构建服务并配置 systemd")
+    let outputLines = 0
     const install = await runAsRoot(client, target.username, target.password,
-      `set -e; test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; tar -xzf ${remoteDirectory}/bundle.tar.gz -C ${remoteDirectory}; bash ${remoteDirectory}/deploy/install.sh >/dev/null 2>&1`,
+      `set -e; test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; tar -xzf ${remoteDirectory}/bundle.tar.gz -C ${remoteDirectory}; NACHO_HIDE_INSTALL_SECRETS=1 bash ${remoteDirectory}/deploy/install.sh`,
+      (line) => {
+        if (!line.trim()) return
+        outputLines += 1
+        if (outputLines <= 600) onLog(line)
+        else if (outputLines === 601) onLog("[Nacho] 输出过多，后续内容已停止显示；部署仍在继续")
+      },
     )
     const rollback = async () => {
       onProgress("安装未完成，正在清理本次部署")
