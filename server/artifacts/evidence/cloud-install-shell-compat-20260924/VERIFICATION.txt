@@ -1,0 +1,74 @@
+Cloud install shell compatibility verification
+Date: 2026-09-24
+
+OBJECT
+- Source: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\deploy\install.sh
+- Changed branch/field: deployment script line endings, CRLF -> LF; repository checkout policy set to eol=lf.
+- Root cause observed: the uploaded Windows CRLF bytes made bash parse line 17 as `set -euo pipefail\r`, producing the reported `pipefail` invalid option error.
+
+ARTIFACTS
+- BASELINE_FILE: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\BASELINE_FILE
+- MODIFIED_FILE: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\MODIFIED_FILE
+- DIFF_FILE: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\DIFF_FILE
+- VERIFICATION.txt: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\VERIFICATION.txt
+- ROLLBACK.sh: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\ROLLBACK.sh
+- ROLLBACK_COPY: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server\artifacts\evidence\cloud-install-shell-compat-20260924\ROLLBACK_COPY
+
+HASHES
+- BASELINE_FILE SHA-256: D53202C2BEAA0A25A743059CAAFEBDA5FE9F1F0AF7157091A27A1B776B0D3F35
+- MODIFIED_FILE SHA-256: F7DFC2743E2380F36E3E177B6842203B36507CA14CE90AFC431450FE622B7BF9
+- Source install.sh SHA-256: F7DFC2743E2380F36E3E177B6842203B36507CA14CE90AFC431450FE622B7BF9
+
+BASELINE
+Command: wsl.exe -d Debian -- bash /mnt/c/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/BASELINE_FILE
+Input: baseline CRLF copy of install.sh.
+Literal output:
+/mnt/c/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/BASELINE_FILE: line 17: set: pipefail
+: invalid option name
+Exit status: 2
+Result: reproduced the reported failure before installation.
+
+MODIFIED
+Command: wsl.exe -d Debian -- bash -n /mnt/c/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/MODIFIED_FILE
+Input: LF-normalized modified copy.
+Literal output: <empty>
+Exit status: 0
+Result: bash syntax accepted.
+
+SERVER TESTS
+Command: npm test
+Working directory: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server
+Input: current source and tests.
+Literal result: 68 tests, 68 passed, 0 failed.
+Exit status: 0
+
+SERVER BUILD
+Command: npm run build
+Working directory: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server
+Input: current source.
+Literal result: TypeScript build completed without diagnostics.
+Exit status: 0
+
+PANEL CLOUD DEPLOYMENT TEST
+Command: pnpm exec tsx --test tests/cloud-deployment.test.ts
+Working directory: C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\nacho-panel
+Input: current panel cloud deployment test suite.
+Literal result: 8 tests, 8 passed, 0 failed.
+Exit status: 0
+
+ROLLBACK
+Command: wsl.exe -d Debian -- C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/ROLLBACK.sh C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/ROLLBACK_COPY C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/BASELINE_FILE
+Input: ROLLBACK_COPY initially contained MODIFIED_FILE; BASELINE_FILE supplied as restore source.
+Literal output: restored C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/ROLLBACK_COPY from C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/BASELINE_FILE
+Exit status: 0
+
+Command: wsl.exe -d Debian -- cmp -s C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/ROLLBACK_COPY C:/Users/Administrator/Documents/Codex/Nacho/nacho-main/server/artifacts/evidence/cloud-install-shell-compat-20260924/BASELINE_FILE
+Input: restored rollback copy and baseline copy.
+Literal output: <empty>
+Exit status: 0
+Result: rollback restored the copy byte-for-byte; MODIFIED_FILE and source install.sh remain changed to LF.
+
+FINAL STATUS
+- Source install.sh line endings: CRLF=0, LF=327, CR=0.
+- Repository policy: server/deploy/install.sh, uninstall.sh, and napl are marked eol=lf in .gitattributes.
+- `git diff --check`: exit 0.
