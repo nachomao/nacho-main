@@ -438,6 +438,7 @@
 }
 
 .cloud-mode-content {
+  padding: 0.25rem;
   opacity: 0;
   filter: blur(14px);
   transform: translateY(8px) scale(0.975);
@@ -584,8 +585,8 @@
 }
 
 @layer utilities {
-  /* 璺敱绾ч〉闈㈠垏鎹㈢殑绂诲満/杩涘満鍔ㄧ敾鐢?components/page-transition.tsx
-     浣跨敤 Web Animations API 鍛戒护寮忛┍鍔紝鏃犻渶鍦ㄦ瀹氫箟 CSS 鍏抽敭甯с€?*/
+  /* 路由级页面切换的离场与进场动画由 components/page-transition.tsx
+     使用 Web Animations API 驱动，无需在此定义 CSS 关键帧。 */
 
   .card-glow {
     background-color: color-mix(in oklch, black 72%, transparent);
