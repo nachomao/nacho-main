@@ -5,7 +5,7 @@ import { useLocalSettings } from "@/components/local-settings-provider"
 import { useLocalControlServer } from "@/lib/local-control-server-client"
 import type { LocalAvatarId } from "@/lib/local-settings-schema"
 
-/** 服务端来源：本地部署 或 云端对接（API + Key） */
+/** 服务端来源：本地部署或云端服务；云端自动部署和云端对接共用 API + Key 连接协议 */
 export type ServerSource =
   | { mode: "local"; api: string; agentApi?: string; key: string }
   | { mode: "cloud"; api: string; key: string }

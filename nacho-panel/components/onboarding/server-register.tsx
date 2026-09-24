@@ -13,8 +13,11 @@ import {
   Loader2,
   LockKeyhole,
   ShieldCheck,
+  ServerCog,
 } from "lucide-react"
 import { LocalControlServerManager } from "@/components/local-control/local-control-server-manager"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { CloudDeployForm } from "./cloud-deploy-form"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -39,10 +42,10 @@ const sourceOptions = [
   {
     mode: "cloud" as const,
     icon: Cloud,
-    eyebrow: "远程 API",
-    title: "云端对接",
-    description: "连接已部署的控制服务，适合跨设备访问和集中管理。",
-    features: ["连接前验证服务身份与权限", "只需 API 地址与 Panel API Key"],
+    eyebrow: "远程管理",
+    title: "云端服务",
+    description: "自动部署到 Linux 服务器，或对接已部署的控制服务。",
+    features: ["云端部署 · 输入服务器 SSH 信息", "云端对接 · 使用 API 地址与密钥"],
   },
 ]
 
@@ -61,6 +64,7 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
   const { setServerSource } = useOnboarding()
   const [shown, setShown] = useState(false)
   const [selected, setSelected] = useState<Mode | null>(null)
+  const [cloudChoice, setCloudChoice] = useState<"deploy" | "connect">("connect")
   const [openedModes, setOpenedModes] = useState<Mode[]>([])
   const [api, setApi] = useState("")
   const [key, setKey] = useState("")
@@ -333,20 +337,20 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                               <div className="flex flex-col gap-4 border-b border-border/45 bg-foreground/[0.018] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                                 <div className="flex min-w-0 items-center gap-3.5">
                                   <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-border/55 bg-background/35 text-foreground shadow-sm">
-                                    <Cloud className="size-5" aria-hidden="true" />
+                                    {cloudChoice === "deploy" ? <ServerCog className="size-5" aria-hidden="true" /> : <Cloud className="size-5" aria-hidden="true" />}
                                   </span>
                                   <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <h2 className="text-base font-semibold text-foreground">连接云端控制服务</h2>
-                                      <Badge variant="outline" className="border-border/55 bg-background/25 text-muted-foreground">远程 API</Badge>
+                                      <h2 className="text-base font-semibold text-foreground">{cloudChoice === "deploy" ? "自动部署云端控制服务" : "连接云端控制服务"}</h2>
+                                      <Badge variant="outline" className="border-border/55 bg-background/25 text-muted-foreground">{cloudChoice === "deploy" ? "SSH 部署" : "远程 API"}</Badge>
                                     </div>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">输入部署地址与访问密钥，验证通过后即可继续。</p>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{cloudChoice === "deploy" ? "输入目标设备 IP、用户名与密码，核对主机身份后自动安装。" : "输入部署地址与访问密钥，验证通过后即可继续。"}</p>
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
                                     <LockKeyhole className="size-3.5" aria-hidden="true" />
-                                    凭据仅保存在当前浏览器
+                                    {cloudChoice === "deploy" ? "SSH 密码不会保存" : "凭据仅保存在当前浏览器"}
                                   </span>
                                   <Button type="button" variant="ghost" size="sm" className="rounded-xl" data-source-collapse onClick={() => toggleMode("cloud")}>
                                     <ChevronUp data-icon="inline-start" aria-hidden="true" />
@@ -356,6 +360,31 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                               </div>
 
                               <div className="mx-auto flex max-w-2xl flex-col gap-5 p-5 sm:p-6">
+                                <ToggleGroup
+                                  value={[cloudChoice]}
+                                  onValueChange={(value) => { if (value.length) setCloudChoice(value[0] as "deploy" | "connect") }}
+                                  variant="outline"
+                                  aria-label="选择云端服务使用方式"
+                                  className="grid w-full grid-cols-2 rounded-xl bg-background/25 p-1"
+                                >
+                                  <ToggleGroupItem value="deploy" className="h-10 min-w-0 rounded-lg text-xs sm:text-sm">
+                                    <ServerCog aria-hidden="true" />云端部署
+                                  </ToggleGroupItem>
+                                  <ToggleGroupItem value="connect" className="h-10 min-w-0 rounded-lg text-xs sm:text-sm">
+                                    <Cloud aria-hidden="true" />云端对接
+                                  </ToggleGroupItem>
+                                </ToggleGroup>
+                                <div className="flex flex-col">
+                                  <div className="cloud-mode-panel" data-active={cloudChoice === "deploy"} aria-hidden={cloudChoice !== "deploy"} inert={cloudChoice !== "deploy"}>
+                                    <div className="min-h-0 overflow-hidden">
+                                      <div className="cloud-mode-content">
+                                        <CloudDeployForm onConnected={finish} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="cloud-mode-panel" data-active={cloudChoice === "connect"} aria-hidden={cloudChoice !== "connect"} inert={cloudChoice !== "connect"}>
+                                    <div className="min-h-0 overflow-hidden">
+                                      <div className="cloud-mode-content flex flex-col gap-5">
                                 <div className="flex flex-col gap-4">
                                   <label htmlFor="cloud-api" className="flex flex-col gap-2">
                                     <span className="flex items-center justify-between gap-3 text-xs font-medium text-foreground">
@@ -438,6 +467,10 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                                   {connectionStatus === "testing" ? "正在校验连接" : connectionStatus === "success" ? "校验成功" : "验证并使用云端服务"}
                                   {connectionStatus === "idle" || connectionStatus === "error" ? <ArrowRight data-icon="inline-end" aria-hidden="true" /> : null}
                                 </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             </section>
                           )}
