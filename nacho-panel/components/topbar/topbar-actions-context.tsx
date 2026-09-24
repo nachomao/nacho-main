@@ -56,7 +56,7 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
   const [filters, setFilters] = useState<HomeFilters>(defaultFilters)
   const aiMode = useAIMode()
   const { settings: localSettings } = useLocalSettings()
-  const { clients, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead } = useServerData()
+  const { clients, notifications, notificationError, loading, refresh, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead } = useServerData()
 
   // 全局快捷键 Ctrl/Cmd + K 呼出搜索
   useEffect(() => {
@@ -123,7 +123,9 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
         onClose={() => setNoticesOpen(false)}
         notices={notifications.map((n) => ({ ...n, count: n.count ?? 1 }))}
         pending={noticePending}
-        error={noticeError}
+        error={noticeError || notificationError}
+        loading={loading}
+        onRetry={() => void refresh()}
         onRead={(id) => void runNoticeAction({ action: "read", id }, () => markNotificationRead(id))}
         onReadAll={() => void runNoticeAction({ action: "readAll" }, markAllNotificationsRead)}
         onClear={() => void runNoticeAction({ action: "clear" }, clearNotifications)}

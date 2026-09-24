@@ -69,6 +69,7 @@ type ServerDataContextValue = {
   groups: string[]
   logs: LogEntry[]
   notifications: ServerNotification[]
+  notificationError: string | null
   markNotificationRead: (id: string) => Promise<void>
   markAllNotificationsRead: () => Promise<void>
   clearNotifications: () => Promise<void>
@@ -94,6 +95,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const [groups, setGroups] = useState<string[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [notifications, setNotifications] = useState<ServerNotification[]>([])
+  const [notificationError, setNotificationError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -233,6 +235,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!connection) {
       setError("尚未配置服务端连接")
+      setNotificationError("尚未配置服务端连接")
       setLoading(false)
       return
     }
@@ -259,10 +262,13 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
       if (logsResult.status === "fulfilled") setLogs(logsResult.value)
       try {
         const nextNotifications = await apiRequest<ServerNotification[]>(`/notifications?${notificationQuery}`)
+        if (sequence !== requestSequence.current) return
+        setNotificationError(null)
         if (canApplyNotificationSnapshot(notificationEpoch, notificationMutationEpoch.current)) setNotifications(nextNotifications)
-      } catch {
-        // 兼容尚未升级通知路由的服务端；核心连接已经确认成功。
-        if (canApplyNotificationSnapshot(notificationEpoch, notificationMutationEpoch.current)) setNotifications([])
+      } catch (caught) {
+        if (sequence !== requestSequence.current) return
+        // 保留上次成功的数据；旧服务端缺少通知路由时明确显示错误而不是伪装成空列表。
+        setNotificationError(caught instanceof Error ? caught.message : "通知加载失败")
       }
       connectedOnce.current = true
       setError(null)
@@ -287,8 +293,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, refresh])
 
   const value = useMemo(
-    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
-    [connection, overview, clients, groups, logs, notifications, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
+    [connection, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

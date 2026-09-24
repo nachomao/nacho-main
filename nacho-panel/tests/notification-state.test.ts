@@ -174,3 +174,10 @@ test("通知中心从真实服务端接口读取数据且不保留临时模拟�
   assert.match(serverDataSource, /fetch\(`\$\{connection\.baseUrl\}\/api\/panel\$\{path\}`/)
   assert.match(serverDataSource, /apiRequest<ServerNotification\[\]>\(`\/notifications\?\$\{notificationQuery\}`\)/)
 })
+
+test("通知接口失败时保留已有通知并显示错误及重试入口", () => {
+  assert.match(serverDataSource, /setNotificationError\(caught instanceof Error/)
+  assert.doesNotMatch(serverDataSource, /catch\s*\{\s*\/\/ 兼容尚未升级通知路由[\s\S]*?setNotifications\(\[\]\)/)
+  assert.match(drawerSource, /error \? "通知暂不可用，请重试"/)
+  assert.match(drawerSource, /onClick=\{onRetry\}/)
+})

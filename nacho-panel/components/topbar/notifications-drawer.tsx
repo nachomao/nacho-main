@@ -458,6 +458,8 @@ export function NotificationsDrawer({
   notices,
   pending,
   error,
+  loading,
+  onRetry,
   onRead,
   onReadAll,
   onClear,
@@ -469,6 +471,8 @@ export function NotificationsDrawer({
   notices: Notice[]
   pending: NoticePending
   error: string | null
+  loading: boolean
+  onRetry: () => void
   onRead: (id: string) => void
   onReadAll: () => void
   onClear: () => void
@@ -511,7 +515,10 @@ export function NotificationsDrawer({
         ) : undefined}
       />
 
-      {error ? <p role="alert" className="mx-4 mt-4 rounded-xl border border-negative/20 bg-negative/10 px-3 py-2 text-sm text-negative">{error}</p> : null}
+      {error ? <div role="alert" className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl border border-negative/20 bg-negative/10 px-3 py-2 text-sm text-negative">
+        <span>通知加载或操作失败：{error}</span>
+        <button type="button" onClick={onRetry} className="shrink-0 underline">重试</button>
+      </div> : null}
 
       {unread > 0 ? (
         <div className="flex shrink-0 justify-end border-b border-border px-4 py-2.5">
@@ -525,7 +532,7 @@ export function NotificationsDrawer({
         {notices.length === 0 ? (
           <div className="flex h-full min-h-80 flex-col items-center justify-center gap-4 text-center">
             <span className="flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground"><Bell className="size-6" /></span>
-            <p className="text-sm text-muted-foreground">暂无通知，一切正常</p>
+            <p className="text-sm text-muted-foreground">{loading ? "正在加载通知…" : error ? "通知暂不可用，请重试" : "暂无通知，一切正常"}</p>
           </div>
         ) : (
           <ul className="flex flex-col gap-3">
