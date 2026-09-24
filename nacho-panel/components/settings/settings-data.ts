@@ -103,7 +103,7 @@ export const defaultSettings: SettingsState = {
     ipAllowlist: false,
     forceHttps: true,
     loginLockout: true,
-    openEnrollment: false,
+    openEnrollment: true,
   },
 }
 

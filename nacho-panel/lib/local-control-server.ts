@@ -189,7 +189,7 @@ export function createInitialEnvironment(options: Required<LocalControlInstallOp
   values.set("DATABASE_PATH", "./data/nacho.db")
   values.set("PANEL_API_KEY", generateSecret())
   values.set("ENROLLMENT_KEY", generateSecret())
-  values.set("ALLOW_OPEN_ENROLLMENT", "false")
+  values.set("ALLOW_OPEN_ENROLLMENT", "true")
   values.set("PUBLIC_BASE_URL", "")
   values.set("TRUST_PROXY", "false")
   values.set("ARTIFACTS_PATH", "./artifacts")
@@ -210,7 +210,7 @@ export function ensureManagedEnvironment(input: EnvironmentMap) {
   const defaults = new Map<string, string>([
     ["CORS_ORIGIN", "*"],
     ["DATABASE_PATH", "./data/nacho.db"],
-    ["ALLOW_OPEN_ENROLLMENT", "false"],
+    ["ALLOW_OPEN_ENROLLMENT", "true"],
     ["PUBLIC_BASE_URL", ""],
     ["TRUST_PROXY", "false"],
     ["ARTIFACTS_PATH", "./artifacts"],

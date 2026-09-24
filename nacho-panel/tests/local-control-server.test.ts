@@ -117,13 +117,14 @@ test("Windows management script keeps the UTF-8 BOM required by Windows PowerShe
   assert.deepEqual([...script.subarray(0, 3)], [0xef, 0xbb, 0xbf])
 })
 
-test("initial environment uses safe local defaults and independent strong secrets", () => {
+test("initial environment enables enrollment and uses independent strong secrets", () => {
   const first = createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: 9555 })
   const second = createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: 9555 })
 
   assert.equal(first.get("HOST"), "127.0.0.1")
   assert.equal(first.get("PORT"), "9555")
   assert.equal(first.get("DATABASE_PATH"), "./data/nacho.db")
+  assert.equal(first.get("ALLOW_OPEN_ENROLLMENT"), "true")
   for (const key of ["PANEL_API_KEY", "ENROLLMENT_KEY", "LOCAL_CONTROL_TOKEN"]) {
     assert.match(first.get(key) || "", /^[A-Za-z0-9_-]{43}$/)
     assert.notEqual(first.get(key), second.get(key))
@@ -142,10 +143,12 @@ test("managed environment repairs weak defaults without discarding unrelated val
   assert.equal(repaired.get("HOST"), "127.0.0.1")
   assert.equal(repaired.get("PORT"), "8443")
   assert.equal(repaired.get("DATABASE_PATH"), "./data/nacho.db")
+  assert.equal(repaired.get("ALLOW_OPEN_ENROLLMENT"), "true")
   assert.equal(repaired.get("CUSTOM_VALUE"), "preserved")
   assert.match(repaired.get("PANEL_API_KEY") || "", /^[A-Za-z0-9_-]{43}$/)
   assert.match(repaired.get("ENROLLMENT_KEY") || "", /^[A-Za-z0-9_-]{43}$/)
   assert.match(repaired.get("LOCAL_CONTROL_TOKEN") || "", /^[A-Za-z0-9_-]{43}$/)
+  assert.equal(ensureManagedEnvironment(new Map([["ALLOW_OPEN_ENROLLMENT", "false"]])).get("ALLOW_OPEN_ENROLLMENT"), "false")
 })
 
 test("server directory resolution rejects an untrusted project and accepts the expected layout", async () => {

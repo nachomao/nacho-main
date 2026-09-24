@@ -63,7 +63,7 @@ export function SettingsView() {
         setSaved((current) => ({ ...current, security: { ...current.security, openEnrollment } }))
       })
       .catch(() => {
-        // 服务端尚未连接时保留默认关闭状态，连接恢复后会再次加载。
+        // 服务端尚未连接时保留初始显示值，连接恢复后会再次加载实际策略。
       })
     return () => { active = false }
   }, [apiRequest])
