@@ -7,6 +7,20 @@ const menus = [
   { file: "auth-register", label: "登录方式", detailId: "auth-method-detail", collapseAttribute: "data-auth-collapse" },
 ]
 
+test("云端部署与对接切换时卡片平滑变高，并保留未选表单状态", () => {
+  const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8")
+  for (const file of ["onboarding/server-register", "settings/connection-panel"]) {
+    const source = readFileSync(new URL(`../components/${file}.tsx`, import.meta.url), "utf8")
+    assert.match(source, /className="cloud-mode-panel" data-active=\{cloudChoice === "deploy"\} aria-hidden=\{cloudChoice !== "deploy"\} inert=\{cloudChoice !== "deploy"\}/)
+    assert.match(source, /className="cloud-mode-panel" data-active=\{cloudChoice === "connect"\} aria-hidden=\{cloudChoice !== "connect"\} inert=\{cloudChoice !== "connect"\}/)
+    assert.doesNotMatch(source, /cloudChoice === "(?:deploy|connect)" \? "(?:block|hidden)/)
+  }
+  assert.match(styles, /\.cloud-mode-panel \{[\s\S]*?grid-template-rows: 0fr;[\s\S]*?transition: grid-template-rows 720ms/)
+  assert.match(styles, /\.cloud-mode-panel\[data-active='true'\] \{\s*grid-template-rows: 1fr;/)
+  assert.match(styles, /\.cloud-mode-content \{[\s\S]*?filter: blur\(14px\);[\s\S]*?transform: translateY\(8px\) scale\(0\.975\);/)
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{\s*\.cloud-mode-panel,\s*\.cloud-mode-content \{\s*transition: none !important;/)
+})
+
 for (const { file, label, detailId, collapseAttribute } of menus) {
   const source = readFileSync(new URL(`../components/onboarding/${file}.tsx`, import.meta.url), "utf8")
   const toggleMode = source.match(/const toggleMode = \(mode: Mode\) => \{([\s\S]*?)\n  \}/)?.[1]

@@ -374,10 +374,17 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                                     <Cloud aria-hidden="true" />云端对接
                                   </ToggleGroupItem>
                                 </ToggleGroup>
-                                <div className={cloudChoice === "deploy" ? "block" : "hidden"} inert={cloudChoice !== "deploy"}>
-                                  <CloudDeployForm onConnected={finish} />
-                                </div>
-                                <div className={cloudChoice === "connect" ? "flex flex-col gap-5" : "hidden"} inert={cloudChoice !== "connect"}>
+                                <div className="flex flex-col">
+                                  <div className="cloud-mode-panel" data-active={cloudChoice === "deploy"} aria-hidden={cloudChoice !== "deploy"} inert={cloudChoice !== "deploy"}>
+                                    <div className="min-h-0 overflow-hidden">
+                                      <div className="cloud-mode-content">
+                                        <CloudDeployForm onConnected={finish} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="cloud-mode-panel" data-active={cloudChoice === "connect"} aria-hidden={cloudChoice !== "connect"} inert={cloudChoice !== "connect"}>
+                                    <div className="min-h-0 overflow-hidden">
+                                      <div className="cloud-mode-content flex flex-col gap-5">
                                 <div className="flex flex-col gap-4">
                                   <label htmlFor="cloud-api" className="flex flex-col gap-2">
                                     <span className="flex items-center justify-between gap-3 text-xs font-medium text-foreground">
@@ -460,6 +467,9 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
                                   {connectionStatus === "testing" ? "正在校验连接" : connectionStatus === "success" ? "校验成功" : "验证并使用云端服务"}
                                   {connectionStatus === "idle" || connectionStatus === "error" ? <ArrowRight data-icon="inline-end" aria-hidden="true" /> : null}
                                 </Button>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             </section>

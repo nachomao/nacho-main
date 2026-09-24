@@ -92,10 +92,17 @@ export function ConnectionPanel() {
             <ToggleGroupItem value="deploy" className="min-w-0 text-xs"><ServerCog aria-hidden="true" />云端部署</ToggleGroupItem>
             <ToggleGroupItem value="connect" className="min-w-0 text-xs"><Cloud aria-hidden="true" />云端对接</ToggleGroupItem>
           </ToggleGroup>
-          <div className={cloudChoice === "deploy" ? "block" : "hidden"} inert={cloudChoice !== "deploy"}>
-            <CloudDeployForm onConnected={useDeployedCloud} />
-          </div>
-          <div className={cloudChoice === "connect" ? "flex flex-col gap-4" : "hidden"} inert={cloudChoice !== "connect"}>
+          <div className="flex flex-col">
+            <div className="cloud-mode-panel" data-active={cloudChoice === "deploy"} aria-hidden={cloudChoice !== "deploy"} inert={cloudChoice !== "deploy"}>
+              <div className="min-h-0 overflow-hidden">
+                <div className="cloud-mode-content">
+                  <CloudDeployForm onConnected={useDeployedCloud} />
+                </div>
+              </div>
+            </div>
+            <div className="cloud-mode-panel" data-active={cloudChoice === "connect"} aria-hidden={cloudChoice !== "connect"} inert={cloudChoice !== "connect"}>
+              <div className="min-h-0 overflow-hidden">
+                <div className="cloud-mode-content flex flex-col gap-4">
             <label className="block">
               <span className="mb-1.5 block text-xs text-muted-foreground">API 地址</span>
               <input
@@ -140,6 +147,9 @@ export function ConnectionPanel() {
                   状态：{loading ? "连接中" : error ? "连接失败" : "已连接"}
                 </span>
               )}
+            </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
