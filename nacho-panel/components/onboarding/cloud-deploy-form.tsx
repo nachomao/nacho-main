@@ -142,29 +142,34 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
       </FieldGroup>
 
       {!result && (
-        <>
-          {fingerprint ? (
-            <Alert className="border-border/55 bg-background/20">
-              <Fingerprint aria-hidden="true" />
-              <AlertTitle>核对服务器身份</AlertTitle>
-              <AlertDescription className="flex flex-col gap-2">
-                <span>请与服务器控制台提供的 SSH 主机指纹核对，确认一致后再部署。若指纹变化，部署会自动中止。</span>
-                <code className="break-all rounded-lg bg-background/50 px-2.5 py-2 font-mono text-xs text-foreground" aria-label="SSH 主机 SHA256 指纹">{fingerprint}</code>
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <Button type="button" variant="outline" size="lg" disabled={!host.trim() || busy !== null} onClick={() => void inspect()} className="h-11 w-full rounded-xl">
-              {busy === "inspect" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Fingerprint data-icon="inline-start" aria-hidden="true" />}
-              {busy === "inspect" ? "正在读取主机指纹" : "检查服务器身份"}
-            </Button>
-          )}
-          {fingerprint && (
-            <Button type="button" variant="outline" size="lg" disabled={!username.trim() || !password || busy !== null} onClick={() => void deploy()} className="h-11 w-full rounded-xl">
-              {busy === "deploy" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <ShieldCheck data-icon="inline-start" aria-hidden="true" />}
-              {busy === "deploy" ? "正在自动部署，请保持页面打开" : "指纹一致，开始部署"}
-            </Button>
-          )}
-        </>
+        <div className="flex flex-col">
+          <div className="cloud-deploy-step" data-open={!fingerprint} aria-hidden={!!fingerprint} inert={!!fingerprint}>
+            <div className="min-h-0 overflow-hidden">
+              <Button type="button" variant="outline" size="lg" disabled={!host.trim() || busy !== null} onClick={() => void inspect()} className="h-11 w-full rounded-xl focus-visible:ring-inset">
+                {busy === "inspect" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <Fingerprint data-icon="inline-start" aria-hidden="true" />}
+                {busy === "inspect" ? "正在读取主机指纹" : "检查服务器身份"}
+              </Button>
+            </div>
+          </div>
+          <div className="cloud-deploy-step" data-open={!!fingerprint} aria-hidden={!fingerprint} inert={!fingerprint}>
+            <div className="min-h-0 overflow-hidden">
+              <div className="flex flex-col gap-5">
+                <Alert className="border-border/55 bg-background/20">
+                  <Fingerprint aria-hidden="true" />
+                  <AlertTitle>核对服务器身份</AlertTitle>
+                  <AlertDescription className="flex flex-col gap-2">
+                    <span>请与服务器控制台提供的 SSH 主机指纹核对，确认一致后再部署。若指纹变化，部署会自动中止。</span>
+                    <code className="break-all rounded-lg bg-background/50 px-2.5 py-2 font-mono text-xs text-foreground" aria-label="SSH 主机 SHA256 指纹">{fingerprint}</code>
+                  </AlertDescription>
+                </Alert>
+                <Button type="button" variant="outline" size="lg" disabled={!username.trim() || !password || busy !== null} onClick={() => void deploy()} className="h-11 w-full rounded-xl focus-visible:ring-inset">
+                  {busy === "deploy" ? <Loader2 data-icon="inline-start" className="animate-spin" aria-hidden="true" /> : <ShieldCheck data-icon="inline-start" aria-hidden="true" />}
+                  {busy === "deploy" ? "正在自动部署，请保持页面打开" : "指纹一致，开始部署"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {step && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">{busy && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}{step}</p>}
