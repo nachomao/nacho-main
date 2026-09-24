@@ -9,6 +9,7 @@ const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/loca
 const launcherPath = path.resolve(testDirectory, "../../server/deploy/windows/start-local-control-server.cjs")
 const modulePath = path.resolve(testDirectory, "../lib/local-control-server.ts")
 const managerPath = path.resolve(testDirectory, "../components/local-control/local-control-server-manager.tsx")
+const progressPath = path.resolve(testDirectory, "../components/local-control/deployment-progress.tsx")
 
 test("Windows manager verifies the project, PID ownership, and configured listener", async () => {
   const scriptBytes = await readFile(scriptPath)
@@ -116,7 +117,7 @@ test("Windows manager reuses the panel runtime before installing a verified port
 })
 
 test("local control install stages preserve the card transition motion", async () => {
-  const manager = await readFile(managerPath, "utf8")
+  const [manager, progress] = await Promise.all([readFile(managerPath, "utf8"), readFile(progressPath, "utf8")])
   const setupStage = manager.indexOf('stage="setup"')
   const installStage = manager.indexOf('stage="install"')
   const installedStage = manager.indexOf('stage="installed"')
@@ -124,12 +125,13 @@ test("local control install stages preserve the card transition motion", async (
 
   assert.ok(setupStage >= 0 && installStage > setupStage && installedStage > installStage)
   assert.match(manager, /const activeStage: LocalControlStage = showInstallConsole \? "install" : status\.installed \? "installed" : "setup"/)
-  assert.match(manager, /grid-template-rows 720ms \$\{LOCAL_CONTROL_STAGE_EASE\}/)
-  assert.match(manager, /opacity 440ms ease/)
-  assert.match(manager, /filter 520ms ease/)
-  assert.match(manager, /transform 620ms \$\{LOCAL_CONTROL_STAGE_EASE\}/)
-  assert.match(manager, /translateY\(8px\) scale\(0\.975\)/)
-  assert.match(manager, /inert=\{!active\}/)
+  assert.match(manager, /<DeploymentStagePanel stage="install"/)
+  assert.match(progress, /grid-template-rows 720ms \$\{DEPLOYMENT_STAGE_EASE\}/)
+  assert.match(progress, /opacity 440ms ease/)
+  assert.match(progress, /filter 520ms ease/)
+  assert.match(progress, /transform 620ms \$\{DEPLOYMENT_STAGE_EASE\}/)
+  assert.match(progress, /translateY\(8px\) scale\(0\.975\)/)
+  assert.match(progress, /inert=\{!active\}/)
   assert.match(manager, /data-local-control-expandable/)
   assert.match(manager, /grid-template-rows 560ms \$\{LOCAL_CONTROL_STAGE_EASE\}, margin-bottom 560ms/)
   assert.match(manager, /transform: open \? "translateY\(0\)" : "translateY\(-10px\)"/)
@@ -138,27 +140,28 @@ test("local control install stages preserve the card transition motion", async (
   assert.match(manager, /useState<InstallationOutputChunk\[\]>\(\[\]\)/)
   assert.match(manager, /const id = installOutputIdRef\.current/)
   assert.match(manager, /\{ id, content \}/)
-  assert.match(manager, /element\.animate\(/)
-  assert.match(manager, /filter: "blur\(8px\)"/)
-  assert.match(manager, /transform: "translateY\(7px\)"/)
-  assert.match(manager, /setConsoleHeight\(nextHeight\)/)
-  assert.match(manager, /scrollTo\(\{ top: element\.scrollHeight, behavior: reducedMotion \? "auto" : "smooth" \}\)/)
-  assert.match(manager, /transition: reducedMotion \? "none" : `height 460ms \$\{LOCAL_CONTROL_STAGE_EASE\}`/)
+  assert.match(progress, /element\.animate\(/)
+  assert.match(progress, /filter: "blur\(8px\)"/)
+  assert.match(progress, /transform: "translateY\(7px\)"/)
+  assert.match(progress, /setConsoleHeight\(nextHeight\)/)
+  assert.match(progress, /scrollTo\(\{ top: element\.scrollHeight, behavior: reducedMotion \? "auto" : "smooth" \}\)/)
+  assert.match(progress, /transition: reducedMotion \? "none" : `height 460ms \$\{DEPLOYMENT_STAGE_EASE\}`/)
   assert.ok(completion)
   assert.doesNotMatch(completion[0], /setInstallOutput\(""\)/)
 })
 
 test("installed local service exposes validated port migration", async () => {
-  const [module, manager] = await Promise.all([
+  const [module, manager, progress] = await Promise.all([
     readFile(modulePath, "utf8"),
     readFile(managerPath, "utf8"),
+    readFile(progressPath, "utf8"),
   ])
 
   assert.match(module, /export function isLocalControlPortAvailable/)
   assert.match(module, /export function setLocalControlPort/)
   assert.match(module, /端口 \$\{port\} 已被其他进程占用/)
   assert.match(manager, /updateLocalControlPort\(Number\(port\)\)/)
-  assert.match(manager, /安装命令实时输出/)
+  assert.match(progress, /安装命令实时输出/)
   assert.match(manager, /installLocalControl\(\{ accessMode, autoStart, port: selectedPort \}, appendOutput\)/)
   assert.match(manager, /应用端口/)
 })

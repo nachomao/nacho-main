@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
         const send = (event: unknown) => {
           if (connected) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
         }
-        void deployCloudServer(target, (step) => send({ type: "progress", step }))
+        void deployCloudServer(target, (step) => send({ type: "progress", step }), (content) => send({ type: "log", content }))
           .then((data) => send({ type: "complete", data }))
           .catch((error: unknown) => send({
             type: "error",
