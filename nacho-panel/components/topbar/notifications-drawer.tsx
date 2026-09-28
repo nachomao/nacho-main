@@ -283,13 +283,13 @@ function NotificationCard({
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
                 <FileText className="size-4 text-muted-foreground" />事件详细日志
               </div>
-              <dl className="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-2 rounded-2xl bg-muted/60 p-3 font-mono text-xs leading-5">
-                <dt className="text-muted-foreground">时间</dt><dd className="break-all text-foreground">{notice.time}</dd>
-                <dt className="text-muted-foreground">来源</dt><dd className="break-all text-foreground">{notice.source}</dd>
-                <dt className="text-muted-foreground">设备</dt><dd className="break-all text-foreground">{notice.deviceId || "未关联"}</dd>
-                <dt className="text-muted-foreground">事件代码</dt><dd className="break-all text-foreground">{notice.code || "N/A"}</dd>
-                <dt className="text-muted-foreground">分组键</dt><dd className="break-all text-foreground">{notice.groupKey}</dd>
-                <dt className="text-muted-foreground">日志正文</dt><dd className="break-words text-foreground">{notice.detail}</dd>
+              <dl className="grid min-w-0 max-w-full grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-2xl bg-muted/60 p-3 font-mono text-xs leading-5">
+                <dt className="min-w-0 text-muted-foreground">时间</dt><dd className="min-w-0 break-all text-foreground">{notice.time}</dd>
+                <dt className="min-w-0 text-muted-foreground">来源</dt><dd className="min-w-0 break-all text-foreground">{notice.source}</dd>
+                <dt className="min-w-0 text-muted-foreground">设备</dt><dd className="min-w-0 break-all text-foreground">{notice.deviceId || "未关联"}</dd>
+                <dt className="min-w-0 text-muted-foreground">事件代码</dt><dd className="min-w-0 break-all text-foreground">{notice.code || "N/A"}</dd>
+                <dt className="min-w-0 text-muted-foreground">分组键</dt><dd className="min-w-0 break-all text-foreground">{notice.groupKey}</dd>
+                <dt className="min-w-0 text-muted-foreground">日志正文</dt><dd className="min-w-0 whitespace-pre-wrap break-all text-foreground">{notice.detail}</dd>
               </dl>
             </div>
           )}
