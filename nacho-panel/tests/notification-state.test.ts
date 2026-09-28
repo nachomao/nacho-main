@@ -163,6 +163,13 @@ test("通知卡片的圆角、描边和高遮蔽玻璃共用同一裁切层", ()
   assert.doesNotMatch(drawerSource, /notice\.read && "opacity-75"/)
 })
 
+test("事件详细日志使用可收缩列并完整换行长字段", () => {
+  assert.match(drawerSource, /grid min-w-0 max-w-full grid-cols-\[5rem_minmax\(0,1fr\)\]/)
+  assert.match(drawerSource, /<dd className="min-w-0 break-all text-foreground">\{notice\.groupKey\}<\/dd>/)
+  assert.match(drawerSource, /<dd className="min-w-0 whitespace-pre-wrap break-all text-foreground">\{notice\.detail\}<\/dd>/)
+  assert.doesNotMatch(drawerSource, /grid-cols-\[5rem_1fr\][\s\S]*notice\.groupKey/)
+})
+
 test("通知中心把系统日志显示为绿色提示事件", () => {
   assert.match(serverDataSource, /type: "offline" \| "health" \| "task" \| "log"/)
   assert.match(drawerSource, /notice\.type === "log" \? Clock3/)
