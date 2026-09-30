@@ -969,8 +969,10 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
     let switched = false
     try {
       await mkdir(temporary, { recursive: true })
-      const response = await fetch(target.windows.url, { signal: AbortSignal.timeout(15 * 60_000) })
-      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > target.windows.sizeBytes) {
+      const sourceAsset = index.schemaVersion === 3 ? target.source : target.windows
+      if (!sourceAsset) throw new LocalControlServerError("服务端发布缺少源码制品", 502)
+      const response = await fetch(sourceAsset.url, { signal: AbortSignal.timeout(15 * 60_000) })
+      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > sourceAsset.sizeBytes) {
         throw new LocalControlServerError(`Windows 服务端制品下载失败（HTTP ${response.status}）`, 502)
       }
       let bytes = 0
@@ -979,21 +981,34 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
         new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             bytes += chunk.length
-            if (bytes > target.windows.sizeBytes) return callback(new Error("Windows 服务端制品超过发布大小"))
+            if (bytes > sourceAsset.sizeBytes) return callback(new Error("Windows 服务端制品超过发布大小"))
             hash.update(chunk)
             callback(null, chunk)
           },
         }), createWriteStream(archive, { flags: "wx" }))
-      if (bytes !== target.windows.sizeBytes || hash.digest("hex") !== target.windows.sha256) {
+      if (bytes !== sourceAsset.sizeBytes || hash.digest("hex") !== sourceAsset.sha256) {
         throw new LocalControlServerError("Windows 服务端制品校验失败", 502)
       }
       const entries = (await runExecutable("tar", ["-tf", archive], path.dirname(serverDir), 60_000)).stdout
       if (entries.split(/\r?\n/).filter(Boolean).some((entry) => {
         const name = entry.replaceAll("\\", "/")
         return name.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(name) ||
-          !/^(dist|node_modules|package\.json|package-lock\.json|deploy)(\/|$)/.test(name)
+          !(index.schemaVersion === 3
+            ? /^(src|deploy|client|package\.json|package-lock\.json|tsconfig\.json)(\/|$)/.test(name)
+            : /^(dist|node_modules|package\.json|package-lock\.json|deploy)(\/|$)/.test(name))
       })) throw new LocalControlServerError("Windows 发布包包含无效路径", 502)
+      const types = (await runExecutable("tar", ["-tvf", archive], path.dirname(serverDir), 60_000)).stdout
+      if (types.split(/\r?\n/).filter(Boolean).some((line) => !["-", "d"].includes(line[0]))) {
+        throw new LocalControlServerError("发布包包含链接或特殊文件", 502)
+      }
       await runExecutable("tar", ["-xf", archive, "-C", temporary], path.dirname(serverDir), 5 * 60_000)
+      if (index.schemaVersion === 3) {
+        await runNpm(["ci", "--no-audit", "--no-fund"], temporary, 10 * 60_000)
+        await runNpm(["run", "build"], temporary, 10 * 60_000)
+        await rm(path.join(temporary, "node_modules"), { recursive: true, force: true })
+        await runNpm(["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+          temporary, 10 * 60_000)
+      }
       const manifest = JSON.parse(await readFile(path.join(temporary, "package.json"), "utf8")) as { name: string; version: string }
       if (manifest.name !== "nacho-server" || manifest.version !== version ||
           !(await exists(path.join(temporary, "dist", "index.js"))) ||

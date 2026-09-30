@@ -84,6 +84,7 @@ type ServerDataContextValue = {
   apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
   uploadRequest: <T>(path: string, file: File, onProgress: (percent: number) => void) => Promise<T>
   downloadRequest: (path: string, fallbackFileName: string) => Promise<void>
+  transferProductUpdate: (kind: "server" | "agent") => Promise<void>
 }
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
@@ -113,6 +114,10 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     if (!serverSource) return null
     return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
   }, [serverSource])
+  const transferProductUpdate = useCallback(async (kind: "server" | "agent") => {
+    if (!connection || !window.nachoUpdates?.transferRelease) throw new Error("需要已连接的桌面面板")
+    await window.nachoUpdates.transferRelease(kind, connection.baseUrl, connection.key)
+  }, [connection])
 
   const apiRequest = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
@@ -296,8 +301,8 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, refresh])
 
   const value = useMemo(
-    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest }),
-    [connection, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest],
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),
+    [connection, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

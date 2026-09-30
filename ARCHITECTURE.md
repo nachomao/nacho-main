@@ -135,7 +135,7 @@ Agent 安装：浏览器执行 irm http://SERVER:8443/nacho.ps1 | iex
 
 - **协议先行**：改 API 或命令契约，先在 `nachomao/nacho-server` 发版，再更新 `nachomao/nacho-main` 的面板。
 - **兼容性**：服务端应容忍旧 Agent（未知命令类型返回明确错误，而不是静默丢弃）。
-- **更新来源**：面板、服务端和 Agent 的源码仍在 GitHub 两仓；签名索引与制品由私有 `nacho-update-server` 独立分发。旧公钥已计划轮换，旧安装实例须先人工安装迁移版。
+- **更新来源**：面板 EXE 位于 `nacho-main` GitHub Release；服务端源码与 Agent EXE 共用一次 `nacho-server` GitHub Release。私有 `nacho-update-server` 仅签署更新索引并发送实时通知，不分发制品。旧安装实例须先人工安装迁移版。
 - 各自仓库的 `AGENTS.md` 是该仓的开发约束，跨仓任务两边都要看。
 
 ---

@@ -1,6 +1,6 @@
 # 项目级开发提示词（AGENTS.md）
 
-> 更新分发改为工作区私有的 `../nacho-update-server/`；功能源码推送 GitHub 后，通过工作区根目录 `publish-update.ps1` 选择频道、版本、更新说明并以 SSH/SFTP 发布。历史 `.github/workflows/release-panel.yml`、`publish-update-index.yml` 和 GitHub Pages 链路不再用于产品发布；面板须独立从更新服务器查签名索引。
+> 独立更新服务器 `../nacho-update-server/` 仅签署索引和通知；功能源码推送 GitHub 后，由根目录 `publish-update.ps1` 将面板 EXE 上传 `nacho-main` GitHub Release，回读校验后只通过 SSH/SFTP 发送发布元数据。面板从 GitHub 下载签名索引约束的制品。历史 Pages/Actions 链路不再用于产品发布。
 
 ## 1. 核心原则
 

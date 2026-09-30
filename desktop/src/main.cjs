@@ -190,6 +190,12 @@ function registerWindowBridge() {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
     return updates.installPanel()
   })
+  ipcMain.handle("updates:transfer", (event, kind, serverUrl, apiKey) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
+    return updates.transferRelease(kind, serverUrl, apiKey, (percent) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updates:transfer-progress", percent)
+    })
+  })
 }
 
 function createMainWindow() {
@@ -224,6 +230,9 @@ async function boot() {
   createMainWindow()
   await mainWindow.loadURL(`http://127.0.0.1:${panelPort}/`)
   log("桌面面板页面已加载")
+  updates.subscribe((checked) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updates:available", checked)
+  })
   setTimeout(() => void updates.check().catch((error) => log("发布检查失败", error)), 45_000).unref()
   setInterval(() => void updates.check().catch((error) => log("发布检查失败", error)),
     24 * 60 * 60 * 1000).unref()
@@ -256,6 +265,7 @@ if (!gotLock) {
   })
 
   app.on("before-quit", (event) => {
+    updates.unsubscribe()
     if (isQuitting) return
     isQuitting = true
     if (panelProcess && !panelProcessExited) {

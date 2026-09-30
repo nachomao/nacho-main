@@ -19,6 +19,40 @@ const FILES = {
   agent: /^nacho-agent-\d+\.\d+\.\d+-win-x64\.exe$/,
 }
 const CHANNELS = ["stable", "beta", "alpha"]
+function githubAsset(repo, version, name, asset) {
+  if (!asset || asset.fileName !== name ||
+      asset.url !== `https://github.com/nachomao/${repo}/releases/download/v${version}/${name}` ||
+      !/^[a-f0-9]{64}$/.test(asset.sha256) ||
+      !Number.isSafeInteger(asset.sizeBytes) || asset.sizeBytes < 1 || asset.sizeBytes > 2 * 1024 ** 3) {
+    throw new Error("GitHub 发布制品无效")
+  }
+  return asset
+}
+function normalizeV3(index) {
+  if (Object.keys(index.releases || {}).sort().join(",") !== "panel,server") throw new Error("双仓索引无效")
+  const panel = index.releases.panel, server = index.releases.server
+  for (const item of [panel, server]) {
+    if (!VERSION.test(item?.version) || !/^[a-f0-9]{40}$/.test(item.sourceCommit) ||
+        !item.title?.trim() || !item.notes?.trim() || !Number.isFinite(Date.parse(item.publishedAt))) {
+      throw new Error("双仓发布信息无效")
+    }
+  }
+  const exe = githubAsset("nacho-main", panel.version, `NachoPanel-Setup-${panel.version}.exe`, panel.asset)
+  const source = githubAsset("nacho-server", server.version,
+    `nacho-server-source-${server.version}.tar.gz`, server.source)
+  const agent = githubAsset("nacho-server", server.version,
+    `nacho-agent-${server.version}-win-x64.exe`, server.agent)
+  for (const key of ["minPanelVersion", "minAgentVersion", "minServerVersion"]) {
+    if (!VERSION.test(server[key])) throw new Error("兼容版本无效")
+  }
+  if (panel.authenticodeThumbprint !== undefined &&
+      !/^[A-F0-9]{40}$/.test(panel.authenticodeThumbprint)) throw new Error("面板签名证书指纹无效")
+  return { ...index, releases: {
+    panel: { ...panel, ...exe },
+    server: { ...server, ...source, source, agent },
+    agent: { ...server, ...agent, minServerVersion: server.minServerVersion },
+  } }
+}
 
 function compareVersions(a, b) {
   if (!VERSION.test(a) || !VERSION.test(b)) throw new Error("版本格式无效")
@@ -31,9 +65,10 @@ function verifyIndex(bytes, signature, key = PUBLIC_KEY, channel = "stable") {
   if (!bytes.length || bytes.length > 32768 || signature.length !== 64 ||
       !verify(null, bytes, key, signature)) throw new Error("发布索引签名无效")
   const index = JSON.parse(bytes.toString("utf8"))
-  if (index.schemaVersion !== 2 || index.channel !== channel ||
+  if (![2, 3].includes(index.schemaVersion) || index.channel !== channel ||
       !Number.isSafeInteger(index.sequence) || index.sequence < 1 ||
       !Number.isFinite(Date.parse(index.publishedAt)) || !index.releases) throw new Error("发布索引结构无效")
+  if (index.schemaVersion === 3) return normalizeV3(index)
   for (const component of ["panel", "server", "agent"]) {
     const item = index.releases[component]
     const expectedName = component === "panel" ? `NachoPanel-Setup-${item?.version}.exe` :
@@ -93,6 +128,8 @@ function createUpdater(app) {
   let lastCheck = 0
   let checking = null
   let installing = false
+  let notificationController = null
+  let subscriber = null
 
   function cached() {
     try {
@@ -133,6 +170,47 @@ function createUpdater(app) {
     })().finally(() => { checking = null })
     return checking
   }
+  function subscribe(onRelease) {
+    if (notificationController || UPDATE_ORIGIN === "https://updates.example.invalid") return
+    subscriber = onRelease
+    notificationController = new AbortController()
+    const signal = notificationController.signal
+    void (async () => {
+      while (!signal.aborted) {
+        try {
+          const response = await fetch(`${UPDATE_ORIGIN}/updates/events?channel=${channel}`, { signal })
+          if (!response.ok || !response.body) throw new Error("更新通知连接失败")
+          let buffer = ""
+          for await (const chunk of response.body) {
+            if (signal.aborted) break
+            buffer += Buffer.from(chunk).toString("utf8")
+            if (buffer.length > 4096) throw new Error("更新通知过长")
+            let end
+            while ((end = buffer.indexOf("\n\n")) !== -1) {
+              const event = buffer.slice(0, end)
+              buffer = buffer.slice(end + 2)
+              const data = event.split("\n").find((line) => line.startsWith("data: "))
+              if (data) {
+                try {
+                  const notice = JSON.parse(data.slice(6))
+                  if (notice.channel === channel && Number.isSafeInteger(notice.sequence)) {
+                    // Notification is only a hint; check() re-fetches and verifies the signed index.
+                    const checked = await check(true)
+                    if (!checked.stale && checked.index.sequence >= notice.sequence) onRelease(checked)
+                  }
+                } catch { /* 无效通知不能触发升级 */ }
+              }
+            }
+          }
+        } catch { /* 断线后重连并重新核查索引 */ }
+        if (!signal.aborted) {
+          await check(true).then((checked) => { if (!checked.stale) onRelease(checked) }).catch(() => {})
+          await new Promise((resolve) => setTimeout(resolve, 5000))
+        }
+      }
+    })()
+  }
+  function unsubscribe() { notificationController?.abort(); notificationController = null; subscriber = null }
   async function setChannel(next) {
     if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
     if (!CHANNELS.includes(next)) throw new Error("无效更新频道")
@@ -148,6 +226,11 @@ function createUpdater(app) {
     fs.renameSync(`${statePath}.tmp`, statePath)
     channel = next
     lastCheck = 0
+    if (notificationController) {
+      const callback = subscriber
+      unsubscribe()
+      if (callback) subscribe(callback)
+    }
     return check(true)
   }
 
@@ -217,8 +300,95 @@ function createUpdater(app) {
       installing = false
     }
   }
+  async function transferRelease(kind, serverUrl, apiKey, onProgress) {
+    if (!["server", "agent"].includes(kind) || typeof serverUrl !== "string" ||
+        !/^https?:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(serverUrl) ||
+        typeof apiKey !== "string" || !apiKey || installing) throw new Error("更新传输请求无效")
+    installing = true
+    try {
+      const checked = await check(true)
+      if (checked.stale || checked.index.schemaVersion !== 3) throw new Error("须先取得双仓签名索引")
+      const release = checked.index.releases.server
+      const asset = kind === "server" ? release.source : release.agent
+      const directory = path.join(app.getPath("userData"), "updates")
+      fs.mkdirSync(directory, { recursive: true })
+      const local = path.join(directory, asset.fileName)
+      const temporary = `${local}.download`
+      const response = await fetch(asset.url, { signal: AbortSignal.timeout(20 * 60_000) })
+      if (!response.ok || !response.body) throw new Error(`GitHub 制品下载 HTTP ${response.status}`)
+      let count = 0
+      const hash = createHash("sha256")
+      try {
+        await pipeline(Readable.fromWeb(response.body), new Transform({
+          transform(chunk, _encoding, callback) {
+            count += chunk.length
+            if (count > asset.sizeBytes) return callback(new Error("GitHub 制品超过发布大小"))
+            hash.update(chunk)
+            callback(null, chunk)
+          },
+        }), fs.createWriteStream(temporary, { flags: "w" }))
+        if (count !== asset.sizeBytes || hash.digest("hex") !== asset.sha256) {
+          throw new Error("GitHub 制品大小或 SHA-256 不匹配")
+        }
+        fs.renameSync(temporary, local)
+      } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true }) }
+      const headers = { Authorization: `Bearer ${apiKey}`,
+        "X-Nacho-Panel-Version": app.getVersion(), Accept: "application/json" }
+      async function api(relative, init = {}) {
+        const result = await fetch(`${serverUrl}/api/panel${relative}`, {
+          ...init, headers: { ...headers, ...init.headers }, signal: AbortSignal.timeout(60_000),
+        })
+        const body = await result.json()
+        if (!result.ok || !body.ok) throw new Error(body.message || `传输失败 HTTP ${result.status}`)
+        return body.data
+      }
+      const checkpoint = path.join(directory, `upload-${kind}-${release.version}.json`)
+      let stage = null
+      try {
+        const saved = JSON.parse(fs.readFileSync(checkpoint, "utf8"))
+        if (saved.serverUrl === serverUrl && saved.sha256 === asset.sha256) {
+          const candidate = await api(`/product-updates/stages/${saved.id}`)
+          if (candidate.phase === "uploading" && candidate.version === release.version &&
+              candidate.sha256 === asset.sha256) stage = candidate
+        }
+      } catch { /* 中断前未创建会话 */ }
+      if (!stage) {
+        stage = await api("/product-updates/stages", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, version: release.version }) })
+        fs.writeFileSync(checkpoint, JSON.stringify({ id: stage.id, serverUrl, sha256: asset.sha256 }), {
+          mode: 0o600,
+        })
+      }
+      const handle = fs.openSync(local, "r")
+      try {
+        let offset = stage.offset
+        while (offset < asset.sizeBytes) {
+          const size = Math.min(4 * 1024 * 1024, asset.sizeBytes - offset)
+          const buffer = Buffer.allocUnsafe(size)
+          fs.readSync(handle, buffer, 0, size, offset)
+          try {
+            const next = await api(`/product-updates/stages/${stage.id}/chunks?offset=${offset}`, {
+              method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: buffer,
+            })
+            offset = next.offset
+          } catch (error) {
+            const latest = await api(`/product-updates/stages/${stage.id}`)
+            if (latest.offset === offset) throw error
+            offset = latest.offset
+          }
+          if (onProgress) onProgress(Math.round(offset * 100 / asset.sizeBytes))
+        }
+      } finally { fs.closeSync(handle) }
+      const result = await api(`/product-updates/stages/${stage.id}/commit`, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ panelVersion: app.getVersion() }) })
+      fs.rmSync(checkpoint, { force: true })
+      return result
+    } finally { installing = false }
+  }
 
-  return { check, cached, installPanel, setChannel, getChannel: () => channel }
+  return { check, cached, installPanel, transferRelease, setChannel, subscribe, unsubscribe, getChannel: () => channel }
 }
 
 module.exports = { createUpdater, verifyIndex, compareVersions, INDEX_URL }

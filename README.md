@@ -71,7 +71,7 @@ napl backup list
 napl update check
 ```
 
-配置、密钥、恢复、升级和卸载操作要求 root 或可用的 `sudo`；无终端时不会交互提权。入口为 `/usr/local/bin/napl`，卸载时仅移除指向本次安装的入口。备份默认保存在 `/var/backups/control-server`，升级包使用 Ed25519 签名和 manifest 文件哈希校验。在线升级只读取公开仓库 `nachomao/nacho-server` 的稳定 GitHub Release；没有公开可用 Release 时显示“暂无可用在线版本”。
+配置、密钥、恢复、升级和卸载操作要求 root 或可用的 `sudo`；无终端时不会交互提权。入口为 `/usr/local/bin/napl`，卸载时仅移除指向本次安装的入口。备份默认保存在 `/var/backups/control-server`。新版 `napl update check` 从独立更新服务器查询签名索引，源码制品存放于 `nachomao/nacho-server` 的 GitHub Release；源码安装由面板经受认证的 API 上传后交给独立执行器构建与回滚。旧式预构建包仍验证独立签名和 manifest 哈希。
 
 ## 服务端开发运行
 

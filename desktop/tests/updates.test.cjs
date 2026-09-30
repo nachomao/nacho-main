@@ -57,3 +57,25 @@ test("未签名面板制品仍要求发布索引签名、固定地址和 SHA-256
   }))
   assert.throws(() => verifyIndex(changed, signature, publicKey), /签名无效/)
 })
+test("双仓签名索引只能引用固定 GitHub Release 制品", () => {
+  const asset = (repo, version, fileName) => ({
+    fileName, url: `https://github.com/nachomao/${repo}/releases/download/v${version}/${fileName}`,
+    sha256: "a".repeat(64), sizeBytes: 123,
+  })
+  const version = "1.1.22"
+  const panel = { version: "0.1.5", sourceCommit: "a".repeat(40), title: "面板",
+    notes: "改进", publishedAt: "2026-09-30T00:00:00Z",
+    asset: asset("nacho-main", "0.1.5", "NachoPanel-Setup-0.1.5.exe") }
+  const server = { version, sourceCommit: "b".repeat(40), title: "服务端与 Agent",
+    notes: "改进", publishedAt: "2026-09-30T00:00:00Z",
+    minPanelVersion: "0.1.5", minAgentVersion: "1.1.21", minServerVersion: "1.0.3",
+    source: asset("nacho-server", version, `nacho-server-source-${version}.tar.gz`),
+    agent: asset("nacho-server", version, `nacho-agent-${version}-win-x64.exe`) }
+  const index = { schemaVersion: 3, channel: "stable", sequence: 8,
+    publishedAt: "2026-09-30T00:00:00Z", releases: { panel, server } }
+  const bytes = Buffer.from(JSON.stringify(index))
+  assert.equal(verifyIndex(bytes, sign(null, bytes, privateKey), publicKey).releases.agent.version, version)
+  server.agent.url = "https://example.org/agent.exe"
+  const tampered = Buffer.from(JSON.stringify(index))
+  assert.throws(() => verifyIndex(tampered, sign(null, tampered, privateKey), publicKey), /GitHub 发布制品无效/)
+})

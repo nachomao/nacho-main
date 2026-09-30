@@ -19,7 +19,7 @@ type Entry = {
   title?: string
   notes?: string
 }
-type Index = { releases: { panel: Entry; server: Entry; agent: Entry }; publishedAt: string }
+type Index = { schemaVersion: number; releases: { panel: Entry; server: Entry; agent: Entry }; publishedAt: string }
 type Channel = "stable" | "beta" | "alpha"
 type Check = { index: Index; stale: boolean; currentVersion: string | null; channel: Channel }
 type Runtime = {
@@ -31,7 +31,10 @@ type Runtime = {
   updateStatus: { phase: string; version: string; error?: string } | null
   updateChannel?: Channel
 }
-type UpdateBridge = { version: string; check(force?: boolean): Promise<Check>; setChannel(channel: Channel): Promise<Check>; installPanel(): Promise<{ phase: string; version: string }> }
+type UpdateBridge = { version: string; check(force?: boolean): Promise<Check>; setChannel(channel: Channel): Promise<Check>; installPanel(): Promise<{ phase: string; version: string }>;
+  transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string): Promise<unknown>;
+  onAvailable?(callback: (check: Check) => void): (() => void) | undefined;
+  onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined }
 
 declare global { interface Window { nachoUpdates?: UpdateBridge } }
 
@@ -44,7 +47,7 @@ function compare(a: string | null, b: string) {
 }
 
 export function UpdatesPanel() {
-  const { apiRequest } = useServerData()
+  const { apiRequest, transferProductUpdate } = useServerData()
   const { serverSource } = useOnboarding()
   const { confirm } = useConfirm()
   const [check, setCheck] = useState<Check | null>(null)
@@ -52,6 +55,7 @@ export function UpdatesPanel() {
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [progress, setProgress] = useState<number | null>(null)
   async function changeChannel(next: Channel) {
     if (busy || next === check?.channel) return
     const prior = check?.channel || "stable"
@@ -117,7 +121,9 @@ export function UpdatesPanel() {
   useEffect(() => {
     void refresh()
     const timer = window.setInterval(() => void refresh(), 60_000)
-    return () => window.clearInterval(timer)
+    const unsubscribe = window.nachoUpdates?.onAvailable?.(() => void refresh(true))
+    const stopProgress = window.nachoUpdates?.onTransferProgress?.(setProgress)
+    return () => { window.clearInterval(timer); unsubscribe?.(); stopProgress?.() }
   }, [refresh])
 
   async function installPanel() {
@@ -153,12 +159,36 @@ export function UpdatesPanel() {
       }
       if (serverSource?.mode === "local") {
         await updateLocalControl(check.index.releases.server.version, check.currentVersion)
+      } else if (check.index.schemaVersion === 3) {
+        setServerError("源码传输完成后服务端将短暂重启；正在准备并验证源码。")
+        await transferProductUpdate("server")
       } else {
         await apiRequest("/product-updates/server", {
           method: "POST",
           body: JSON.stringify({ version: check.index.releases.server.version, panelVersion: check.currentVersion }),
         })
       }
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      let completed = false
+      for (let attempt = 0; attempt < 240; attempt++) {
+        try {
+          const state = await apiRequest<Runtime>("/runtime-info")
+          setRuntime(state)
+          if (state.version === check.index.releases.server.version &&
+              (serverSource?.mode === "local" || state.updateStatus?.phase === "healthy")) {
+            completed = true
+            break
+          }
+          if (state.updateStatus?.phase === "failed" || state.updateStatus?.phase === "rolled-back") {
+            throw new Error(`升级失败或已回滚：${state.updateStatus.error || state.updateStatus.phase}`)
+          }
+        } catch (error) {
+          if (error instanceof Error && /失败或已回滚/.test(error.message)) throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000))
+      }
+      if (!completed) throw new Error("服务端重启和健康验证超时，请检查升级状态")
+      setServerError(null)
       await refresh(true)
     } catch (error) {
       setServerError(error instanceof Error ? error.message : "升级请求失败")
@@ -169,9 +199,13 @@ export function UpdatesPanel() {
     if (!runtime || busy) return
     setBusy("agent")
     try {
-      await apiRequest("/product-updates/agent-artifact", {
-        method: "POST", signal: AbortSignal.timeout(20 * 60_000),
-      })
+      if (check?.index.schemaVersion === 3) {
+        await transferProductUpdate("agent")
+      } else {
+        await apiRequest("/product-updates/agent-artifact", {
+          method: "POST", signal: AbortSignal.timeout(20 * 60_000),
+        })
+      }
       await refresh(true)
     } catch (error) {
       setServerError(error instanceof Error ? error.message : "Agent 制品准备失败")
@@ -194,7 +228,7 @@ export function UpdatesPanel() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">产品更新</h2>
-          <p className="text-xs text-muted-foreground">面板直接检查签名发布索引；服务端与 Agent 独立更新。</p>
+          <p className="text-xs text-muted-foreground">更新服务器签署通知；面板和服务端从 GitHub 发布制品升级。</p>
         </div>
         <button type="button" onClick={() => void refresh(true)} className="rounded-xl border border-border px-4 py-2 text-sm hover:bg-surface">
           <RefreshCw className="mr-2 inline size-4" />检查更新
@@ -212,7 +246,8 @@ export function UpdatesPanel() {
         当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
       </p>}
       {serverError && <p role="status" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{serverError}</p>}
-      <div className="grid gap-3 lg:grid-cols-3">
+      {progress !== null && busy && <p role="status" className="text-xs text-muted-foreground">制品传输 {progress}%</p>}
+      <div className="grid gap-3 lg:grid-cols-2">
         <UpdateCard icon={<Monitor className="size-5" />} title="Windows 面板" current={check?.currentVersion || (desktop ? "检测中" : "浏览器开发版")}
           release={releases?.panel} note={!desktop ? "安装新版需使用 Windows 桌面面板。" : panelNew ? "可安装新版" : "当前版本"}
           action="下载并安装" disabled={!panelNew || !desktop || Boolean(check?.stale) || Boolean(busy)} onClick={() => void installPanel()} />
@@ -221,18 +256,21 @@ export function UpdatesPanel() {
           action={serverSource?.mode === "local" ? "升级本机服务" : "升级云端服务"}
           disabled={!serverNew || Boolean(check?.stale) || panelRequired || !desktop ||
             (serverSource?.mode !== "local" && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || Boolean(busy)}
-          onClick={() => void installServer()} />
-        <UpdateCard icon={<HardDriveDownload className="size-5" />} title="Agent 制品" current={runtime?.agentArtifactVersion || "未准备"}
-          release={releases?.agent} note="准备制品后，仍须由使用者逐台或批量手动下发。"
-          action="准备新版制品" disabled={!agentNew || Boolean(check?.stale) || !runtime || Boolean(busy)} onClick={() => void syncAgent()} />
+          onClick={() => void installServer()}
+          extra={<div className="border-t border-border pt-3 text-xs">
+            <p className="flex items-center gap-2 font-semibold"><HardDriveDownload className="size-4" />同批 Agent 制品</p>
+            <p className="mt-2 text-muted-foreground">已准备 {runtime?.agentArtifactVersion || "无"} · 发布 {releases?.agent.version || "未取得"}。仍需逐台或批量手动下发。</p>
+            <button type="button" disabled={!agentNew || Boolean(check?.stale) || !runtime || Boolean(busy)}
+              onClick={() => void syncAgent()} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40">准备新版制品</button>
+          </div>} />
       </div>
       <Link href="/clients" className="self-start text-sm text-primary hover:underline">前往「客户端 → 客户端更新」手动下发 Agent 更新 →</Link>
     </div>
   )
 }
 
-function UpdateCard({ icon, title, current, release, note, action, disabled, onClick }: {
-  icon: React.ReactNode; title: string; current: string; release?: Entry; note: string; action: string; disabled: boolean; onClick: () => void
+function UpdateCard({ icon, title, current, release, note, action, disabled, onClick, extra }: {
+  icon: React.ReactNode; title: string; current: string; release?: Entry; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode
 }) {
   return <section className="flex min-h-52 flex-col gap-3 rounded-2xl border border-border bg-card p-5">
     <div className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</div>
@@ -241,6 +279,7 @@ function UpdateCard({ icon, title, current, release, note, action, disabled, onC
     <p className="min-h-9 text-xs text-muted-foreground">{note}</p>
     {release?.title && <p className="text-xs font-medium">{release.title}</p>}
     {release?.notes && <p className="max-h-24 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{release.notes}</p>}
+    {extra}
     <button type="button" disabled={disabled} onClick={onClick} className="mt-auto rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">
       <Download className="mr-2 inline size-4" />{action}
     </button>
