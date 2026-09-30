@@ -1,0 +1,65 @@
+{
+  "name": "nacho-panel-desktop",
+  "version": "0.1.4",
+  "private": true,
+  "description": "Nacho 面板 Windows 安装版桌面封装",
+  "main": "app/main.cjs",
+  "scripts": {
+    "bump-version": "node scripts/bump-version.cjs",
+    "build:panel": "node scripts/build-panel.cjs",
+    "stage": "node scripts/stage-app.cjs",
+    "build": "pnpm run build:panel && pnpm run stage && electron-builder --win nsis",
+    "start": "pnpm run stage && electron .",
+    "pack": "pnpm run stage && electron-builder --dir",
+    "test": "pnpm run stage && node --test tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.nacho.panel",
+    "productName": "NachoPanel",
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "asar": true,
+    "directories": {
+      "app": "app",
+      "output": "dist/NachoPanel"
+    },
+    "files": [
+      "**/*",
+      "!panel/**",
+      "!panel-deps/**"
+    ],
+    "extraResources": [
+      {
+        "from": "app/panel",
+        "to": "panel"
+      },
+      {
+        "from": "app/panel-deps",
+        "to": "panel-deps"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "NachoPanel-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "packageManager": "pnpm@10.28.2"
+}

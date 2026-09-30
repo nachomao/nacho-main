@@ -148,7 +148,7 @@ export function Sidebar() {
     item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
 
   return (
-    <aside className="flex w-20 shrink-0 flex-col items-center justify-between py-6">
+    <aside className="electron-drag-region flex w-20 shrink-0 flex-col items-center justify-between py-6">
       <div className="flex flex-col items-center gap-8">
         {/* Logo - NachoNeko（全局品牌 Logo 组件） */}
         <div className="group flex h-11 w-11 cursor-pointer items-center justify-center transition-transform duration-300 hover:scale-110">

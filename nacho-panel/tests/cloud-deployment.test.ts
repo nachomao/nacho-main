@@ -1,15 +1,11 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
-import path from "node:path"
+import { readFile } from "node:fs/promises"
 import { test } from "node:test"
 import { NextRequest } from "next/server"
 import type { Client } from "ssh2"
-import { extract } from "tar"
 import { POST } from "../app/api/cloud-deployment/route"
-import { CloudDeploymentError, createBundle, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
+import { buildCloudInstallCommand, CloudDeploymentError, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
 
 const input = {
   action: "deploy",
@@ -62,41 +58,14 @@ test("SSH credentials and confirmed fingerprint have strict shapes", () => {
   }
 })
 
-test("bundle contains only required source and verified Agent artifact, never local secrets", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "nacho-bundle-test-"))
-  try {
-    const server = path.join(root, "server")
-    const unpack = path.join(root, "unpack")
-    await mkdir(path.join(server, "artifacts/windows"), { recursive: true })
-    await mkdir(path.join(server, "src"))
-    await mkdir(path.join(server, "deploy"))
-    await mkdir(unpack)
-    const fileName = "nacho-agent-1.2.3-win-x64.exe"
-    const artifact = Buffer.from("released-agent")
-    await writeFile(path.join(server, "artifacts/windows", fileName), artifact)
-    await writeFile(path.join(server, "artifacts/windows/latest.json"), JSON.stringify({
-      fileName, sha256: createHash("sha256").update(artifact).digest("hex"),
-    }))
-    await writeFile(path.join(server, "package.json"), "{}")
-    await writeFile(path.join(server, "package-lock.json"), "{}")
-    await writeFile(path.join(server, "tsconfig.json"), "{}")
-    await writeFile(path.join(server, "src/index.ts"), "export {}")
-    await writeFile(path.join(server, "deploy/install.sh"), "#!/bin/sh")
-    await writeFile(path.join(server, "deploy/uninstall.sh"), "#!/bin/sh")
-    await writeFile(path.join(server, "deploy/napl"), "#!/usr/bin/env bash")
-    await writeFile(path.join(server, "deploy/napl-release-public.pem"), "test public key")
-    await writeFile(path.join(server, ".env"), "PANEL_API_KEY=secret")
-    const bundle = path.join(root, "bundle.tar.gz")
-    await createBundle(server, bundle)
-    await extract({ file: bundle, cwd: unpack })
-    assert.deepEqual(await readFile(path.join(unpack, "artifacts/windows", fileName)), artifact)
-    assert.equal(await readFile(path.join(unpack, "deploy/napl"), "utf8"), "#!/usr/bin/env bash")
-    await assert.rejects(access(path.join(unpack, ".env")))
-    await writeFile(path.join(server, "artifacts/windows/latest.json"), JSON.stringify({ fileName, sha256: "0".repeat(64) }))
-    await assert.rejects(createBundle(server, bundle), /SHA-256/)
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
+test("cloud install gets the server source from GitHub on the target host", () => {
+  const command = buildCloudInstallCommand("/tmp/nacho-deploy.ABC123")
+  assert.match(command, /apt-get update -y/)
+  assert.match(command, /dnf install -y git/)
+  assert.match(command, /yum install -y git/)
+  assert.match(command, /git clone --depth 1 --branch main https:\/\/github\.com\/nachomao\/nacho-server\.git/)
+  assert.match(command, /nacho-server\/deploy\/install\.sh/)
+  assert.doesNotMatch(command, /bundle\.tar\.gz/)
 })
 
 test("Windows local endpoint enforces same-origin and validates input before SSH", async () => {

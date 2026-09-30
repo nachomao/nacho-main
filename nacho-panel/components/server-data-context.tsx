@@ -15,6 +15,7 @@ import type { Client } from "@/components/clients/client-data"
 import { defaultServerBaseUrl, normalizeServerBaseUrl } from "@/lib/server-connection"
 import { canApplyNotificationSnapshot } from "@/lib/notification-state"
 import { useLocalSettings } from "@/components/local-settings-provider"
+import { PANEL_VERSION } from "@/lib/panel-version"
 
 export type Overview = {
   clients: {
@@ -124,6 +125,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
           headers: {
             Accept: "application/json",
             Authorization: `Bearer ${connection.key}`,
+            "X-Nacho-Panel-Version": window.nachoUpdates?.version ?? PANEL_VERSION,
             ...(init?.body ? { "Content-Type": "application/json" } : {}),
             ...init?.headers,
           },
@@ -150,6 +152,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
         request.timeout = 60 * 60 * 1000
         request.setRequestHeader("Accept", "application/json")
         request.setRequestHeader("Authorization", `Bearer ${connection.key}`)
+        request.setRequestHeader("X-Nacho-Panel-Version", window.nachoUpdates?.version ?? PANEL_VERSION)
         request.setRequestHeader("Content-Type", "application/octet-stream")
         request.upload.onprogress = (event) => {
           if (event.lengthComputable && event.total > 0) onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)))

@@ -2,6 +2,60 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+.electron-drag-region {
+  -webkit-app-region: drag;
+}
+
+.electron-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.electron-drag-region button,
+.electron-drag-region a,
+.electron-drag-region input,
+.electron-drag-region textarea,
+.electron-drag-region select,
+.electron-drag-region [role="button"],
+.electron-drag-region [contenteditable="true"] {
+  -webkit-app-region: no-drag;
+}
+
+.electron-window-drag-edge {
+  position: fixed;
+  z-index: 250;
+  -webkit-app-region: drag;
+}
+
+.electron-window-drag-edge-top,
+.electron-window-drag-edge-bottom {
+  right: 0;
+  left: 0;
+  height: 32px;
+}
+
+.electron-window-drag-edge-top {
+  top: 0;
+}
+
+.electron-window-drag-edge-bottom {
+  bottom: 0;
+}
+
+.electron-window-drag-edge-left,
+.electron-window-drag-edge-right {
+  top: 0;
+  bottom: 0;
+  width: 32px;
+}
+
+.electron-window-drag-edge-left {
+  left: 0;
+}
+
+.electron-window-drag-edge-right {
+  right: 0;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -118,6 +172,22 @@
   * {
     @apply border-border;
   }
+
+  html,
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"],
+  pre,
+  code {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   html, body {
     @apply bg-background text-foreground font-sans;
     height: 100%;

@@ -26,10 +26,12 @@ export type LocalControlServerStatus = {
   firewallNeedsCleanup: boolean
   portOwnerPid: number | null
   serverDir: string
+  version: string | null
   databasePath: string
   localAddresses: string[]
   connection: { api: string; agentApi: string; key: string } | null
   prerequisites: {
+    git: boolean
     node: boolean
     nodeVersion: string
     npm: boolean
@@ -45,7 +47,7 @@ export type LocalControlInstallOptions = {
   port?: number
 }
 
-export type LocalControlAction = "install" | "start" | "stop" | "restart" | "repair"
+export type LocalControlAction = "install" | "start" | "stop" | "restart" | "repair" | "update"
 
 export type LocalControlInstallLog = {
   stream: "system" | "command" | "stdout" | "stderr"

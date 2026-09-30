@@ -368,7 +368,7 @@ export function LocalControlServerManager({
     ? { label: "正在安装", className: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300" }
     : statusCopy[status.runtimeStatus]
   const runtimeMissing = !status.prerequisites.node || !status.prerequisites.npm
-  const canInstall = status.platformSupported && status.prerequisites.source
+  const canInstall = status.platformSupported
   const runtimeStateUnavailable = status.runtimeStatus === "unhealthy" && !status.running
   const showInstallConsole = operation === "install" || installFailed
   const activeStage: LocalControlStage = showInstallConsole ? "install" : status.installed ? "installed" : "setup"
@@ -437,7 +437,8 @@ export function LocalControlServerManager({
                     label="npm"
                     detail={status.prerequisites.npm ? "命令可用" : "安装时从 Node.js 目录重新检测"}
                   />
-                  <Prerequisite glass={onboarding} ready={status.prerequisites.source} label="server 项目" detail={status.prerequisites.source ? "源码与管理脚本完整" : "目录或文件不完整"} />
+                  <Prerequisite glass={onboarding} ready={status.prerequisites.git} label="Git" detail={status.prerequisites.git ? "命令可用" : "安装时自动下载并安装"} />
+                  <Prerequisite glass={onboarding} ready={status.prerequisites.source} label="GitHub 服务端源码" detail={status.prerequisites.source ? "源码与管理脚本完整" : "安装时从 GitHub 获取"} />
                 </div>
               </div>
 
@@ -560,7 +561,7 @@ export function LocalControlServerManager({
                   <RotateCw className="size-4" aria-hidden="true" />重启
                 </Button>
                 <Button variant="outline" disabled={busy || runtimeStateUnavailable} onClick={() => void handleAction("repair")}>
-                  <Wrench className="size-4" aria-hidden="true" />修复 / 升级
+                  <Wrench className="size-4" aria-hidden="true" />修复
                 </Button>
                 {surface === "onboarding" && status.healthy && status.connection && (
                   <Button variant="outline" className="h-9 rounded-xl sm:ml-auto" disabled={busy} onClick={() => onConnected?.({ mode: "local", ...status.connection! })}>

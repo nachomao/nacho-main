@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { SlidersHorizontal, Bell, ShieldCheck, Info, Save, RotateCcw, Check, Sparkles, Network } from "lucide-react"
+import { SlidersHorizontal, Bell, ShieldCheck, Info, Save, RotateCcw, Check, Sparkles, Network, RefreshCw } from "lucide-react"
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control"
 import { GeneralPanel } from "./general-panel"
 import { NotificationsPanel } from "./notifications-panel"
@@ -9,16 +9,18 @@ import { SecurityPanel } from "./security-panel"
 import { AboutPanel } from "./about-panel"
 import { AIPanel } from "./ai-panel"
 import { ConnectionPanel } from "./connection-panel"
+import { UpdatesPanel } from "./updates-panel"
 import { defaultSettings, type SettingsState } from "./settings-data"
 import { cn } from "@/lib/utils"
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { useServerData } from "@/components/server-data-context"
 
-type TabId = "general" | "connection" | "notifications" | "security" | "ai" | "about"
+type TabId = "general" | "connection" | "notifications" | "security" | "ai" | "updates" | "about"
 
 const tabs: readonly SegmentedOption<TabId>[] = [
   { id: "general", label: "常规", icon: SlidersHorizontal },
   { id: "connection", label: "连接", icon: Network },
+  { id: "updates", label: "更新", icon: RefreshCw },
   { id: "notifications", label: "通知", icon: Bell },
   { id: "security", label: "安全", icon: ShieldCheck },
   { id: "ai", label: "AI Mode", icon: Sparkles },
@@ -96,9 +98,9 @@ export function SettingsView() {
   const handleReset = () => setSettings(saved)
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
       {/* 选项卡 */}
-      <SegmentedControl options={tabs} value={tab} onChange={switchTab} />
+      <SegmentedControl options={tabs} value={tab} onChange={switchTab} className="min-w-0 overflow-x-auto" />
 
       {/* 面板内容（可滚动，切换时按药卡方向平移进场） */}
       <div key={tab} className={cn("min-h-0 flex-1 overflow-auto pb-24 pr-1", enterAnim)}>
@@ -121,11 +123,12 @@ export function SettingsView() {
         )}
         {/* AI Mode 面板使用独立的共享存储，改动即时生效，无需保存条 */}
         {tab === "ai" && <AIPanel />}
-        {tab === "about" && <AboutPanel />}
+        {tab === "updates" && <UpdatesPanel />}
+        {tab === "about" && <AboutPanel onOpenUpdates={() => switchTab("updates")} />}
       </div>
 
       {/* 底部保存条：有改动时浮现（AI Mode 即时生效，不走保存流程） */}
-      {tab !== "about" && tab !== "ai" && tab !== "connection" && (
+      {tab !== "about" && tab !== "ai" && tab !== "connection" && tab !== "updates" && (
         <div
           className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-4"
           style={{ zIndex: 40 }}

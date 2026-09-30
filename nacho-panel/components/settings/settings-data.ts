@@ -137,11 +137,8 @@ export const initialApiKeys: ApiKey[] = [
 /* 关于页信息 */
 export const aboutInfo = {
   panelName: "NachoNeko 控制面板",
-  serverVersion: "v2.6.1",
-  buildDate: "2026-07-01",
   license: "AGPL-3.0",
   framework: "Next.js 16 · React 19",
   uiLibrary: "shadcn/ui · Tailwind CSS v4",
   runtime: "Node.js 22 LTS",
-  commit: "a1b2c3d",
 }

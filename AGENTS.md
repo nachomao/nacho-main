@@ -1,5 +1,7 @@
 # 项目级开发提示词（AGENTS.md）
 
+> 更新分发改为工作区私有的 `../nacho-update-server/`；功能源码推送 GitHub 后，通过工作区根目录 `publish-update.ps1` 选择频道、版本、更新说明并以 SSH/SFTP 发布。历史 `.github/workflows/release-panel.yml`、`publish-update-index.yml` 和 GitHub Pages 链路不再用于产品发布；面板须独立从更新服务器查签名索引。
+
 ## 1. 核心原则
 
 - 本项目处于持续开发阶段。每次任务均以当前工作区源码、配置、测试和实际运行状态为准。
@@ -162,6 +164,17 @@ Pop-Location
 - 小范围修改先运行对应测试，再运行全量测试与 TypeScript 检查。
 - UI 变更还需在真实浏览器访问 `http://localhost:3000`，核对目标页面、控制台、网络请求、桌面和 `390x844` 视口。
 - 已有 dev 服务运行时，构建可能改写 `nacho-panel/.next/`；先确认运行进程，必要时在独立副本构建并保持原 dev 服务状态。
+
+**每次修改面板相关代码后，必须重新测试并重新打包 Windows EXE。** 面板相关代码包括 `nacho-panel/`、`desktop/` 以及面板打包配置。除上述面板测试、类型检查和 Next.js 构建外，还必须执行：
+
+```powershell
+Push-Location desktop
+pnpm test
+pnpm build
+Pop-Location
+```
+
+`desktop/pnpm build` 会重新构建面板、生成 Electron 安装包，并必须核对 `desktop/dist/NachoPanel/NachoPanel-Setup-<version>.exe` 已更新；只执行 `nacho-panel/pnpm build` 不算完成。UI 修改仍需完成真实浏览器与 `390x844` 视口验证。
 
 ### 7.2 服务端：按部署模式验证
 

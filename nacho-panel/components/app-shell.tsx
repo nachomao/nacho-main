@@ -32,7 +32,7 @@ function ShellContent({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="h-full w-full overflow-hidden bg-[oklch(0.14_0.02_150)] p-3 sm:p-5"
+      className="electron-drag-region h-full w-full overflow-hidden bg-[oklch(0.14_0.02_150)] p-3 sm:p-5"
       style={{
         // AI Mode 向后退（缩小），引导覆盖时向前贴（放大）——两种退场姿态方向相反
         transform: covered ? "scale(1.08)" : shellRecessed ? "scale(0.94)" : "scale(1)",
@@ -44,7 +44,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       }}
       aria-hidden={covered || shellRecessed}
     >
-      <div className="relative isolate flex h-full gap-2 overflow-hidden rounded-[2rem] bg-background/92 p-3 sm:p-4">
+      <div className="electron-no-drag relative isolate flex h-full min-w-0 gap-2 overflow-hidden rounded-[2rem] bg-background/92 p-3 sm:p-4">
         <Orb
           className="pointer-events-none absolute inset-0 z-0 rounded-[2rem] opacity-[0.35]"
           hoverIntensity={0}
@@ -53,7 +53,7 @@ function ShellContent({ children }: { children: ReactNode }) {
           forceHoverState={false}
           backgroundColor="#000000"
         />
-        <div className="relative z-10 flex min-h-0 flex-1 gap-2">
+        <div className="relative z-10 flex min-h-0 min-w-0 flex-1 gap-2">
           <Sidebar />
 
           <ClientTabsProvider>
@@ -61,7 +61,7 @@ function ShellContent({ children }: { children: ReactNode }) {
               <TasksProvider>
                 <LogsProvider>
                   <TopbarActionsProvider>
-                    <main className="flex flex-1 flex-col gap-4 overflow-hidden pr-1 pt-2">
+                    <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden pr-1 pt-2">
                       <Topbar />
                       <PageTransition>{children}</PageTransition>
                     </main>
@@ -94,6 +94,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </StartupMotionProvider>
       </ServerDataProvider>
       <Onboarding />
+      <div className="electron-window-drag-edge electron-window-drag-edge-top" aria-hidden="true" />
+      <div className="electron-window-drag-edge electron-window-drag-edge-right" aria-hidden="true" />
+      <div className="electron-window-drag-edge electron-window-drag-edge-bottom" aria-hidden="true" />
+      <div className="electron-window-drag-edge electron-window-drag-edge-left" aria-hidden="true" />
     </OnboardingProvider>
   )
 }

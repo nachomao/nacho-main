@@ -1,10 +1,13 @@
-import { randomBytes, randomUUID } from "node:crypto"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { createServer } from "node:net"
-import { constants } from "node:fs"
+import { constants, createWriteStream } from "node:fs"
 import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import { Readable, Transform } from "node:stream"
+import { pipeline } from "node:stream/promises"
 import os from "node:os"
 import path from "node:path"
+import { fetchSignedProductIndex } from "./signed-product-index"
 import { promisify } from "node:util"
 import {
   LOCAL_CONTROL_UNINSTALL_CONFIRMATION,
@@ -21,6 +24,8 @@ const MAX_PORT = 65535
 const HEALTH_TIMEOUT_MS = 15_000
 const POWERSHELL_TIMEOUT_MS = 60_000
 const STATUS_POWERSHELL_TIMEOUT_MS = 5_000
+export const NACHO_SERVER_REPOSITORY = "https://github.com/nachomao/nacho-server.git"
+export const NACHO_SERVER_BRANCH = "main"
 
 export class LocalControlServerError extends Error {
   constructor(message: string, readonly status = 500) {
@@ -104,25 +109,148 @@ function localIpv4Addresses() {
   return [...addresses]
 }
 
-function serverDirectoryCandidates() {
-  if (process.env.NACHO_LOCAL_SERVER_DIR) return [path.resolve(process.env.NACHO_LOCAL_SERVER_DIR)]
+function managedServerDirectory() {
+  if (process.env.NACHO_LOCAL_SERVER_DIR) return path.resolve(process.env.NACHO_LOCAL_SERVER_DIR)
+  const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local")
+  return path.join(localAppData, "NachoPanel", "server")
+}
+
+function legacyServerDirectoryCandidates() {
   return [path.resolve(process.cwd(), "server"), path.resolve(process.cwd(), "..", "server")]
 }
 
+async function isTrustedServerDirectory(candidate: string) {
+  if (path.basename(candidate).toLowerCase() !== "server") return false
+  try {
+    const manifest = JSON.parse(await readFile(path.join(candidate, "package.json"), "utf8")) as { name?: string }
+    return manifest.name === "nacho-server" &&
+      await exists(path.join(candidate, "src", "index.ts")) &&
+      await exists(path.join(candidate, "deploy", "windows"))
+  } catch {
+    return false
+  }
+}
+
 export async function resolveLocalServerDirectory() {
-  for (const candidate of serverDirectoryCandidates()) {
-    if (path.basename(candidate).toLowerCase() !== "server") continue
-    try {
-      const manifest = JSON.parse(await readFile(path.join(candidate, "package.json"), "utf8")) as { name?: string }
-      if (manifest.name !== "nacho-server") continue
-      if (!(await exists(path.join(candidate, "src", "index.ts")))) continue
-      if (!(await exists(path.join(candidate, "deploy", "windows")))) continue
+  const candidates = process.env.NACHO_LOCAL_SERVER_DIR
+    ? [managedServerDirectory()]
+    : [managedServerDirectory(), ...legacyServerDirectoryCandidates()]
+  for (const candidate of candidates) {
+    if (await isTrustedServerDirectory(candidate)) return candidate
+  }
+  throw new LocalControlServerError("未找到可信的 server 项目目录，请先从 GitHub 获取服务端代码", 404)
+}
+
+async function resolveManagementServerDirectory() {
+  const managed = managedServerDirectory()
+  if (await isTrustedServerDirectory(managed)) return managed
+
+  // 兼容旧版已安装实例：只有检测到旧目录确实承载过本地服务时才继续使用。
+  for (const candidate of legacyServerDirectoryCandidates()) {
+    if (!(await isTrustedServerDirectory(candidate))) continue
+    if (await exists(managementPaths(candidate).env) || await exists(managementPaths(candidate).distEntry)) {
       return candidate
-    } catch {
-      // 继续检查下一个可信候选目录。
     }
   }
-  throw new LocalControlServerError("未找到可信的 server 项目目录", 404)
+  return managed
+}
+
+async function isGitAvailable() {
+  try {
+    await execFileAsync("git", ["--version"], { timeout: 10_000, windowsHide: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function gitCloneArguments(destination: string) {
+  return ["clone", "--depth", "1", "--branch", NACHO_SERVER_BRANCH, NACHO_SERVER_REPOSITORY, destination]
+}
+
+async function installGitForWindows(onProgress?: LocalControlProgressReporter) {
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    "$winget = Get-Command winget.exe -ErrorAction SilentlyContinue",
+    "if ($winget) { & $winget.Source install --id Git.Git --exact --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity; if ($LASTEXITCODE -ne 0) { throw \"winget 安装 Git 失败（退出码 $LASTEXITCODE）\" }; exit 0 }",
+    "$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -TimeoutSec 60",
+    "$asset = $release.assets | Where-Object { $_.name -match '64-bit.exe$' } | Select-Object -First 1",
+    "if (-not $asset) { throw '未找到 Git for Windows 安装包' }",
+    "$installer = Join-Path $env:TEMP $asset.name",
+    "Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer -UseBasicParsing -TimeoutSec 900",
+    "$process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' -Wait -PassThru",
+    "Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue",
+    "if ($process.ExitCode -ne 0) { throw \"Git for Windows 安装失败（退出码 $($process.ExitCode)）\" }",
+  ].join("; ")
+  reportProgress(onProgress, "system", "未检测到 Git，正在下载并静默安装 Git for Windows…\n")
+  await runExecutable("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", command], process.cwd(), 15 * 60_000, onProgress)
+  const gitCandidates = [
+    path.join(process.env.ProgramFiles || "", "Git", "cmd"),
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "cmd"),
+  ].filter(Boolean)
+  process.env.PATH = [...gitCandidates, process.env.PATH || ""].join(path.delimiter)
+}
+
+async function ensureGit(onProgress?: LocalControlProgressReporter) {
+  if (await isGitAvailable()) {
+    reportProgress(onProgress, "system", "已检测到 Git。\n")
+    return
+  }
+  if (process.platform !== "win32") throw new LocalControlServerError("当前系统未检测到 Git，请先安装 Git", 409)
+  await installGitForWindows(onProgress)
+  if (!(await isGitAvailable())) throw new LocalControlServerError("Git 安装完成后仍未检测到 git 命令", 409)
+  reportProgress(onProgress, "system", "Git 安装完成。\n")
+}
+
+async function validateClonedServerDirectory(serverDir: string) {
+  if (!(await isTrustedServerDirectory(serverDir))) {
+    throw new LocalControlServerError("GitHub 服务端源码不完整或项目名不匹配", 502)
+  }
+  const required = [
+    path.join(serverDir, "package-lock.json"),
+    path.join(serverDir, "deploy", "windows", "local-control-server.ps1"),
+    path.join(serverDir, "deploy", "windows", "start-local-control-server.cjs"),
+  ]
+  if (!(await Promise.all(required.map(exists))).every(Boolean)) {
+    throw new LocalControlServerError("GitHub 服务端源码缺少 Windows 管理文件", 502)
+  }
+}
+
+async function cloneServerSource(
+  serverDir: string,
+  onProgress?: LocalControlProgressReporter,
+  replaceExisting = false,
+) {
+  await ensureGit(onProgress)
+  const parent = path.dirname(serverDir)
+  await mkdir(parent, { recursive: true })
+  const temporary = `${serverDir}.download-${randomUUID()}`
+  const backup = replaceExisting && await exists(serverDir) ? `${serverDir}.backup-${randomUUID()}` : null
+  try {
+    reportProgress(onProgress, "system", `正在从 GitHub 获取服务端代码（${NACHO_SERVER_BRANCH}）…\n`)
+    await runExecutable("git", gitCloneArguments(temporary), parent, 15 * 60_000, onProgress)
+    await validateClonedServerDirectory(temporary)
+    if (backup) await rename(serverDir, backup)
+    await rename(temporary, serverDir)
+    // Git 仓库历史制品不属于服务端升级；保留此前已验证的 Agent 制品。
+    await rm(path.join(serverDir, "artifacts"), { recursive: true, force: true })
+    if (backup) {
+      for (const item of [".env", "data", ".nacho-local", ".nacho-runtime", "artifacts"]) {
+        const previous = path.join(backup, item)
+        if (await exists(previous)) await cp(previous, path.join(serverDir, item), { recursive: true })
+      }
+    }
+    await mkdir(path.join(serverDir, "artifacts", "windows"), { recursive: true })
+    reportProgress(onProgress, "system", "GitHub 服务端源码校验完成。\n")
+    return backup
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true })
+    if (backup && await exists(backup)) {
+      await rm(serverDir, { recursive: true, force: true })
+      await rename(backup, serverDir)
+    }
+    throw error
+  }
 }
 
 function managementPaths(serverDir: string) {
@@ -381,6 +509,7 @@ async function runPowerShell(
 
 async function windowsRuntimeState(serverDir: string, port = DEFAULT_PORT): Promise<WindowsRuntimeState> {
   if (process.platform !== "win32") return {}
+  if (!(await exists(managementPaths(serverDir).script))) return {}
   try {
     const { stdout } = await runPowerShell(serverDir, "Status", port, STATUS_POWERSHELL_TIMEOUT_MS)
     const line = stdout.trim().split(/\r?\n/).at(-1)
@@ -447,52 +576,18 @@ async function waitForHealth(serverDir: string, port: number) {
 }
 
 export async function getLocalControlServerStatus(): Promise<LocalControlServerStatus> {
-  let serverDir: string
-  try {
-    serverDir = await resolveLocalServerDirectory()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "未找到 server 项目目录"
-    const platformSupported = process.platform === "win32"
-    return {
-      platformSupported,
-      runtimeStatus: platformSupported ? "not-installed" : "unsupported",
-      installed: false,
-      running: false,
-      healthy: false,
-      needsRepair: false,
-      pid: null,
-      startedAt: null,
-      autoStartEnabled: false,
-      accessMode: "loopback",
-      host: "127.0.0.1",
-      port: DEFAULT_PORT,
-      firewallEnabled: false,
-      firewallNeedsCleanup: false,
-      portOwnerPid: null,
-      serverDir: "",
-      databasePath: "",
-      localAddresses: [],
-      connection: null,
-      prerequisites: {
-        node: false,
-        nodeVersion: "未检测到",
-        npm: false,
-        source: false,
-        installerAvailable: false,
-      },
-      issues: [message],
-    }
-  }
+  const serverDir = await resolveManagementServerDirectory()
 
   const paths = managementPaths(serverDir)
   const values = await readEnvironment(serverDir)
   const port = portFromEnvironment(values)
-  const [envExists, distExists, lockExists, scriptExists, launcherExists, runtime] = await Promise.all([
+  const [envExists, distExists, lockExists, scriptExists, launcherExists, git, runtime] = await Promise.all([
     exists(paths.env),
     exists(paths.distEntry),
     exists(paths.packageLock),
     exists(paths.script),
     exists(paths.launcher),
+    isGitAvailable(),
     windowsRuntimeState(serverDir, port),
   ])
   const node = runtime.nodeReady === true
@@ -514,9 +609,10 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
 
   if (!platformSupported) issues.push("本地控制服务管理仅支持 Windows")
   if (!runtimeProbeSucceeded) issues.push("本机服务状态检测失败，请刷新后重试")
+  if (!git) issues.push("未检测到 Git，安装时将自动下载并安装")
   if (runtimeProbeSucceeded && !node) issues.push("安装时将重新检测并补齐 Node.js 22+")
   if (runtimeProbeSucceeded && !npm) issues.push("安装时将从 Node.js 目录与 cmd.exe 重新检测并补齐 npm")
-  if (!source) issues.push("server 项目源码或 Windows 管理脚本不完整")
+  if (!source) issues.push("安装时将从 GitHub 获取服务端源码")
   if (envExists !== distExists) issues.push("本地服务安装不完整，需要修复")
   if (configNeedsRepair) issues.push("本地服务配置缺失或不安全，需要修复")
   if (running && !ownsConfiguredListener) issues.push(`受管进程未监听配置端口 ${port}`)
@@ -534,6 +630,11 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
   })
 
   const key = values.get("PANEL_API_KEY")
+  let version: string | null = null
+  try {
+    const manifest = JSON.parse(await readFile(path.join(serverDir, "package.json"), "utf8")) as { version?: string }
+    if (typeof manifest.version === "string" && /^\d+\.\d+\.\d+$/.test(manifest.version)) version = manifest.version
+  } catch { /* 未安装时没有版本 */ }
   const localAddresses = localIpv4Addresses()
   return {
     platformSupported,
@@ -552,10 +653,12 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     firewallNeedsCleanup,
     portOwnerPid,
     serverDir,
+    version,
     databasePath: databasePathFromEnvironment(serverDir, values),
     localAddresses,
     connection: installed && key ? { api: localApi(port), agentApi: localAgentApi(accessMode, port, localAddresses), key } : null,
     prerequisites: {
+      git,
       node,
       nodeVersion: runtime.nodeVersion || "未检测到",
       npm,
@@ -664,9 +767,6 @@ export function installLocalControlServer(
     }
     const status = await getLocalControlServerStatus()
     requireWindows(status)
-    if (!status.prerequisites.source) {
-      throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
-    }
     if (!(await isLocalControlPortAvailable(port))) {
       throw new LocalControlServerError(`端口 ${port} 已被其他进程占用，请更换监听端口后重试`, 409)
     }
@@ -674,20 +774,27 @@ export function installLocalControlServer(
     if (status.needsRepair) throw new LocalControlServerError("检测到已有配置或构建产物，请使用修复功能以保留现有数据与密钥", 409)
 
     const serverDir = status.serverDir
-    const paths = managementPaths(serverDir)
+    const sourceExisted = await exists(serverDir)
     const [environmentExisted, distDirectoryExisted, nodeModulesExisted, managedRuntimeExisted, stateDirectoryExisted] = await Promise.all([
-      exists(paths.env),
-      exists(path.dirname(paths.distEntry)),
+      exists(path.join(serverDir, ".env")),
+      exists(path.join(serverDir, "dist")),
       exists(path.join(serverDir, "node_modules")),
-      exists(paths.managedRuntime),
-      exists(paths.stateDir),
+      exists(path.join(serverDir, ".nacho-runtime")),
+      exists(path.join(serverDir, ".nacho-local")),
     ])
-    await runPowerShell(serverDir, "AssertPortAvailable", port, POWERSHELL_TIMEOUT_MS, onProgress)
-    reportProgress(onProgress, "system", `端口 ${port} 可用，开始安装。\n`)
 
     let firewallConfigured = false
     let autoStartConfigured = false
+    let sourceBackup: string | null = null
+    let sourceCloned = false
     try {
+      if (!status.prerequisites.source) {
+        sourceBackup = await cloneServerSource(serverDir, onProgress, sourceExisted)
+        sourceCloned = true
+      }
+      const paths = managementPaths(serverDir)
+      await runPowerShell(serverDir, "AssertPortAvailable", port, POWERSHELL_TIMEOUT_MS, onProgress)
+      reportProgress(onProgress, "system", `端口 ${port} 可用，开始安装。\n`)
       await ensureRuntimePrerequisites(serverDir, onProgress)
       await buildServer(serverDir, onProgress)
       if (options.accessMode === "lan") {
@@ -705,21 +812,28 @@ export function installLocalControlServer(
       }
       reportProgress(onProgress, "system", "正在启动本机控制服务…\n")
       await startUnlocked(serverDir, values, onProgress)
+      if (sourceBackup) await rm(sourceBackup, { recursive: true, force: true })
       const finalStatus = await getLocalControlServerStatus()
       reportProgress(onProgress, "system", "安装完成，正在载入运行状态与访问参数。\n")
       return finalStatus
     } catch (error) {
       reportProgress(onProgress, "system", "安装未完成，正在回滚本次创建的文件与设置…\n")
-      await runPowerShell(serverDir, "ForceStop", port).catch(() => undefined)
-      if (autoStartConfigured) await runPowerShell(serverDir, "DisableAutostart", port).catch(() => undefined)
-      if (firewallConfigured) await runPowerShell(serverDir, "RemoveFirewall", port).catch(() => undefined)
+      if (await exists(managementPaths(serverDir).script)) {
+        await runPowerShell(serverDir, "ForceStop", port).catch(() => undefined)
+        if (autoStartConfigured) await runPowerShell(serverDir, "DisableAutostart", port).catch(() => undefined)
+        if (firewallConfigured) await runPowerShell(serverDir, "RemoveFirewall", port).catch(() => undefined)
+      }
       await Promise.all([
-        environmentExisted ? Promise.resolve() : rm(paths.env, { force: true }),
-        distDirectoryExisted ? Promise.resolve() : rm(path.dirname(paths.distEntry), { recursive: true, force: true }),
+        environmentExisted ? Promise.resolve() : rm(path.join(serverDir, ".env"), { force: true }),
+        distDirectoryExisted ? Promise.resolve() : rm(path.join(serverDir, "dist"), { recursive: true, force: true }),
         nodeModulesExisted ? Promise.resolve() : rm(path.join(serverDir, "node_modules"), { recursive: true, force: true }),
-        managedRuntimeExisted ? Promise.resolve() : rm(paths.managedRuntime, { recursive: true, force: true }),
-        stateDirectoryExisted ? Promise.resolve() : rm(paths.stateDir, { recursive: true, force: true }),
+        managedRuntimeExisted ? Promise.resolve() : rm(path.join(serverDir, ".nacho-runtime"), { recursive: true, force: true }),
+        stateDirectoryExisted ? Promise.resolve() : rm(path.join(serverDir, ".nacho-local"), { recursive: true, force: true }),
       ])
+      if (sourceCloned) {
+        await rm(serverDir, { recursive: true, force: true })
+        if (sourceBackup) await rename(sourceBackup, serverDir)
+      }
       reportProgress(onProgress, "system", "回滚完成。\n")
       throw error
     }
@@ -764,29 +878,22 @@ export function repairLocalControlServer() {
     const status = await getLocalControlServerStatus()
     requireWindows(status)
     const serverDir = status.serverDir
-    if (!status.prerequisites.source) {
-      throw new LocalControlServerError("请确保完整的 server 项目源码与 Windows 管理脚本可用", 409)
-    }
-    const paths = managementPaths(serverDir)
-    const envExisted = await exists(paths.env)
+    const previousPaths = managementPaths(serverDir)
+    const envExisted = await exists(previousPaths.env)
     const previousValues = envExisted ? await readEnvironment(serverDir) : new Map<string, string>()
     const values = envExisted
       ? ensureManagedEnvironment(previousValues)
       : createInitialEnvironment({ accessMode: "loopback", autoStart: true, port: DEFAULT_PORT })
     const wasRunning = status.running
-    if (!status.installed && !wasRunning) {
-      await runPowerShell(serverDir, "AssertPortAvailable", portFromEnvironment(values))
-    }
-    await ensureRuntimePrerequisites(serverDir)
     if (wasRunning) await stopUnlocked(serverDir, previousValues)
-    await mkdir(paths.stateDir, { recursive: true })
-    await Promise.all([
-      rm(paths.backupDist, { recursive: true, force: true }),
-      rm(paths.backupEnv, { force: true }),
-    ])
-    if (await exists(path.dirname(paths.distEntry))) await cp(path.dirname(paths.distEntry), paths.backupDist, { recursive: true })
-    if (envExisted) await cp(paths.env, paths.backupEnv)
+    let sourceBackup: string | null = null
     try {
+      sourceBackup = await cloneServerSource(serverDir, undefined, await exists(serverDir))
+      const paths = managementPaths(serverDir)
+      if (!status.installed && !wasRunning) {
+        await runPowerShell(serverDir, "AssertPortAvailable", portFromEnvironment(values))
+      }
+      await ensureRuntimePrerequisites(serverDir)
       await buildServer(serverDir)
       if (accessModeFromEnvironment(values) === "lan") {
         await runPowerShell(serverDir, "SetFirewall", portFromEnvironment(values))
@@ -795,21 +902,150 @@ export function repairLocalControlServer() {
       }
       await writeEnvironment(serverDir, values)
       if (wasRunning || !status.installed) await startUnlocked(serverDir, values)
-      await Promise.all([
-        rm(paths.backupDist, { recursive: true, force: true }),
-        rm(paths.backupEnv, { force: true }),
-      ])
+      if (sourceBackup) await rm(sourceBackup, { recursive: true, force: true })
     } catch (error) {
-      if (await exists(paths.backupDist)) {
-        await rm(path.dirname(paths.distEntry), { recursive: true, force: true })
-        await cp(paths.backupDist, path.dirname(paths.distEntry), { recursive: true })
+      if (sourceBackup && await exists(sourceBackup)) {
+        await rm(serverDir, { recursive: true, force: true })
+        await rename(sourceBackup, serverDir)
       }
-      if (envExisted && (await exists(paths.backupEnv))) await cp(paths.backupEnv, paths.env)
-      else await rm(paths.env, { force: true })
-      if (wasRunning && (await exists(paths.distEntry))) await startUnlocked(serverDir, previousValues).catch(() => undefined)
+      if (wasRunning && (await exists(managementPaths(serverDir).distEntry))) {
+        await startUnlocked(serverDir, previousValues).catch(() => undefined)
+      }
       throw error
     }
     return getLocalControlServerStatus()
+  })
+}
+
+/** Windows 本机服务只安装签名索引中固定版本的预构建制品，不克隆 main 分支。 */
+export function updateLocalControlServer(version: string, panelVersion: string) {
+  return withMutationLock(async () => {
+    const status = await getLocalControlServerStatus()
+    requireWindows(status)
+    if (!status.installed) throw new LocalControlServerError("本机服务尚未安装", 409)
+    const index = await fetchSignedProductIndex()
+    const target = index.releases.server
+    const strict = /^\d+\.\d+\.\d+$/
+    if (!strict.test(version) || version !== target.version) throw new LocalControlServerError("目标不是已签名的服务端发布", 409)
+    const compare = (a: string, b: string) => {
+      const left = a.split(".").map(Number), right = b.split(".").map(Number)
+      for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1
+      return 0
+    }
+    if (!strict.test(panelVersion) || compare(panelVersion, target.minPanelVersion) < 0) {
+      throw new LocalControlServerError("请先升级面板", 409)
+    }
+    if (!status.connection) throw new LocalControlServerError("无法验证本机服务连接", 409)
+    const clientsResponse = await fetch(`${status.connection.api}/api/panel/clients`, {
+      headers: { Authorization: `Bearer ${status.connection.key}` },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!clientsResponse.ok) throw new LocalControlServerError("无法验证现有 Agent 兼容性", 409)
+    const clientsEnvelope = await clientsResponse.json() as {
+      ok: boolean
+      data?: Array<{ os: string; status: string; version: string }>
+    }
+    if (!clientsEnvelope.ok || !Array.isArray(clientsEnvelope.data)) {
+      throw new LocalControlServerError("无法验证现有 Agent 兼容性", 409)
+    }
+    const incompatible = clientsEnvelope.data.filter((client) => client.os === "Windows" && client.status !== "unregistered" &&
+      (!strict.test(client.version) || compare(client.version, target.minAgentVersion) < 0))
+    if (incompatible.length) throw new LocalControlServerError(`有 ${incompatible.length} 台 Agent 不兼容目标服务端，请先手动升级`, 409)
+    const serverDir = status.serverDir
+    const current = JSON.parse(await readFile(path.join(serverDir, "package.json"), "utf8")) as { version: string }
+    if (!strict.test(current.version) || compare(current.version, version) >= 0) {
+      throw new LocalControlServerError("目标版本必须高于当前本机服务", 409)
+    }
+    const temporary = `${serverDir}.release-${randomUUID()}`
+    const archive = `${temporary}.zip`
+    const backup = path.join(serverDir, `.nacho-update-backup-${randomUUID()}`)
+    const items = ["dist", "node_modules", "package.json", "package-lock.json", "deploy"]
+    const values = await readEnvironment(serverDir)
+    const wasRunning = status.running
+    const database = status.databasePath
+    const databaseFiles = [database, `${database}-wal`, `${database}-shm`]
+    let stopped = false
+    let backedUp = false
+    let switched = false
+    try {
+      await mkdir(temporary, { recursive: true })
+      const response = await fetch(target.windows.url, { signal: AbortSignal.timeout(15 * 60_000) })
+      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > target.windows.sizeBytes) {
+        throw new LocalControlServerError(`Windows 服务端制品下载失败（HTTP ${response.status}）`, 502)
+      }
+      let bytes = 0
+      const hash = createHash("sha256")
+      await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+        new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            bytes += chunk.length
+            if (bytes > target.windows.sizeBytes) return callback(new Error("Windows 服务端制品超过发布大小"))
+            hash.update(chunk)
+            callback(null, chunk)
+          },
+        }), createWriteStream(archive, { flags: "wx" }))
+      if (bytes !== target.windows.sizeBytes || hash.digest("hex") !== target.windows.sha256) {
+        throw new LocalControlServerError("Windows 服务端制品校验失败", 502)
+      }
+      const entries = (await runExecutable("tar", ["-tf", archive], path.dirname(serverDir), 60_000)).stdout
+      if (entries.split(/\r?\n/).filter(Boolean).some((entry) => {
+        const name = entry.replaceAll("\\", "/")
+        return name.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(name) ||
+          !/^(dist|node_modules|package\.json|package-lock\.json|deploy)(\/|$)/.test(name)
+      })) throw new LocalControlServerError("Windows 发布包包含无效路径", 502)
+      await runExecutable("tar", ["-xf", archive, "-C", temporary], path.dirname(serverDir), 5 * 60_000)
+      const manifest = JSON.parse(await readFile(path.join(temporary, "package.json"), "utf8")) as { name: string; version: string }
+      if (manifest.name !== "nacho-server" || manifest.version !== version ||
+          !(await exists(path.join(temporary, "dist", "index.js"))) ||
+          !(await exists(path.join(temporary, "deploy", "windows", "local-control-server.ps1"))) ||
+          !(await exists(path.join(temporary, "node_modules")))) {
+        throw new LocalControlServerError("Windows 发布包内容不完整", 502)
+      }
+      if (wasRunning) {
+        await stopUnlocked(serverDir, values)
+        stopped = true
+      }
+      await mkdir(backup, { recursive: true })
+      await mkdir(path.join(backup, "database"), { recursive: true })
+      for (let i = 0; i < databaseFiles.length; i++) {
+        if (await exists(databaseFiles[i])) await cp(databaseFiles[i], path.join(backup, "database", String(i)))
+      }
+      backedUp = true
+      for (const item of items) {
+        const oldFile = path.join(serverDir, item)
+        if (await exists(oldFile)) await rename(oldFile, path.join(backup, item))
+        switched = true
+        await rename(path.join(temporary, item), oldFile)
+      }
+      if (wasRunning) await startUnlocked(serverDir, values)
+      const installed = JSON.parse(await readFile(path.join(serverDir, "package.json"), "utf8")) as { version: string }
+      if (installed.version !== version) throw new LocalControlServerError("升级后版本验证失败", 502)
+      await rm(backup, { recursive: true, force: true })
+      return getLocalControlServerStatus()
+    } catch (error) {
+      if (switched) {
+        if (wasRunning) await stopUnlocked(serverDir, values).catch(() => undefined)
+        for (const item of items) {
+          const oldFile = path.join(backup, item)
+          if (await exists(oldFile)) {
+            await rm(path.join(serverDir, item), { recursive: true, force: true })
+            await rename(oldFile, path.join(serverDir, item))
+          }
+        }
+      }
+      if (backedUp && stopped) {
+        for (let i = 0; i < databaseFiles.length; i++) {
+          const snapshot = path.join(backup, "database", String(i))
+          if (await exists(snapshot)) await cp(snapshot, databaseFiles[i])
+          else await rm(databaseFiles[i], { force: true })
+        }
+      }
+      if (stopped && wasRunning) await startUnlocked(serverDir, values).catch(() => undefined)
+      throw error
+    } finally {
+      await rm(archive, { force: true })
+      await rm(temporary, { recursive: true, force: true })
+    }
   })
 }
 

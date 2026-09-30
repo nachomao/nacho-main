@@ -64,7 +64,7 @@ test("Windows manager aborts occupied-port installs before mutation and cleans f
   assert.ok(preflight >= 0 && runtimeInstall > preflight)
   assert.match(module, /await runPowerShell\(serverDir, "ForceStop", port\)\.catch/)
   assert.match(module, /rm\(paths\.env, \{ force: true \}\)/)
-  assert.match(module, /rm\(path\.dirname\(paths\.distEntry\), \{ recursive: true, force: true \}\)/)
+  assert.match(module, /rm\(path\.join\(serverDir, "dist"\), \{ recursive: true, force: true \}\)/)
   assert.match(module, /端口 \\d\+ 已被其他进程占用/)
 })
 

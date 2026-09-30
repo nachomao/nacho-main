@@ -5,7 +5,7 @@ import { SettingCard, InfoRow } from "./primitives"
 import { aboutInfo } from "./settings-data"
 import { BrandLogo } from "@/components/brand-logo"
 
-export function AboutPanel() {
+export function AboutPanel({ onOpenUpdates }: { onOpenUpdates: () => void }) {
   return (
     <div className="flex flex-col gap-4">
       {/* 品牌头 */}
@@ -21,7 +21,7 @@ export function AboutPanel() {
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
             <span className="flex items-center gap-1 rounded-full bg-primary/12 px-3 py-1 text-xs font-medium text-primary">
               <Sparkles className="h-3.5 w-3.5" />
-              {aboutInfo.serverVersion}
+              面板版本请在「更新」中查看
             </span>
             <span className="flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-xs font-medium text-muted-foreground">
               <HeartPulse className="h-3.5 w-3.5" />
@@ -35,15 +35,10 @@ export function AboutPanel() {
       <SettingCard title="版本信息" desc="当前面板的版本与构建详情" icon={<Info className="h-5 w-5" />}>
         <InfoRow label="面板名称" value={aboutInfo.panelName} />
         <InfoRow
-          label="服务端版本"
-          value={aboutInfo.serverVersion}
-          mono
-          badge={
-            <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-medium text-primary">最新</span>
-          }
+          label="版本状态"
+          value="由「更新」页面实时检查面板、服务端及 Agent"
         />
-        <InfoRow label="构建日期" value={aboutInfo.buildDate} mono />
-        <InfoRow label="Git Commit" value={aboutInfo.commit} mono />
+        <button type="button" onClick={onOpenUpdates} className="text-sm text-primary hover:underline">打开产品更新 →</button>
         <InfoRow
           label="许可证"
           value={aboutInfo.license}

@@ -11,6 +11,7 @@ import {
   startLocalControlServer,
   stopLocalControlServer,
   uninstallLocalControlServer,
+  updateLocalControlServer,
 } from "@/lib/local-control-server"
 import { isSameOriginRequest } from "@/lib/same-origin"
 import type {
@@ -162,6 +163,13 @@ export async function POST(request: NextRequest) {
       case "repair":
         requireOnlyKeys(body, ["action"])
         data = await repairLocalControlServer()
+        break
+      case "update":
+        requireOnlyKeys(body, ["action", "version", "panelVersion"])
+        if (typeof body.version !== "string" || typeof body.panelVersion !== "string") {
+          throw new LocalControlServerError("升级版本参数无效", 400)
+        }
+        data = await updateLocalControlServer(body.version, body.panelVersion)
         break
       default:
         throw new LocalControlServerError("本地服务操作无效", 400)

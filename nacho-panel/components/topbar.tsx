@@ -967,7 +967,8 @@ export function Topbar() {
   return (
     // 固定 min-h-14：无论首页（含 h-14 加号）还是客户端页（h-12 标签），
     // 行高都锁定为 56px，避免切换时 items-center 基线变化导致顶栏整体上移。
-    <header className="flex min-h-14 flex-wrap items-center gap-4">
+    <header className="electron-drag-region flex min-h-14 flex-wrap items-center gap-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-4">
       <TokenPill />
       <PluginsActions active={onPlugins} />
       <TasksActions active={onTasks} />
@@ -983,6 +984,10 @@ export function Topbar() {
       ) : onPlugins || onTasks ? null : (
         <HomeActions fromClients={cameFromClients} fromLogs={cameFromLogs} />
       )}
+      </div>
+
+      {/* 无边框 Electron 窗口的实际拖拽区域；两侧业务控件显式标记为 no-drag。 */}
+      <div className="electron-drag-region min-h-14 min-w-8 flex-1 self-stretch" aria-hidden="true" />
 
       {/* 常驻右侧控件：不管切换到哪个页面都始终显示 */}
       <div className="ml-auto flex items-center gap-4">

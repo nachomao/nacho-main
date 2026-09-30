@@ -1,16 +1,12 @@
 import { createHash } from "node:crypto"
 import { resolve4 } from "node:dns/promises"
-import { createReadStream } from "node:fs"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { isIP } from "node:net"
-import os from "node:os"
-import path from "node:path"
-import { Client, type SFTPWrapper } from "ssh2"
-import { create as createTar } from "tar"
-import { resolveLocalServerDirectory } from "./local-control-server"
+import { Client } from "ssh2"
 
 type Target = { host: string; username: string; password: string; fingerprint: string }
 export type CloudDeploymentResult = { api: string; key: string }
+export const NACHO_SERVER_REPOSITORY = "https://github.com/nachomao/nacho-server.git"
+export const NACHO_SERVER_BRANCH = "main"
 
 export class CloudDeploymentError extends Error {
   constructor(message: string, public status = 400) {
@@ -207,50 +203,26 @@ function runAsRoot(client: Client, username: string, password: string, script: s
     onOutput ? (line) => onOutput(sanitizeCloudInstallLine(line, password)) : undefined)
 }
 
-function openSftp(client: Client): Promise<SFTPWrapper> {
-  return new Promise((resolve, reject) => {
-    client.sftp((error, sftp) => {
-      if (error) reject(new CloudDeploymentError("远程服务器未启用 SFTP 文件传输", 502))
-      else resolve(sftp)
-    })
-  })
-}
-
-function upload(sftp: SFTPWrapper, local: string, remote: string) {
-  return new Promise<void>((resolve, reject) => {
-    sftp.fastPut(local, remote, (error) => {
-      if (error) reject(new CloudDeploymentError("部署包传输失败，请检查远程磁盘空间和 SFTP 权限", 502))
-      else resolve()
-    })
-  })
-}
-
-export async function createBundle(directory: string, destination: string) {
-  const manifest = JSON.parse(await readFile(path.join(directory, "artifacts/windows/latest.json"), "utf8")) as {
-    fileName?: string; sha256?: string
-  }
-  if (!manifest.fileName || !/^nacho-agent-[a-zA-Z0-9.-]+-win-x64\.exe$/.test(manifest.fileName) || !/^[a-fA-F0-9]{64}$/.test(manifest.sha256 || "")) {
-    throw new CloudDeploymentError("Windows Agent 发布清单无效，请先发布制品", 500)
-  }
-  const artifact = path.join(directory, "artifacts/windows", manifest.fileName)
-  const size = (await stat(artifact)).size
-  if (size > 200 * 1024 * 1024) throw new CloudDeploymentError("Agent 发布制品过大", 500)
-  const hash = createHash("sha256")
-  for await (const chunk of createReadStream(artifact)) hash.update(chunk)
-  if (hash.digest("hex").toLowerCase() !== manifest.sha256?.toLowerCase()) {
-    throw new CloudDeploymentError("Agent 发布制品 SHA-256 校验失败", 500)
-  }
-  await createTar({ cwd: directory, file: destination, gzip: true, portable: true }, [
-    "package.json", "package-lock.json", "tsconfig.json", "src", "deploy/install.sh", "deploy/uninstall.sh",
-    "deploy/napl", "deploy/napl-release-public.pem",
-    "artifacts/windows/latest.json", `artifacts/windows/${manifest.fileName}`,
-  ])
+export function buildCloudInstallCommand(remoteDirectory: string) {
+  const sourceDirectory = `${remoteDirectory}/nacho-server`
+  return [
+    "set -e",
+    "if command -v git >/dev/null 2>&1; then :",
+    "elif command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y git",
+    "elif command -v dnf >/dev/null 2>&1; then dnf install -y git",
+    "elif command -v yum >/dev/null 2>&1; then yum install -y git",
+    "else echo '目标系统没有可用的包管理器，无法安装 Git' >&2; exit 43",
+    "fi",
+    `rm -rf '${sourceDirectory}'`,
+    `git clone --depth 1 --branch ${NACHO_SERVER_BRANCH} ${NACHO_SERVER_REPOSITORY} '${sourceDirectory}'`,
+    `test -f '${sourceDirectory}/deploy/install.sh'`,
+    `NACHO_HIDE_INSTALL_SECRETS=1 bash '${sourceDirectory}/deploy/install.sh'`,
+  ].join("; ")
 }
 
 export async function deployCloudServer(target: Target, onProgress: (step: string) => void, onLog: (line: string) => void): Promise<CloudDeploymentResult> {
   const client = await connectCloudHost(target)
   let remoteDirectory: string | null = null
-  let localDirectory: string | null = null
   try {
     onProgress("检查目标系统与现有安装")
     const privilege = await runAsRoot(client, target.username, target.password, "id -u")
@@ -267,25 +239,16 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     if (existing.code === 0) throw new CloudDeploymentError("检测到已有部署，已停止以避免覆盖数据；请改用云端对接", 409)
     if (existing.code !== 1) throw new CloudDeploymentError("无法确认目标服务状态，已中止部署", 502)
 
-    onProgress("核对并打包服务端与 Agent 制品")
-    const serverDirectory = await resolveLocalServerDirectory()
-    localDirectory = await mkdtemp(path.join(os.tmpdir(), "nacho-cloud-"))
-    const bundle = path.join(localDirectory, "bundle.tar.gz")
-    await createBundle(serverDirectory, bundle)
-
     const temporary = await runRemote(client, "mktemp -d /tmp/nacho-deploy.XXXXXXXXXX")
     if (temporary.code !== 0 || !/^\/tmp\/nacho-deploy\.[A-Za-z0-9]+$/.test(temporary.output)) {
       throw new CloudDeploymentError("无法在目标服务器创建临时部署目录", 502)
     }
     remoteDirectory = temporary.output
 
-    onProgress("加密传输部署包")
-    await upload(await openSftp(client), bundle, `${remoteDirectory}/bundle.tar.gz`)
-
-    onProgress("安装 Node.js、构建服务并配置 systemd")
+    onProgress("在目标服务器获取服务端代码并安装")
     let outputLines = 0
     const install = await runAsRoot(client, target.username, target.password,
-      `set -e; test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; tar -xzf ${remoteDirectory}/bundle.tar.gz -C ${remoteDirectory}; NACHO_HIDE_INSTALL_SECRETS=1 bash ${remoteDirectory}/deploy/install.sh`,
+      `test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; ${buildCloudInstallCommand(remoteDirectory)}`,
       (line) => {
         if (!line.trim()) return
         outputLines += 1
@@ -296,7 +259,7 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     const rollback = async () => {
       onProgress("安装未完成，正在清理本次部署")
       const cleanup = await runAsRoot(client, target.username, target.password,
-        `set -e; bash ${remoteDirectory}/deploy/uninstall.sh >/dev/null 2>&1; rm -rf /var/lib/control-server`,
+        `set -e; bash ${remoteDirectory}/nacho-server/deploy/uninstall.sh >/dev/null 2>&1; rm -rf /var/lib/control-server`,
       ).catch(() => null)
       return cleanup?.code === 0
     }
@@ -325,6 +288,5 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
   } finally {
     if (remoteDirectory) await runRemote(client, `rm -rf ${remoteDirectory}`).catch(() => undefined)
     client.end()
-    if (localDirectory) await rm(localDirectory, { recursive: true, force: true }).catch(() => undefined)
   }
 }

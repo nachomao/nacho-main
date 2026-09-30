@@ -11,6 +11,7 @@ import {
   createNpmInvocation,
   ensureManagedEnvironment,
   formatExecutableCommand,
+  gitCloneArguments,
   isLocalControlPortAvailable,
   isValidLocalControlPort,
   parseEnvironmentFile,
@@ -149,6 +150,18 @@ test("managed environment repairs weak defaults without discarding unrelated val
   assert.match(repaired.get("ENROLLMENT_KEY") || "", /^[A-Za-z0-9_-]{43}$/)
   assert.match(repaired.get("LOCAL_CONTROL_TOKEN") || "", /^[A-Za-z0-9_-]{43}$/)
   assert.equal(ensureManagedEnvironment(new Map([["ALLOW_OPEN_ENROLLMENT", "false"]])).get("ALLOW_OPEN_ENROLLMENT"), "false")
+})
+
+test("GitHub source acquisition uses a shallow main-branch clone", () => {
+  assert.deepEqual(gitCloneArguments("C:\\Users\\Administrator\\AppData\\Local\\NachoPanel\\server.download"), [
+    "clone",
+    "--depth",
+    "1",
+    "--branch",
+    "main",
+    "https://github.com/nachomao/nacho-server.git",
+    "C:\\Users\\Administrator\\AppData\\Local\\NachoPanel\\server.download",
+  ])
 })
 
 test("server directory resolution rejects an untrusted project and accepts the expected layout", async () => {
