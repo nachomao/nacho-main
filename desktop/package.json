@@ -1,9 +1,13 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
   "main": "app/main.cjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nachomao/nacho-main.git"
+  },
   "scripts": {
     "bump-version": "node scripts/bump-version.cjs",
     "build:panel": "node scripts/build-panel.cjs",
