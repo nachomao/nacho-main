@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld("nachoWindow", {
 })
 
 contextBridge.exposeInMainWorld("nachoUpdates", {
-  version: require("./package.json").version,
   check(force = false) { return ipcRenderer.invoke("updates:check", Boolean(force)) },
   setChannel(channel) { return ipcRenderer.invoke("updates:set-channel", channel) },
   installPanel() { return ipcRenderer.invoke("updates:install-panel") },

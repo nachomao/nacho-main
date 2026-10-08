@@ -31,7 +31,7 @@ type Runtime = {
   updateStatus: { phase: string; version: string; error?: string } | null
   updateChannel?: Channel
 }
-type UpdateBridge = { version: string; check(force?: boolean): Promise<Check>; setChannel(channel: Channel): Promise<Check>; installPanel(): Promise<{ phase: string; version: string }>;
+type UpdateBridge = { version?: string; check(force?: boolean): Promise<Check>; setChannel(channel: Channel): Promise<Check>; installPanel(): Promise<{ phase: string; version: string }>;
   transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string): Promise<unknown>;
   onAvailable?(callback: (check: Check) => void): (() => void) | undefined;
   onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined }
