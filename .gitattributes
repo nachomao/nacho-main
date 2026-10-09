@@ -1,3 +1,4 @@
 server/deploy/install.sh text eol=lf
 server/deploy/uninstall.sh text eol=lf
 server/deploy/napl text eol=lf
+desktop/tests/fixtures/release-beta-v3.json text eol=lf
