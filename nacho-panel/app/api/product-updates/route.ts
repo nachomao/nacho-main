@@ -41,11 +41,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, message: "频道无效" }, { status: 400 })
     }
     const selected = (body as { channel: Channel }).channel
-    await fetchSignedProductIndex(selected)
+    const index = await fetchSignedProductIndex(selected)
     fs.mkdirSync(path.dirname(statePath()), { recursive: true })
     fs.writeFileSync(`${statePath()}.tmp`, JSON.stringify({ channel: selected }))
     fs.renameSync(`${statePath()}.tmp`, statePath())
-    return NextResponse.json({ ok: true, data: { channel: selected } })
+    return NextResponse.json({ ok: true, data: { index, stale: false, currentVersion: null, channel: selected } })
   } catch (error) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : "频道切换失败" }, { status: 503 })
   }

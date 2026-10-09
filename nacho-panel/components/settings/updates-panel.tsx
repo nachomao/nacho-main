@@ -9,6 +9,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog"
 import { updateLocalControl } from "@/lib/local-control-server-client"
 import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
 import { PANEL_VERSION_LABEL, RELEASE_CHANNEL_LABELS, formatReleaseVersion } from "@/lib/panel-version"
+import { serverChannelWarning, switchProductUpdateChannel } from "@/lib/product-update-channel"
 
 type Entry = {
   version: string
@@ -55,28 +56,36 @@ export function UpdatesPanel() {
   const [runtime, setRuntime] = useState<Runtime | null>(null)
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
+  const [channelWarning, setChannelWarning] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
   async function changeChannel(next: Channel) {
-    if (busy || next === check?.channel) return
-    const prior = check?.channel || "stable"
+    if (busy) return
     setBusy("channel")
+    setChannelWarning(null)
     try {
-      if (runtime) await apiRequest("/product-updates/channel", { method: "POST", body: JSON.stringify({ channel: next }) })
-      try {
-        if (window.nachoUpdates) await window.nachoUpdates.setChannel(next)
-        else {
-          const response = await fetch("/api/product-updates", {
-            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel: next }),
-          })
-          const result = await response.json() as { ok: boolean; message?: string }
-          if (!result.ok) throw new Error(result.message || "频道切换失败")
-        }
-      } catch (error) {
-        if (runtime) await apiRequest("/product-updates/channel", { method: "POST", body: JSON.stringify({ channel: prior }) }).catch(() => null)
-        throw error
-      }
-      await refresh(true)
+      const result = await switchProductUpdateChannel(next, {
+        async switchPanel(channel) {
+          let checked: Check
+          if (window.nachoUpdates) checked = await window.nachoUpdates.setChannel(channel)
+          else {
+            const response = await fetch("/api/product-updates", {
+              method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ channel }),
+            })
+            const body = await response.json() as { ok: boolean; data?: Check; message?: string }
+            if (!body.ok || !body.data) throw new Error(body.message || "频道切换失败")
+            checked = body.data
+          }
+          setCheck(checked)
+          setSourceError(checked.stale ? "网络暂不可用，显示上次验证的发布信息；缓存不能用于安装。" : null)
+          return checked
+        },
+        switchServer: runtime ? (channel) => apiRequest("/product-updates/channel", {
+          method: "POST", body: JSON.stringify({ channel }),
+        }) : undefined,
+      })
+      if (result.serverError) setChannelWarning(serverChannelWarning(next, result.serverError))
+      else setRuntime((current) => current ? { ...current, updateChannel: next } : current)
     } catch (error) {
       setSourceError(error instanceof Error ? error.message : "频道切换失败")
     } finally { setBusy(null) }
@@ -97,7 +106,8 @@ export function UpdatesPanel() {
       setSourceError(error instanceof Error ? error.message : "检查更新失败")
     }
     try {
-      setRuntime(await apiRequest<Runtime>("/runtime-info"))
+      const nextRuntime = await apiRequest<Runtime>("/runtime-info")
+      setRuntime(nextRuntime)
       setServerError(null)
     } catch (error) {
       setRuntime(null)
@@ -214,6 +224,7 @@ export function UpdatesPanel() {
   }
 
   const releases = check?.index.releases
+  const serverChannelMismatch = Boolean(check && runtime && runtime.updateChannel !== check.channel)
   const panelNew = releases ? compare(check.currentVersion, releases.panel.version) === -1 : false
   const serverNew = releases && runtime ? compare(runtime.version, releases.server.version) === -1 : false
   const agentNew = Boolean(releases && runtime &&
@@ -245,6 +256,11 @@ export function UpdatesPanel() {
         </label>
       </div>
       {sourceError && <p role="status" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">{sourceError}</p>}
+      {(channelWarning || serverChannelMismatch) && <div role="status" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+        <p>{channelWarning || "面板与服务端的更新频道不同，面板仍可独立检查和安装更新。升级服务端前请先同步频道。"}</p>
+        <button type="button" disabled={Boolean(busy) || !check} onClick={() => check && void changeChannel(check.channel)}
+          className="mt-2 rounded-lg border border-warning/40 px-3 py-2 text-xs disabled:opacity-40">重试同步服务端频道</button>
+      </div>}
       {connectedPanelIncompatible && <p role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
         当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
       </p>}
@@ -256,15 +272,15 @@ export function UpdatesPanel() {
           note={!desktop ? "安装新版需使用 Windows 桌面面板。" : panelNew ? "可安装新版" : "当前版本"}
           action="下载并安装" disabled={!panelNew || !desktop || Boolean(check?.stale) || Boolean(busy)} onClick={() => void installPanel()} />
         <UpdateCard icon={<Server className="size-5" />} title="控制服务端" current={runtime?.version || "未连接"}
-          release={releases?.server} note={panelRequired ? "需先升级面板" : runtime?.updateStatus ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}` : "服务端独立升级"}
+          release={releases?.server} note={serverChannelMismatch ? "服务端更新频道尚未同步，请先同步频道再升级。" : panelRequired ? "需先升级面板" : runtime?.updateStatus ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}` : "服务端独立升级"}
           action={serverSource?.mode === "local" ? "升级本机服务" : "升级云端服务"}
-          disabled={!serverNew || Boolean(check?.stale) || panelRequired || !desktop ||
+          disabled={!serverNew || Boolean(check?.stale) || panelRequired || serverChannelMismatch || !desktop ||
             (serverSource?.mode !== "local" && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || Boolean(busy)}
           onClick={() => void installServer()}
           extra={<div className="border-t border-border pt-3 text-xs">
             <p className="flex items-center gap-2 font-semibold"><HardDriveDownload className="size-4" />同批 Agent 制品</p>
             <p className="mt-2 text-muted-foreground">已准备 {runtime?.agentArtifactVersion || "无"} · 发布 {releases?.agent.version || "未取得"}。仍需逐台或批量手动下发。</p>
-            <button type="button" disabled={!agentNew || Boolean(check?.stale) || !runtime || Boolean(busy)}
+            <button type="button" disabled={!agentNew || Boolean(check?.stale) || serverChannelMismatch || !runtime || Boolean(busy)}
               onClick={() => void syncAgent()} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40">准备新版制品</button>
           </div>} />
       </div>

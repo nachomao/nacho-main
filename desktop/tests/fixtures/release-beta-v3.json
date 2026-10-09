@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 3,
+  "channel": "beta",
+  "sequence": 1,
+  "publishedAt": "2026-10-09T00:36:41.070Z",
+  "releases": {
+    "panel": {
+      "version": "0.2.1",
+      "title": "NachoPanel 0.2.1 Beta",
+      "notes": "- 设置 → 关于直接显示当前安装版本，离线也可查看；统一采用 X.Y.Z Stable / Beta / Alpha 英文标识。\n- 为源码仓库、使用文档、更新日志补齐真实 GitHub 链接。\n- 强制 HTTPS 默认关闭。\n- 云端部署与云端对接切换沿用首次引导的淡入、模糊和高度过渡，并保留表单输入。\n- 同步现有连接配置持久化及 GitHub 下载改进，完成 Windows 安装包验证。",
+      "sourceCommit": "b6178650daf9c13e4db7f1a8ba0a7080ca388e5e",
+      "asset": {
+        "fileName": "NachoPanel-Setup-0.2.1.exe",
+        "url": "https://github.com/nachomao/nacho-main/releases/download/v0.2.1/NachoPanel-Setup-0.2.1.exe",
+        "sha256": "34a0b3826c546f4f46c17ada5b8006741c2ccde587df6bebcfd638fd1c276fcb",
+        "sizeBytes": 125464314
+      },
+      "publishedAt": "2026-10-09T00:36:39.834Z"
+    },
+    "server": {
+      "minServerVersion": "1.0.0",
+      "version": "1.1.22",
+      "notes": "双仓 GitHub 更新体系迁移：服务端源码与 Agent 共用版本，面板经认证 API 传输服务端源码并手动下发 Agent。",
+      "agent": {
+        "sizeBytes": 76467811,
+        "sha256": "53e7aef387e0f66559e3a9d8b97e934127fb810413c2725dfbbfed1a2f4b3dcc",
+        "url": "https://github.com/nachomao/nacho-server/releases/download/v1.1.22/nacho-agent-1.1.22-win-x64.exe",
+        "fileName": "nacho-agent-1.1.22-win-x64.exe"
+      },
+      "sourceCommit": "d72bddb18e2ec5920fd271bcb20ac9ee23ad0984",
+      "title": "Nacho 服务端与 Agent 1.1.22",
+      "minAgentVersion": "1.0.0",
+      "source": {
+        "sizeBytes": 243550,
+        "sha256": "0762f1b9fa05ef47aa46d570a6061815325ec0e145e614ff7778e65fe21f31a5",
+        "url": "https://github.com/nachomao/nacho-server/releases/download/v1.1.22/nacho-server-source-1.1.22.tar.gz",
+        "fileName": "nacho-server-source-1.1.22.tar.gz"
+      },
+      "minPanelVersion": "0.1.6",
+      "publishedAt": "2026-10-09T00:36:41.070Z"
+    }
+  }
+}

@@ -217,7 +217,7 @@ function createUpdater(app) {
   async function setChannel(next) {
     if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
     if (!CHANNELS.includes(next)) throw new Error("无效更新频道")
-    if (next === channel) return { channel }
+    if (next === channel) return check(true)
     if (installing || checking) throw new Error("升级或检查正在执行")
     if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN)) throw new Error("更新服务器 HTTPS 地址无效")
     const url = `${UPDATE_ORIGIN}/updates/${next}/index.json`
@@ -225,16 +225,19 @@ function createUpdater(app) {
     const index = verifyIndex(bytes, signature, PUBLIC_KEY, next)
     if (compareVersions(index.releases.panel.version, app.getVersion()) < 0) throw new Error("目标频道面板版本低于当前版本")
     fs.mkdirSync(path.dirname(statePath), { recursive: true })
+    const nextCachePath = path.join(app.getPath("userData"), `release-index-cache-${next}.json`)
+    fs.writeFileSync(`${nextCachePath}.tmp`, JSON.stringify({ bytes: bytes.toString("base64"), signature: signature.toString("base64") }))
+    fs.renameSync(`${nextCachePath}.tmp`, nextCachePath)
     fs.writeFileSync(`${statePath}.tmp`, JSON.stringify({ channel: next }))
     fs.renameSync(`${statePath}.tmp`, statePath)
     channel = next
-    lastCheck = 0
+    lastCheck = Date.now()
     if (notificationController) {
       const callback = subscriber
       unsubscribe()
       if (callback) subscribe(callback)
     }
-    return check(true)
+    return { index, stale: false, currentVersion: app.getVersion(), channel }
   }
 
   async function installPanel() {

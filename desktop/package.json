@@ -1,6 +1,6 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "releaseChannel": "beta",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
