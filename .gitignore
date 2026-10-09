@@ -26,4 +26,6 @@ package-lock.json
 desktop/app/
 desktop/dist/
 desktop/build/
+desktop/build.log
+desktop/nacho-main/desktop/update-source.json
 package-lock.json

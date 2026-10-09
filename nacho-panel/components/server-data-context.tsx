@@ -91,7 +91,7 @@ const ServerDataContext = createContext<ServerDataContextValue | null>(null)
 
 export function ServerDataProvider({ children }: { children: ReactNode }) {
   const { settings: localSettings } = useLocalSettings()
-  const { serverSource } = useOnboarding()
+  const { serverSource, hydrated: onboardingHydrated } = useOnboarding()
   const [overview, setOverview] = useState<Overview | null>(null)
   const [clients, setClients] = useState<Client[]>([])
   const [groups, setGroups] = useState<string[]>([])
@@ -241,6 +241,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [mutateNotifications])
 
   const refresh = useCallback(async () => {
+    if (!onboardingHydrated) return
     if (!connection) {
       setError("尚未配置服务端连接")
       setNotificationError("尚未配置服务端连接")
@@ -289,16 +290,17 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
         setRefreshing(false)
       }
     }
-  }, [apiRequest, connection, notificationQuery])
+  }, [apiRequest, connection, notificationQuery, onboardingHydrated])
 
   useEffect(() => {
+    if (!onboardingHydrated) return
     void refresh()
     if (!connection) return
     // 客户端状态（尤其是卸载后的“已注销”）需要尽快反映到卡片；
     // 3 秒轮询仍可避免请求风暴，同时把可见延迟控制在一个交互节拍内。
     const timer = window.setInterval(() => void refresh(), 3_000)
     return () => window.clearInterval(timer)
-  }, [connection, refresh])
+  }, [connection, onboardingHydrated, refresh])
 
   const value = useMemo(
     () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),

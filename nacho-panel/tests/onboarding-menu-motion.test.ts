@@ -18,7 +18,7 @@ test("云端部署与对接切换时卡片平滑变高，并保留未选表单�
   assert.match(styles, /\.cloud-mode-panel \{[\s\S]*?grid-template-rows: 0fr;[\s\S]*?transition: grid-template-rows 720ms/)
   assert.match(styles, /\.cloud-mode-panel\[data-active='true'\] \{\s*grid-template-rows: 1fr;/)
   assert.match(styles, /\.cloud-mode-content \{\s*padding: 0\.25rem;[\s\S]*?filter: blur\(14px\);[\s\S]*?transform: translateY\(8px\) scale\(0\.975\);/)
-  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{\s*\.cloud-mode-panel,\s*\.cloud-mode-content,\s*\.cloud-deploy-step,\s*\.cloud-deploy-step > div \{\s*transition: none !important;/)
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{\s*\.cloud-mode-panel,\s*\.cloud-mode-content,\s*\.cloud-mode-transition,\s*\.cloud-deploy-step,\s*\.cloud-deploy-step > div \{\s*transition: none !important;/)
 })
 
 test("SSH 指纹确认区出现与重置时平滑收展卡片高度", () => {

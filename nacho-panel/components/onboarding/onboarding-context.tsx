@@ -4,15 +4,19 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { useLocalControlServer } from "@/lib/local-control-server-client"
 import type { LocalAvatarId } from "@/lib/local-settings-schema"
+import {
+  clearOnboardingSnapshot,
+  EMPTY_ONBOARDING_SNAPSHOT,
+  persistOnboardingSnapshot,
+  restoreOnboardingSnapshot,
+  type OnboardingSnapshot,
+} from "@/lib/onboarding-connection-storage"
 
 /** 服务端来源：本地部署或云端服务；云端自动部署和云端对接共用 API + Key 连接协议 */
-export type ServerSource =
-  | { mode: "local"; api: string; agentApi?: string; key: string }
-  | { mode: "cloud"; api: string; key: string }
-  | null
+export type ServerSource = OnboardingSnapshot["serverSource"]
 
 /** 登录方式：生成的登录密钥 或 用户设置的密码（二选一） */
-export type AuthMethod = { mode: "key" | "password"; secret: string } | null
+export type AuthMethod = OnboardingSnapshot["auth"]
 
 /**
  * 引导流程阶段：
@@ -22,16 +26,6 @@ export type AuthMethod = { mode: "key" | "password"; secret: string } | null
  * - done      引导完成，覆盖层已卸载
  */
 type OnboardingPhase = "intro" | "locked" | "unlocking" | "done"
-
-const AUTH_STORAGE_KEY = "nacho-auth"
-const LOCKED_STORAGE_KEY = "nacho-locked"
-const SERVER_SOURCE_STORAGE_KEY = "nacho-server-source"
-
-const ONBOARDING_STORAGE_KEYS = [
-  AUTH_STORAGE_KEY,
-  LOCKED_STORAGE_KEY,
-  SERVER_SOURCE_STORAGE_KEY,
-] as const
 
 interface OnboardingContextValue {
   /** 本地持久化状态是否已恢复完成 */
@@ -69,56 +63,60 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [auth, setAuthState] = useState<AuthMethod>(null)
   const restored = useRef(false)
   const legacyLocalSource = useRef(false)
+  const snapshot = useRef<OnboardingSnapshot>(EMPTY_ONBOARDING_SNAPSHOT)
+  const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
+  const [connectionHydrated, setConnectionHydrated] = useState(false)
   const { status: localControlStatus } = useLocalControlServer()
 
-  // 共享设置迁移完成后，再恢复当前浏览器独有的连接与锁屏状态。
+  const persistSnapshot = useCallback((next: OnboardingSnapshot) => {
+    snapshot.current = next
+    persistenceQueue.current = persistenceQueue.current
+      .catch(() => undefined)
+      .then(() => persistOnboardingSnapshot(
+        typeof window === "undefined" ? undefined : window.nachoConnection,
+        localStorage,
+        next,
+      ))
+      .catch((error) => console.error("连接配置保存失败", error))
+  }, [])
+
+  // 共享设置迁移完成后，再恢复桌面加密记录或浏览器连接与锁屏状态。
   useEffect(() => {
     if (!hydrated || restored.current) return
     restored.current = true
-    try {
-      const savedServerSource = localStorage.getItem(SERVER_SOURCE_STORAGE_KEY)
-      if (savedServerSource) {
-        const parsed = JSON.parse(savedServerSource) as Partial<Exclude<ServerSource, null>> | null
-        if (parsed?.mode === "local") {
-          if (typeof parsed.api === "string" && typeof parsed.key === "string" && parsed.api && parsed.key) {
-            setServerSourceState({
-              mode: "local",
-              api: parsed.api,
-              agentApi: typeof parsed.agentApi === "string" && parsed.agentApi ? parsed.agentApi : undefined,
-              key: parsed.key,
-            })
-          } else {
-            legacyLocalSource.current = true
-          }
-        } else if (parsed?.mode === "cloud" && parsed.api && parsed.key) {
-          setServerSourceState({ mode: "cloud", api: parsed.api, key: parsed.key })
-        }
+    let active = true
+    void restoreOnboardingSnapshot(
+      typeof window === "undefined" ? undefined : window.nachoConnection,
+      localStorage,
+    ).then(({ snapshot: saved, legacyLocalSource: isLegacyLocal }) => {
+      if (!active) return
+      snapshot.current = saved
+      legacyLocalSource.current = isLegacyLocal
+      setServerSourceState(saved.serverSource)
+      setAuthState(saved.auth)
+      if (settings.onboardingCompleted) {
+        setPhase(saved.auth
+          ? (saved.locked ? "locked" : "done")
+          : "done")
       }
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as AuthMethod
-        if (parsed && (parsed.mode === "key" || parsed.mode === "password") && parsed.secret) {
-          setAuthState(parsed)
-          if (settings.onboardingCompleted) {
-            setPhase(localStorage.getItem(LOCKED_STORAGE_KEY) === "1" ? "locked" : "done")
-          }
-        }
-      }
-      if (settings.onboardingCompleted && !raw) setPhase("done")
-    } catch {
-      // 存储不可用时静默降级为完整首次流程
+    }).catch((error) => {
+      // 桌面密文损坏或读取失败时不读取 localStorage 明文作为回退。
+      console.error("连接配置恢复失败", error)
+    }).finally(() => {
+      if (active) setConnectionHydrated(true)
+    })
+    return () => {
+      active = false
     }
   }, [hydrated, settings.onboardingCompleted])
 
   useEffect(() => {
-    if (!legacyLocalSource.current || !localControlStatus?.healthy || !localControlStatus.connection) return
+    if (!connectionHydrated || !legacyLocalSource.current || !localControlStatus?.healthy || !localControlStatus.connection) return
     legacyLocalSource.current = false
     const source: ServerSource = { mode: "local", ...localControlStatus.connection }
     setServerSourceState(source)
-    try {
-      localStorage.setItem(SERVER_SOURCE_STORAGE_KEY, JSON.stringify(source))
-    } catch {}
-  }, [localControlStatus])
+    persistSnapshot({ ...snapshot.current, serverSource: source })
+  }, [connectionHydrated, localControlStatus, persistSnapshot])
 
   const setUserName = useCallback((name: string) => {
     void update({ profile: { userName: name } })
@@ -134,43 +132,34 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 
   const setAuth = useCallback((a: AuthMethod) => {
     setAuthState(a)
-    try {
-      if (a) localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(a))
-      else localStorage.removeItem(AUTH_STORAGE_KEY)
-    } catch {}
-  }, [])
+    persistSnapshot({ ...snapshot.current, auth: a })
+  }, [persistSnapshot])
 
   const lock = useCallback(() => {
-    try {
-      localStorage.setItem(LOCKED_STORAGE_KEY, "1")
-    } catch {}
+    persistSnapshot({ ...snapshot.current, locked: true })
     setPhase("locked")
-  }, [])
+  }, [persistSnapshot])
 
   const startUnlock = useCallback(() => {
-    try {
-      localStorage.removeItem(LOCKED_STORAGE_KEY)
-    } catch {}
+    persistSnapshot({ ...snapshot.current, locked: false })
     setPhase("unlocking")
     void update({ onboardingCompleted: true })
     // 与覆盖层离场动画时长保持一致，结束后卸载覆盖层
     window.setTimeout(() => setPhase("done"), 1050)
-  }, [update])
+  }, [persistSnapshot, update])
 
   const setServerSource = useCallback((source: ServerSource) => {
     setServerSourceState(source)
-    try {
-      if (source) localStorage.setItem(SERVER_SOURCE_STORAGE_KEY, JSON.stringify(source))
-      else localStorage.removeItem(SERVER_SOURCE_STORAGE_KEY)
-    } catch {}
-  }, [])
+    persistSnapshot({ ...snapshot.current, serverSource: source })
+  }, [persistSnapshot])
 
   const reset = useCallback(() => {
     void (async () => {
       await resetLocalSettings()
-      try {
-        ONBOARDING_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key))
-      } catch {}
+      await clearOnboardingSnapshot(
+        typeof window === "undefined" ? undefined : window.nachoConnection,
+        localStorage,
+      )
 
       // A reload also resets transient step and animation state owned by child components.
       window.location.reload()
@@ -180,7 +169,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   return (
     <OnboardingContext.Provider
       value={{
-        hydrated,
+        hydrated: hydrated && connectionHydrated,
         phase,
         userName: settings.profile.userName,
         setUserName,

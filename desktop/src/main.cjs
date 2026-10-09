@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, utilityProcess } = require("electron")
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, utilityProcess } = require("electron")
 const http = require("node:http")
 const net = require("node:net")
 const path = require("node:path")
@@ -12,8 +12,10 @@ if (!process.env.NACHO_UPDATE_ORIGIN) {
   }
 }
 const { createUpdater } = require("./updates.cjs")
+const { createConnectionStore, registerConnectionIpc } = require("./connection-store.cjs")
 
 let mainWindow = null
+let connectionStore = null
 let panelProcess = null
 let panelPort = null
 let panelProcessExited = true
@@ -162,6 +164,11 @@ function broadcastMaximizedState() {
 }
 
 function registerWindowBridge() {
+  registerConnectionIpc({
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    store: connectionStore,
+  })
   ipcMain.on("window:minimize", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
   })
@@ -249,6 +256,24 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error("系统凭据加密不可用，无法安全保存连接配置")
+    }
+    const localAppData = process.env.LOCALAPPDATA
+      || (process.platform === "win32"
+        ? path.join(app.getPath("home"), "AppData", "Local")
+        : app.getPath("appData"))
+    connectionStore = createConnectionStore({
+      safeStorage,
+      filePath: path.join(localAppData, "NachoPanel", "connection-secrets.json"),
+    })
+    // 启动时只读取／解密一次；后续 connection:get 仅复制主进程内存快照。
+    try {
+      connectionStore.load()
+    } catch (error) {
+      // 继续启动面板，但损坏的密文不会回退到 localStorage；显式新连接可覆盖修复。
+      log("加密连接配置读取失败", error)
+    }
     registerWindowBridge()
     try {
       await boot()

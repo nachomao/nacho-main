@@ -1,7 +1,4 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
-import path from "node:path"
 import { test } from "node:test"
 import { NextRequest } from "next/server"
 import { DELETE, GET, PATCH, POST } from "../app/api/local-control-server/route"
@@ -51,28 +48,13 @@ test("install rejects coerced option types", async () => {
 })
 
 test("install can stream command output as NDJSON", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "nacho-local-route-"))
-  const serverDir = path.join(root, "server")
-  const previousServerDir = process.env.NACHO_LOCAL_SERVER_DIR
-  await mkdir(path.join(serverDir, "src"), { recursive: true })
-  await mkdir(path.join(serverDir, "deploy", "windows"), { recursive: true })
-  await writeFile(path.join(serverDir, "package.json"), JSON.stringify({ name: "nacho-server" }), "utf8")
-  await writeFile(path.join(serverDir, "src", "index.ts"), "", "utf8")
-  process.env.NACHO_LOCAL_SERVER_DIR = serverDir
-
-  let response: Response
-  try {
-    response = await POST(mutationRequest("POST", {
-      action: "install",
-      accessMode: "loopback",
-      autoStart: true,
-      port: 8443,
-    }, { accept: "application/x-ndjson" }))
-  } finally {
-    if (previousServerDir === undefined) delete process.env.NACHO_LOCAL_SERVER_DIR
-    else process.env.NACHO_LOCAL_SERVER_DIR = previousServerDir
-    await rm(root, { recursive: true, force: true })
-  }
+  // 无效端口在安装器的首条真实日志后失败，避免流式夹具执行联网或系统安装。
+  const response = await POST(mutationRequest("POST", {
+    action: "install",
+    accessMode: "loopback",
+    autoStart: true,
+    port: 1023,
+  }, { accept: "application/x-ndjson" }))
 
   assert.equal(response.status, 200)
   assert.match(response.headers.get("content-type") || "", /application\/x-ndjson/)
@@ -82,6 +64,8 @@ test("install can stream command output as NDJSON", async () => {
     .map((line) => JSON.parse(line) as { type: string; message?: string })
   assert.equal(events.at(-1)?.type, "error")
   assert.ok(events.at(-1)?.message)
+  assert.ok(events.some((event) => event.type === "log"))
+  assert.match(events.at(-1)?.message || "", /端口/)
 })
 
 test("settings reject non-boolean auto-start values", async () => {

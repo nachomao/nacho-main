@@ -9,7 +9,9 @@ const appDir = path.join(desktopDir, "app")
 test("staged desktop runtime contains only the panel runtime", () => {
   assert.ok(fs.existsSync(path.join(appDir, "main.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "preload.cjs")))
+  assert.ok(fs.existsSync(path.join(appDir, "connection-store.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "updates.cjs")))
+  assert.ok(fs.existsSync(path.join(appDir, "github-download.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "panel", "panel-runner.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "panel", "server.js")))
   assert.ok(fs.existsSync(path.join(appDir, "panel-deps", "next", "package.json")))
@@ -36,6 +38,7 @@ test("desktop packaging creates a per-user NSIS installer and keeps the external
   assert.equal(manifest.build.nsis.perMachine, false)
   assert.equal(manifest.build.nsis.allowToChangeInstallationDirectory, true)
   assert.deepEqual(manifest.build.extraResources.map((item) => item.to), ["panel", "panel-deps"])
+  assert.match(fs.readFileSync(path.join(desktopDir, "scripts", "stage-app.cjs"), "utf8"), /connection-store\.cjs/)
 
   const readme = fs.readFileSync(path.join(desktopDir, "README.md"), "utf8")
   assert.match(readme, /NACHO_LOCAL_SERVER_DIR/)
@@ -46,4 +49,5 @@ test("staged runtime uses the desktop package version", () => {
   const desktopManifest = JSON.parse(fs.readFileSync(path.join(desktopDir, "package.json"), "utf8"))
   const runtimeManifest = JSON.parse(fs.readFileSync(path.join(appDir, "package.json"), "utf8"))
   assert.equal(runtimeManifest.version, desktopManifest.version)
+  assert.equal(runtimeManifest.releaseChannel, desktopManifest.releaseChannel)
 })

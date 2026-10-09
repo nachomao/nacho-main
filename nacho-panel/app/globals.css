@@ -496,6 +496,18 @@
   animation: avatar-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* 设置卡片明确过渡高度，避免自动高度与表单网格同时收展时跳变。 */
+.cloud-mode-transition {
+  position: relative;
+  overflow: hidden;
+  transition: height 720ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cloud-mode-transition > .cloud-mode-panel {
+  position: absolute;
+  inset: 0 0 auto;
+}
+
 /* 两种云端表单同时保留状态，通过网格行收展驱动卡片高度变化。 */
 .cloud-mode-panel {
   display: grid;
@@ -573,6 +585,7 @@
 @media (prefers-reduced-motion: reduce) {
   .cloud-mode-panel,
   .cloud-mode-content,
+  .cloud-mode-transition,
   .cloud-deploy-step,
   .cloud-deploy-step > div {
     transition: none !important;

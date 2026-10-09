@@ -8,6 +8,7 @@ import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
 import { updateLocalControl } from "@/lib/local-control-server-client"
 import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
+import { PANEL_VERSION_LABEL, RELEASE_CHANNEL_LABELS, formatReleaseVersion } from "@/lib/panel-version"
 
 type Entry = {
   version: string
@@ -130,7 +131,7 @@ export function UpdatesPanel() {
     if (!check || busy || !window.nachoUpdates) return
     if (!await confirm({
       title: "安装新版面板？", description: "面板将退出、安装并重新启动。当前本地设置会保留。",
-      body: `${check.currentVersion} → ${check.index.releases.panel.version}`,
+      body: `${PANEL_VERSION_LABEL} → ${formatReleaseVersion(check.index.releases.panel.version, check.channel)}`,
       confirmLabel: "下载并安装", tone: "warning",
     })) return
     setBusy("panel")
@@ -237,7 +238,9 @@ export function UpdatesPanel() {
           <select aria-label="更新频道" value={check?.channel || "stable"} disabled={Boolean(busy)}
             onChange={(event) => void changeChannel(event.target.value as Channel)}
             className="ml-2 rounded-lg border border-border bg-card px-2 py-2">
-            <option value="stable">稳定版</option><option value="beta">公测版</option><option value="alpha">内测版</option>
+            {(["stable", "beta", "alpha"] as const).map((channel) => (
+              <option key={channel} value={channel}>{RELEASE_CHANNEL_LABELS[channel]}</option>
+            ))}
           </select>
         </label>
       </div>
@@ -248,8 +251,9 @@ export function UpdatesPanel() {
       {serverError && <p role="status" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{serverError}</p>}
       {progress !== null && busy && <p role="status" className="text-xs text-muted-foreground">制品传输 {progress}%</p>}
       <div className="grid gap-3 lg:grid-cols-2">
-        <UpdateCard icon={<Monitor className="size-5" />} title="Windows 面板" current={check?.currentVersion || (desktop ? "检测中" : "浏览器开发版")}
-          release={releases?.panel} note={!desktop ? "安装新版需使用 Windows 桌面面板。" : panelNew ? "可安装新版" : "当前版本"}
+        <UpdateCard icon={<Monitor className="size-5" />} title="Windows 面板" current={PANEL_VERSION_LABEL}
+          release={releases?.panel} releaseLabel={releases && check ? formatReleaseVersion(releases.panel.version, check.channel) : undefined}
+          note={!desktop ? "安装新版需使用 Windows 桌面面板。" : panelNew ? "可安装新版" : "当前版本"}
           action="下载并安装" disabled={!panelNew || !desktop || Boolean(check?.stale) || Boolean(busy)} onClick={() => void installPanel()} />
         <UpdateCard icon={<Server className="size-5" />} title="控制服务端" current={runtime?.version || "未连接"}
           release={releases?.server} note={panelRequired ? "需先升级面板" : runtime?.updateStatus ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}` : "服务端独立升级"}
@@ -269,12 +273,12 @@ export function UpdatesPanel() {
   )
 }
 
-function UpdateCard({ icon, title, current, release, note, action, disabled, onClick, extra }: {
-  icon: React.ReactNode; title: string; current: string; release?: Entry; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode
+function UpdateCard({ icon, title, current, release, releaseLabel, note, action, disabled, onClick, extra }: {
+  icon: React.ReactNode; title: string; current: string; release?: Entry; releaseLabel?: string; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode
 }) {
   return <section className="flex min-h-52 flex-col gap-3 rounded-2xl border border-border bg-card p-5">
     <div className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</div>
-    <p className="text-sm">当前 <span className="font-mono">{current}</span> → 发布 <span className="font-mono">{release?.version ?? "未取得"}</span></p>
+    <p className="text-sm">当前 <span className="font-mono">{current}</span> → 发布 <span className="font-mono">{releaseLabel ?? release?.version ?? "未取得"}</span></p>
     {release && <p className="text-xs text-muted-foreground">{size(release.sizeBytes)} · {new Date(release.publishedAt).toLocaleString()}</p>}
     <p className="min-h-9 text-xs text-muted-foreground">{note}</p>
     {release?.title && <p className="text-xs font-medium">{release.title}</p>}

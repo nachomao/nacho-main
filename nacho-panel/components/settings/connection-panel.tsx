@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Cloud, Copy, Eye, EyeOff, RefreshCw, ServerCog } from "lucide-react"
 import { CloudDeployForm } from "@/components/onboarding/cloud-deploy-form"
+import { CloudModeTransition } from "@/components/onboarding/cloud-mode-transition"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useServerData } from "@/components/server-data-context"
@@ -92,7 +93,7 @@ export function ConnectionPanel() {
             <ToggleGroupItem value="deploy" className="min-w-0 text-xs"><ServerCog aria-hidden="true" />云端部署</ToggleGroupItem>
             <ToggleGroupItem value="connect" className="min-w-0 text-xs"><Cloud aria-hidden="true" />云端对接</ToggleGroupItem>
           </ToggleGroup>
-          <div className="flex flex-col">
+          <CloudModeTransition mode={cloudChoice}>
             <div className="cloud-mode-panel" data-active={cloudChoice === "deploy"} aria-hidden={cloudChoice !== "deploy"} inert={cloudChoice !== "deploy"}>
               <div className="min-h-0 overflow-hidden">
                 <div className="cloud-mode-content">
@@ -151,7 +152,7 @@ export function ConnectionPanel() {
                 </div>
               </div>
             </div>
-          </div>
+          </CloudModeTransition>
         </div>
       )}
 

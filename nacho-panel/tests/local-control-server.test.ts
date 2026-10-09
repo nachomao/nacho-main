@@ -159,6 +159,7 @@ test("GitHub source acquisition uses a shallow main-branch clone", () => {
     "1",
     "--branch",
     "main",
+    "--progress",
     "https://github.com/nachomao/nacho-server.git",
     "C:\\Users\\Administrator\\AppData\\Local\\NachoPanel\\server.download",
   ])

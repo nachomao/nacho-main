@@ -1,9 +1,8 @@
-const { createHash, verify } = require("node:crypto")
+const { verify } = require("node:crypto")
 const { execFile, spawn } = require("node:child_process")
 const fs = require("node:fs")
 const path = require("node:path")
-const { Readable, Transform } = require("node:stream")
-const { pipeline } = require("node:stream/promises")
+const { downloadFile } = require("./github-download.cjs")
 const { promisify } = require("node:util")
 const execFileAsync = promisify(execFile)
 
@@ -120,6 +119,10 @@ async function readRemote(url, max) {
 function createUpdater(app) {
   const statePath = path.join(app.getPath("userData"), "update-channel.json")
   let channel = "stable"
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), "package.json"), "utf8"))
+    if (CHANNELS.includes(manifest.releaseChannel)) channel = manifest.releaseChannel
+  } catch {}
   try {
     const saved = JSON.parse(fs.readFileSync(statePath, "utf8"))
     if (CHANNELS.includes(saved.channel)) channel = saved.channel
@@ -246,25 +249,8 @@ function createUpdater(app) {
       const directory = path.join(app.getPath("userData"), "updates")
       fs.mkdirSync(directory, { recursive: true })
       const installer = path.join(directory, release.fileName)
-      const temporary = `${installer}.download`
-      const response = await fetch(release.url, { signal: AbortSignal.timeout(20 * 60_000) })
-      if (!response.ok || !response.body) throw new Error(`安装包下载 HTTP ${response.status}`)
-      let size = 0
-      const hash = createHash("sha256")
-      try {
-        await pipeline(Readable.fromWeb(response.body), new Transform({
-          transform(chunk, _encoding, callback) {
-            size += chunk.length
-            if (size > release.sizeBytes) return callback(new Error("安装包超过发布大小"))
-            hash.update(chunk)
-            callback(null, chunk)
-          },
-        }), fs.createWriteStream(temporary, { flags: "w" }))
-        if (size !== release.sizeBytes || hash.digest("hex") !== release.sha256) throw new Error("安装包校验失败")
-        fs.renameSync(temporary, installer)
-      } finally {
-        if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true })
-      }
+      await downloadFile(release.url, installer, { sizeBytes: release.sizeBytes,
+        sha256: release.sha256, timeoutMs: 20 * 60_000, onLog: console.info })
       if (release.authenticodeThumbprint) {
         const safePath = installer.replaceAll("'", "''")
         const signatureCheck = `$s=Get-AuthenticodeSignature -LiteralPath '${safePath}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint.ToUpperInvariant() -ne '${release.authenticodeThumbprint}') { exit 5 }`
@@ -313,25 +299,8 @@ function createUpdater(app) {
       const directory = path.join(app.getPath("userData"), "updates")
       fs.mkdirSync(directory, { recursive: true })
       const local = path.join(directory, asset.fileName)
-      const temporary = `${local}.download`
-      const response = await fetch(asset.url, { signal: AbortSignal.timeout(20 * 60_000) })
-      if (!response.ok || !response.body) throw new Error(`GitHub 制品下载 HTTP ${response.status}`)
-      let count = 0
-      const hash = createHash("sha256")
-      try {
-        await pipeline(Readable.fromWeb(response.body), new Transform({
-          transform(chunk, _encoding, callback) {
-            count += chunk.length
-            if (count > asset.sizeBytes) return callback(new Error("GitHub 制品超过发布大小"))
-            hash.update(chunk)
-            callback(null, chunk)
-          },
-        }), fs.createWriteStream(temporary, { flags: "w" }))
-        if (count !== asset.sizeBytes || hash.digest("hex") !== asset.sha256) {
-          throw new Error("GitHub 制品大小或 SHA-256 不匹配")
-        }
-        fs.renameSync(temporary, local)
-      } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true }) }
+      await downloadFile(asset.url, local, { sizeBytes: asset.sizeBytes,
+        sha256: asset.sha256, timeoutMs: 20 * 60_000, onLog: console.info })
       const headers = { Authorization: `Bearer ${apiKey}`,
         "X-Nacho-Panel-Version": app.getVersion(), Accept: "application/json" }
       async function api(relative, init = {}) {

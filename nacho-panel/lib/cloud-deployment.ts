@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { resolve4 } from "node:dns/promises"
 import { isIP } from "node:net"
 import { Client } from "ssh2"
+import { gitCloneShell } from "../../desktop/src/github-download.cjs"
 
 type Target = { host: string; username: string; password: string; fingerprint: string }
 export type CloudDeploymentResult = { api: string; key: string }
@@ -214,7 +215,7 @@ export function buildCloudInstallCommand(remoteDirectory: string) {
     "else echo '目标系统没有可用的包管理器，无法安装 Git' >&2; exit 43",
     "fi",
     `rm -rf '${sourceDirectory}'`,
-    `git clone --depth 1 --branch ${NACHO_SERVER_BRANCH} ${NACHO_SERVER_REPOSITORY} '${sourceDirectory}'`,
+    gitCloneShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH),
     `test -f '${sourceDirectory}/deploy/install.sh'`,
     `NACHO_HIDE_INSTALL_SECRETS=1 bash '${sourceDirectory}/deploy/install.sh'`,
   ].join("; ")

@@ -101,7 +101,7 @@ export const defaultSettings: SettingsState = {
     twoFactor: false,
     apiKeyAuth: true,
     ipAllowlist: false,
-    forceHttps: true,
+    forceHttps: false,
     loginLockout: true,
     openEnrollment: true,
   },

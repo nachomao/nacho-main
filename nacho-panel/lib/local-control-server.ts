@@ -1,13 +1,12 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto"
+import { randomBytes, randomUUID } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { createServer } from "node:net"
-import { constants, createWriteStream } from "node:fs"
+import { constants } from "node:fs"
 import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import { Readable, Transform } from "node:stream"
-import { pipeline } from "node:stream/promises"
 import os from "node:os"
 import path from "node:path"
 import { fetchSignedProductIndex } from "./signed-product-index"
+import { cloneGitHub, downloadFile, fetchGitHubJson } from "../../desktop/src/github-download.cjs"
 import { promisify } from "node:util"
 import {
   LOCAL_CONTROL_UNINSTALL_CONFIRMATION,
@@ -164,26 +163,46 @@ async function isGitAvailable() {
   }
 }
 
-export function gitCloneArguments(destination: string) {
-  return ["clone", "--depth", "1", "--branch", NACHO_SERVER_BRANCH, NACHO_SERVER_REPOSITORY, destination]
+export function gitCloneArguments(destination: string, repository = NACHO_SERVER_REPOSITORY) {
+  return ["clone", "--depth", "1", "--branch", NACHO_SERVER_BRANCH, "--progress", repository, destination]
 }
 
 async function installGitForWindows(onProgress?: LocalControlProgressReporter) {
-  const command = [
-    "$ErrorActionPreference = 'Stop'",
-    "$winget = Get-Command winget.exe -ErrorAction SilentlyContinue",
-    "if ($winget) { & $winget.Source install --id Git.Git --exact --source winget --accept-package-agreements --accept-source-agreements --silent --disable-interactivity; if ($LASTEXITCODE -ne 0) { throw \"winget 安装 Git 失败（退出码 $LASTEXITCODE）\" }; exit 0 }",
-    "$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' -TimeoutSec 60",
-    "$asset = $release.assets | Where-Object { $_.name -match '64-bit.exe$' } | Select-Object -First 1",
-    "if (-not $asset) { throw '未找到 Git for Windows 安装包' }",
-    "$installer = Join-Path $env:TEMP $asset.name",
-    "Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer -UseBasicParsing -TimeoutSec 900",
-    "$process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' -Wait -PassThru",
-    "Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue",
-    "if ($process.ExitCode -ne 0) { throw \"Git for Windows 安装失败（退出码 $($process.ExitCode)）\" }",
-  ].join("; ")
   reportProgress(onProgress, "system", "未检测到 Git，正在下载并静默安装 Git for Windows…\n")
-  await runExecutable("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", command], process.cwd(), 15 * 60_000, onProgress)
+  const onLog = (line: string) => reportProgress(onProgress, "system", `${line}\n`)
+  type GitRelease = { tag_name: string; assets: Array<{
+    name: string; size: number; browser_download_url: string; digest?: string
+  }> }
+  const release = await fetchGitHubJson<GitRelease>(
+    "https://api.github.com/repos/git-for-windows/git/releases/latest", {
+      onLog,
+      validate: (value) => !!value && typeof value === "object" &&
+        typeof (value as GitRelease).tag_name === "string" && Array.isArray((value as GitRelease).assets),
+    })
+  const asset = release.assets.find((item) => /^Git-[0-9.]+-64-bit\.exe$/.test(item.name))
+  if (!asset || !Number.isSafeInteger(asset.size) || asset.size < 1 ||
+      asset.size > 300 * 1024 * 1024 ||
+      asset.browser_download_url !== `https://github.com/git-for-windows/git/releases/download/${release.tag_name}/${asset.name}` ||
+      (asset.digest && !/^sha256:[a-f0-9]{64}$/.test(asset.digest))) {
+    throw new LocalControlServerError("Git for Windows 发布安装包无效", 502)
+  }
+  const temporary = path.join(os.tmpdir(), `nacho-git-installer-${randomUUID()}`)
+  const installer = path.join(temporary, asset.name)
+  try {
+    await downloadFile(asset.browser_download_url, installer, {
+      sizeBytes: asset.size, sha256: asset.digest?.slice(7), timeoutMs: 15 * 60_000, onLog,
+    })
+    const quoted = installer.replaceAll("'", "''")
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      `$process = Start-Process -FilePath '${quoted}' -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' -Wait -PassThru -WindowStyle Hidden`,
+      "if ($process.ExitCode -ne 0) { throw \"Git for Windows 安装失败（退出码 $($process.ExitCode)）\" }",
+    ].join("; ")
+    await runExecutable("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+      "-ExecutionPolicy", "Bypass", "-Command", command], process.cwd(), 15 * 60_000, onProgress)
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
   const gitCandidates = [
     path.join(process.env.ProgramFiles || "", "Git", "cmd"),
     path.join(process.env.LOCALAPPDATA || "", "Programs", "Git", "cmd"),
@@ -228,7 +247,10 @@ async function cloneServerSource(
   const backup = replaceExisting && await exists(serverDir) ? `${serverDir}.backup-${randomUUID()}` : null
   try {
     reportProgress(onProgress, "system", `正在从 GitHub 获取服务端代码（${NACHO_SERVER_BRANCH}）…\n`)
-    await runExecutable("git", gitCloneArguments(temporary), parent, 15 * 60_000, onProgress)
+    await cloneGitHub(NACHO_SERVER_REPOSITORY, temporary, {
+      branch: NACHO_SERVER_BRANCH, cwd: parent, timeoutMs: 15 * 60_000,
+      onLog: (line) => reportProgress(onProgress, "system", `${line}\n`),
+    })
     await validateClonedServerDirectory(temporary)
     if (backup) await rename(serverDir, backup)
     await rename(temporary, serverDir)
@@ -971,24 +993,10 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
       await mkdir(temporary, { recursive: true })
       const sourceAsset = index.schemaVersion === 3 ? target.source : target.windows
       if (!sourceAsset) throw new LocalControlServerError("服务端发布缺少源码制品", 502)
-      const response = await fetch(sourceAsset.url, { signal: AbortSignal.timeout(15 * 60_000) })
-      if (!response.ok || !response.body || Number(response.headers.get("content-length")) > sourceAsset.sizeBytes) {
-        throw new LocalControlServerError(`Windows 服务端制品下载失败（HTTP ${response.status}）`, 502)
-      }
-      let bytes = 0
-      const hash = createHash("sha256")
-      await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-        new Transform({
-          transform(chunk: Buffer, _encoding, callback) {
-            bytes += chunk.length
-            if (bytes > sourceAsset.sizeBytes) return callback(new Error("Windows 服务端制品超过发布大小"))
-            hash.update(chunk)
-            callback(null, chunk)
-          },
-        }), createWriteStream(archive, { flags: "wx" }))
-      if (bytes !== sourceAsset.sizeBytes || hash.digest("hex") !== sourceAsset.sha256) {
-        throw new LocalControlServerError("Windows 服务端制品校验失败", 502)
-      }
+      await downloadFile(sourceAsset.url, archive, {
+        sizeBytes: sourceAsset.sizeBytes, sha256: sourceAsset.sha256, timeoutMs: 15 * 60_000,
+        onLog: (line) => console.info(line),
+      })
       const entries = (await runExecutable("tar", ["-tf", archive], path.dirname(serverDir), 60_000)).stdout
       if (entries.split(/\r?\n/).filter(Boolean).some((entry) => {
         const name = entry.replaceAll("\\", "/")

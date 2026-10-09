@@ -4,6 +4,7 @@ import { Info, Cpu, ScrollText, Sparkles, GitBranch, ExternalLink, HeartPulse } 
 import { SettingCard, InfoRow } from "./primitives"
 import { aboutInfo } from "./settings-data"
 import { BrandLogo } from "@/components/brand-logo"
+import { PANEL_VERSION_LABEL } from "@/lib/panel-version"
 
 export function AboutPanel({ onOpenUpdates }: { onOpenUpdates: () => void }) {
   return (
@@ -21,7 +22,7 @@ export function AboutPanel({ onOpenUpdates }: { onOpenUpdates: () => void }) {
           <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
             <span className="flex items-center gap-1 rounded-full bg-primary/12 px-3 py-1 text-xs font-medium text-primary">
               <Sparkles className="h-3.5 w-3.5" />
-              面板版本请在「更新」中查看
+              {PANEL_VERSION_LABEL}
             </span>
             <span className="flex items-center gap-1 rounded-full bg-surface px-3 py-1 text-xs font-medium text-muted-foreground">
               <HeartPulse className="h-3.5 w-3.5" />
@@ -35,8 +36,9 @@ export function AboutPanel({ onOpenUpdates }: { onOpenUpdates: () => void }) {
       <SettingCard title="版本信息" desc="当前面板的版本与构建详情" icon={<Info className="h-5 w-5" />}>
         <InfoRow label="面板名称" value={aboutInfo.panelName} />
         <InfoRow
-          label="版本状态"
-          value="由「更新」页面实时检查面板、服务端及 Agent"
+          label="面板版本"
+          value={PANEL_VERSION_LABEL}
+          mono
         />
         <button type="button" onClick={onOpenUpdates} className="text-sm text-primary hover:underline">打开产品更新 →</button>
         <InfoRow
@@ -67,13 +69,15 @@ export function AboutPanel({ onOpenUpdates }: { onOpenUpdates: () => void }) {
       <SettingCard title="资源与支持" desc="文档、源码与开源许可" icon={<ScrollText className="h-5 w-5" />}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {[
-            { icon: <GitBranch className="h-5 w-5" />, label: "源码仓库", sub: "GitHub" },
-            { icon: <ScrollText className="h-5 w-5" />, label: "使用文档", sub: "Docs" },
-            { icon: <Info className="h-5 w-5" />, label: "更新日志", sub: "Changelog" },
+            { icon: <GitBranch className="h-5 w-5" />, label: "源码仓库", sub: "GitHub", href: "https://github.com/nachomao/nacho-main" },
+            { icon: <ScrollText className="h-5 w-5" />, label: "使用文档", sub: "Docs", href: "https://github.com/nachomao/nacho-main/blob/main/nacho-panel/README.md" },
+            { icon: <Info className="h-5 w-5" />, label: "更新日志", sub: "Changelog", href: "https://github.com/nachomao/nacho-main/releases" },
           ].map((l) => (
             <a
               key={l.label}
-              href="#"
+              href={l.href}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-3 rounded-2xl border border-border bg-surface/60 px-4 py-3.5 transition-colors hover:bg-surface"
             >
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/12 text-primary">

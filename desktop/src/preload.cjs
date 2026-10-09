@@ -41,3 +41,9 @@ contextBridge.exposeInMainWorld("nachoUpdates", {
     return () => ipcRenderer.removeListener("updates:available", listener)
   },
 })
+
+contextBridge.exposeInMainWorld("nachoConnection", {
+  get() { return ipcRenderer.invoke("connection:get") },
+  set(snapshot) { return ipcRenderer.invoke("connection:set", snapshot) },
+  clear() { return ipcRenderer.invoke("connection:clear") },
+})

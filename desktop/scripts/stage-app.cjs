@@ -5,7 +5,9 @@ const desktopDir = path.resolve(__dirname, "..")
 const rootDir = path.resolve(desktopDir, "..")
 const desktopManifest = JSON.parse(fs.readFileSync(path.join(desktopDir, "package.json"), "utf8"))
 const panelDir = path.join(rootDir, "nacho-panel")
-const panelStandaloneDir = path.join(panelDir, ".next", "standalone")
+const standaloneRoot = path.join(panelDir, ".next", "standalone")
+const panelStandaloneDir = fs.existsSync(path.join(standaloneRoot, "server.js"))
+  ? standaloneRoot : path.join(standaloneRoot, "nacho-panel")
 const appDir = path.join(desktopDir, "app")
 const stagedPanelDir = path.join(appDir, "panel")
 const stagedDependenciesDir = path.join(appDir, "panel-deps")
@@ -33,7 +35,9 @@ copyRequired(path.join(panelDir, "public"), path.join(stagedPanelDir, "public"))
 
 copyRequired(path.join(desktopDir, "src", "main.cjs"), path.join(appDir, "main.cjs"))
 copyRequired(path.join(desktopDir, "src", "preload.cjs"), path.join(appDir, "preload.cjs"))
+copyRequired(path.join(desktopDir, "src", "connection-store.cjs"), path.join(appDir, "connection-store.cjs"))
 copyRequired(path.join(desktopDir, "src", "updates.cjs"), path.join(appDir, "updates.cjs"))
+copyRequired(path.join(desktopDir, "src", "github-download.cjs"), path.join(appDir, "github-download.cjs"))
 copyRequired(path.join(desktopDir, "src", "panel-runner.cjs"), path.join(stagedPanelDir, "panel-runner.cjs"))
 
 const updateOrigin = process.env.NACHO_UPDATE_ORIGIN
@@ -48,6 +52,7 @@ fs.writeFileSync(
     {
       name: "nacho-panel-runtime",
       version: desktopManifest.version,
+      releaseChannel: desktopManifest.releaseChannel,
       private: true,
       main: "main.cjs",
       description: "Nacho 面板桌面运行时",
