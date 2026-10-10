@@ -28,7 +28,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const { phase } = useOnboarding()
   const { shellRecessed } = useAIMode()
   const { covered: startupCovered } = useStartupMotion()
-  const covered = startupCovered || phase === "intro" || phase === "locked" // 覆盖层完整遮挡时保持待命姿态
+  const covered = startupCovered || phase === "intro" || phase === "locked" || phase === "recovery"
 
   return (
     <div
@@ -43,6 +43,7 @@ function ShellContent({ children }: { children: ReactNode }) {
           "transform 1200ms cubic-bezier(0.32, 0.72, 0.24, 1), filter 1200ms cubic-bezier(0.32, 0.72, 0.24, 1), opacity 950ms ease",
       }}
       aria-hidden={covered || shellRecessed}
+      inert={covered || shellRecessed}
     >
       <div className="electron-no-drag relative isolate flex h-full min-w-0 gap-2 overflow-hidden rounded-[2rem] bg-background/92 p-3 sm:p-4">
         <Orb

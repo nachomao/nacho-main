@@ -31,7 +31,7 @@ test("sandbox preload exposes both desktop bridges", () => {
       })
       await window.loadURL("data:text/html,<title>bridge</title>")
       const result = await window.webContents.executeJavaScript(
-        "JSON.stringify({ updates: typeof window.nachoUpdates, windowBridge: typeof window.nachoWindow, connectionBridge: typeof window.nachoConnection, connectionGet: typeof window.nachoConnection?.get, connectionSet: typeof window.nachoConnection?.set, connectionClear: typeof window.nachoConnection?.clear })",
+        "JSON.stringify({ updates: typeof window.nachoUpdates, windowBridge: typeof window.nachoWindow, connectionBridge: typeof window.nachoConnection, connectionGet: typeof window.nachoConnection?.get, connectionSet: typeof window.nachoConnection?.set, connectionClear: typeof window.nachoConnection?.clear, connectionRetry: typeof window.nachoConnection?.retry, connectionReinitialize: typeof window.nachoConnection?.reinitialize })",
       )
       process.stdout.write(result)
       app.quit()
@@ -54,5 +54,7 @@ test("sandbox preload exposes both desktop bridges", () => {
     connectionGet: "function",
     connectionSet: "function",
     connectionClear: "function",
+    connectionRetry: "function",
+    connectionReinitialize: "function",
   })
 })

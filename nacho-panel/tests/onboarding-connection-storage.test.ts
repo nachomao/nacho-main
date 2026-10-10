@@ -6,6 +6,8 @@ import {
   ONBOARDING_STORAGE_KEYS,
   persistOnboardingSnapshot,
   restoreOnboardingSnapshot,
+  restoredOnboardingPhase,
+  ConnectionRestoreError,
   type ConnectionStorageBridge,
   type KeyValueStorage,
   type OnboardingSnapshot,
@@ -61,6 +63,26 @@ test("桌面加密桥优先恢复并在首次迁移成功后删除旧 localStora
   assert.equal(restored.hasLegacyData, true)
   assert.equal(storage.values.size, 0)
   assert.deepEqual(await bridge.get(), { snapshot: restored.snapshot, persisted: true })
+})
+
+test("结构化解密错误进入恢复状态，保留旧值且不读明文回退", async () => {
+  const storage = new MemoryStorage()
+  storage.setItem(ONBOARDING_STORAGE_KEYS.auth, JSON.stringify({ mode: "password", secret: "old-secret" }))
+  const bridge: ConnectionStorageBridge = {
+    ...createBridge(),
+    async get() { return { snapshot: null, persisted: true, error: { code: "decrypt-failed", message: "凭据解密认证失败" } } },
+  }
+  await assert.rejects(restoreOnboardingSnapshot(bridge, storage), (error) =>
+    error instanceof ConnectionRestoreError && error.failure.code === "decrypt-failed")
+  assert.equal(storage.values.size, 1)
+})
+
+test("完成初始化但缺失登录凭据时保持恢复屏；旧锁定状态恢复后仍锁定", () => {
+  assert.equal(restoredOnboardingPhase(true, EMPTY_ONBOARDING_SNAPSHOT), "recovery")
+  const saved: OnboardingSnapshot = { serverSource: null, auth: { mode: "key", secret: "fixture" }, locked: true }
+  assert.equal(restoredOnboardingPhase(true, saved), "locked")
+  assert.equal(restoredOnboardingPhase(true, { ...saved, locked: false }), "done")
+  assert.equal(restoredOnboardingPhase(false, EMPTY_ONBOARDING_SNAPSHOT), "intro")
 })
 
 test("已有桌面记录优先于当前 origin 的陈旧明文配置", async () => {

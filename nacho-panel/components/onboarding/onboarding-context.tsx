@@ -6,9 +6,13 @@ import { useLocalControlServer } from "@/lib/local-control-server-client"
 import type { LocalAvatarId } from "@/lib/local-settings-schema"
 import {
   clearOnboardingSnapshot,
+  ConnectionRestoreError,
   EMPTY_ONBOARDING_SNAPSHOT,
   persistOnboardingSnapshot,
   restoreOnboardingSnapshot,
+  restoredOnboardingPhase,
+  type ConnectionStorageFailure,
+  type OnboardingPhase,
   type OnboardingSnapshot,
 } from "@/lib/onboarding-connection-storage"
 
@@ -25,8 +29,6 @@ export type AuthMethod = OnboardingSnapshot["auth"]
  * - unlocking 覆盖层正在渐隐离场，主页同步浮现
  * - done      引导完成，覆盖层已卸载
  */
-type OnboardingPhase = "intro" | "locked" | "unlocking" | "done"
-
 interface OnboardingContextValue {
   /** 本地持久化状态是否已恢复完成 */
   hydrated: boolean
@@ -52,6 +54,9 @@ interface OnboardingContextValue {
   startUnlock: () => void
   /** 清除本机保存的首次引导数据，并重新开始初始化流程 */
   reset: () => void
+  recoveryError: ConnectionStorageFailure | null
+  retryRecovery: () => Promise<void>
+  reinitializeCredentials: () => Promise<void>
 }
 
 const OnboardingContext = createContext<OnboardingContextValue | null>(null)
@@ -64,51 +69,71 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const restored = useRef(false)
   const legacyLocalSource = useRef(false)
   const snapshot = useRef<OnboardingSnapshot>(EMPTY_ONBOARDING_SNAPSHOT)
-  const persistenceQueue = useRef<Promise<void>>(Promise.resolve())
+  const persistenceQueue = useRef<Promise<unknown>>(Promise.resolve())
   const [connectionHydrated, setConnectionHydrated] = useState(false)
+  const [recoveryError, setRecoveryError] = useState<ConnectionStorageFailure | null>(null)
   const { status: localControlStatus } = useLocalControlServer()
 
   const persistSnapshot = useCallback((next: OnboardingSnapshot) => {
     snapshot.current = next
-    persistenceQueue.current = persistenceQueue.current
+    const saved = persistenceQueue.current
       .catch(() => undefined)
       .then(() => persistOnboardingSnapshot(
         typeof window === "undefined" ? undefined : window.nachoConnection,
         localStorage,
         next,
       ))
-      .catch((error) => console.error("连接配置保存失败", error))
+      .then(() => true)
+      .catch(() => {
+        setRecoveryError({ code: "write-failed", message: "本地凭据保存校验失败，原记录保持保留。" })
+        setPhase("recovery")
+        return false
+      })
+    persistenceQueue.current = saved
+    return saved
   }, [])
 
-  // 共享设置迁移完成后，再恢复桌面加密记录或浏览器连接与锁屏状态。
-  useEffect(() => {
-    if (!hydrated || restored.current) return
-    restored.current = true
-    let active = true
-    void restoreOnboardingSnapshot(
-      typeof window === "undefined" ? undefined : window.nachoConnection,
-      localStorage,
-    ).then(({ snapshot: saved, legacyLocalSource: isLegacyLocal }) => {
-      if (!active) return
+  const restore = useCallback(async () => {
+    try {
+      const { snapshot: saved, legacyLocalSource: isLegacyLocal } = await restoreOnboardingSnapshot(
+        typeof window === "undefined" ? undefined : window.nachoConnection, localStorage,
+      )
       snapshot.current = saved
       legacyLocalSource.current = isLegacyLocal
       setServerSourceState(saved.serverSource)
       setAuthState(saved.auth)
-      if (settings.onboardingCompleted) {
-        setPhase(saved.auth
-          ? (saved.locked ? "locked" : "done")
-          : "done")
-      }
-    }).catch((error) => {
-      // 桌面密文损坏或读取失败时不读取 localStorage 明文作为回退。
-      console.error("连接配置恢复失败", error)
-    }).finally(() => {
-      if (active) setConnectionHydrated(true)
-    })
-    return () => {
-      active = false
-    }
-  }, [hydrated, settings.onboardingCompleted])
+      const nextPhase = restoredOnboardingPhase(settings.onboardingCompleted, saved)
+      setRecoveryError(nextPhase === "recovery" ? {
+        code: "missing-auth", message: "已初始化的面板缺少本地登录凭据，请先恢复或明确重新初始化。",
+      } : null)
+      setPhase(nextPhase)
+    } catch (error) {
+      setServerSourceState(null)
+      setAuthState(null)
+      setRecoveryError(error instanceof ConnectionRestoreError ? error.failure : {
+        code: "read-failed", message: "本地凭据恢复失败，请重试读取。",
+      })
+      setPhase("recovery")
+    } finally { setConnectionHydrated(true) }
+  }, [settings.onboardingCompleted])
+
+  // 恢复错误只进入专用状态，保留锁定语义及历史文件，不读取明文作为回退。
+  useEffect(() => {
+    if (!hydrated || restored.current) return
+    restored.current = true
+    void restore()
+  }, [hydrated, restore])
+
+  const retryRecovery = useCallback(async () => { await restore() }, [restore])
+  const reinitializeCredentials = useCallback(async () => {
+    if (window.nachoConnection) {
+      if (!window.nachoConnection.reinitialize) throw new Error("需要支持凭据恢复的新桌面版本")
+      await window.nachoConnection.reinitialize("RESET_LOCAL_CREDENTIALS")
+    } else await clearOnboardingSnapshot(undefined, localStorage)
+    await update({ onboardingCompleted: false })
+    // 用户名、头像、主题、通知设置保留；仅明确重新建立本机连接和登录方式。
+    window.location.reload()
+  }, [update])
 
   useEffect(() => {
     if (!connectionHydrated || !legacyLocalSource.current || !localControlStatus?.healthy || !localControlStatus.connection) return
@@ -141,11 +166,16 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   }, [persistSnapshot])
 
   const startUnlock = useCallback(() => {
-    persistSnapshot({ ...snapshot.current, locked: false })
-    setPhase("unlocking")
-    void update({ onboardingCompleted: true })
-    // 与覆盖层离场动画时长保持一致，结束后卸载覆盖层
-    window.setTimeout(() => setPhase("done"), 1050)
+    void (async () => {
+      if (!await persistSnapshot({ ...snapshot.current, locked: false })) return
+      await update({ onboardingCompleted: true })
+      setPhase("unlocking")
+      // 与覆盖层离场动画时长保持一致，结束后卸载覆盖层。
+      window.setTimeout(() => setPhase("done"), 1050)
+    })().catch(() => {
+      setRecoveryError({ code: "write-failed", message: "本地初始化状态保存失败，请重试读取凭据。" })
+      setPhase("recovery")
+    })
   }, [persistSnapshot, update])
 
   const setServerSource = useCallback((source: ServerSource) => {
@@ -155,11 +185,11 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => {
     void (async () => {
-      await resetLocalSettings()
       await clearOnboardingSnapshot(
         typeof window === "undefined" ? undefined : window.nachoConnection,
         localStorage,
       )
+      await resetLocalSettings()
 
       // A reload also resets transient step and animation state owned by child components.
       window.location.reload()
@@ -184,6 +214,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         lock,
         startUnlock,
         reset,
+        recoveryError,
+        retryRecovery,
+        reinitializeCredentials,
       }}
     >
       {children}

@@ -13,6 +13,11 @@ if (!process.env.NACHO_UPDATE_ORIGIN) {
 }
 const { createUpdater } = require("./updates.cjs")
 const { createConnectionStore, registerConnectionIpc } = require("./connection-store.cjs")
+const { configureConnectionContext } = require("./connection-context.cjs")
+const { createCredentialProtector } = require("./credential-protector.cjs")
+
+// 必须在 app.ready 及 safeStorage 初始化之前固定 profile，避免不同启动方式共用密文却使用不同密钥。
+const connectionPaths = configureConnectionContext(app)
 
 let mainWindow = null
 let connectionStore = null
@@ -121,6 +126,7 @@ async function startPanelServer() {
       HOSTNAME: "127.0.0.1",
       PORT: String(panelPort),
       NODE_PATH: [panelDependenciesDir, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
+      NACHO_PANEL_SETTINGS_PATH: process.env.NACHO_PANEL_SETTINGS_PATH || path.join(connectionPaths.dataDirectory, "panel-settings.json"),
     },
     stdio: "pipe",
   })
@@ -189,17 +195,13 @@ function registerWindowBridge() {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
     return updates.check(force === true)
   })
-  ipcMain.handle("updates:set-channel", (event, channel) => {
-    if (event.sender !== mainWindow?.webContents) throw new Error("无效面板来源")
-    return updates.setChannel(channel)
-  })
-  ipcMain.handle("updates:install-panel", (event) => {
+  ipcMain.handle("updates:install-panel", (event, sequence, version) => {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
-    return updates.installPanel()
+    return updates.installPanel(sequence, version)
   })
-  ipcMain.handle("updates:transfer", (event, kind, serverUrl, apiKey) => {
+  ipcMain.handle("updates:transfer", (event, kind, serverUrl, apiKey, sequence, version) => {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
-    return updates.transferRelease(kind, serverUrl, apiKey, (percent) => {
+    return updates.transferRelease(kind, serverUrl, apiKey, sequence, version, (percent) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updates:transfer-progress", percent)
     })
   })
@@ -256,23 +258,18 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("系统凭据加密不可用，无法安全保存连接配置")
-    }
-    const localAppData = process.env.LOCALAPPDATA
-      || (process.platform === "win32"
-        ? path.join(app.getPath("home"), "AppData", "Local")
-        : app.getPath("appData"))
     connectionStore = createConnectionStore({
       safeStorage,
-      filePath: path.join(localAppData, "NachoPanel", "connection-secrets.json"),
+      filePath: connectionPaths.filePath,
+      protector: createCredentialProtector(),
+      archivedPath: connectionPaths.archivedPath,
     })
-    // 启动时只读取／解密一次；后续 connection:get 仅复制主进程内存快照。
+    // 启动校验与每次读取均验证磁盘记录，缓存不掩盖持久化错误。
     try {
       connectionStore.load()
     } catch (error) {
       // 继续启动面板，但损坏的密文不会回退到 localStorage；显式新连接可覆盖修复。
-      log("加密连接配置读取失败", error)
+      log(`加密连接配置读取失败 code=${error.code || "read-failed"}`)
     }
     registerWindowBridge()
     try {

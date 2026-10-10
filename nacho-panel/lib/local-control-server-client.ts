@@ -60,8 +60,8 @@ export function runLocalControlAction(action: Exclude<LocalControlAction, "insta
   return mutateLocalControl("POST", { action })
 }
 
-export function updateLocalControl(version: string, panelVersion: string) {
-  return mutateLocalControl("POST", { action: "update", version, panelVersion })
+export function updateLocalControl(version: string, panelVersion: string, sequence: number) {
+  return mutateLocalControl("POST", { action: "update", version, panelVersion, sequence })
 }
 
 export async function installLocalControl(

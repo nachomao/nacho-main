@@ -20,8 +20,9 @@ desktop/dist/NachoPanel/NachoPanel-Setup-<version>.exe
 这是 Windows x64 NSIS 安装包。安装向导允许选择安装目录，默认按当前用户安装，并创建桌面和开始菜单快捷方式。
 
 构建不会自动递增版本。正式发布前显式修改 `desktop/package.json` 的 `version` 和 `releaseChannel`（`stable` / `beta` / `alpha`）；普通测试构建不会被当作新版。
-关于页从构建信息读取版本，显示为 `X.Y.Z Stable`、`X.Y.Z Beta` 或 `X.Y.Z Alpha`，离线也可查看。新安装默认检查构建对应的更新频道；升级保留用户已选择的频道，切换更新频道不会改变当前安装版本的标识。
-面板先独立验证并保存更新频道，再尝试同步控制服务的频道。控制服务缺少更新地址、未连接或同步失败时，面板仍可检查和安装更新；服务端／Agent 升级需先成功同步对应频道。
+关于页从构建信息读取已安装版本与类型，离线也可查看。更新页读取服务器的统一推荐索引；面板和服务端可分别推荐 Beta、Stable 等类型。用户不再切换频道，历史 `update-channel.json` 不参与更新选择。
+统一入口 `/updates/index.json` 重定向到 `/updates/revisions/<sequence>/index.json`；签名从同一不可变地址读取。SSE `/updates/events` 仅通知全局序号，收到通知后重新验签。安装与传输绑定已确认的版本及序号；推荐的目标组件变化时重新确认，另一组件变化不影响既有上传。
+控制服务缺少更新源、使用旧协议或 Linux 独立升级执行器需要迁移时，只在对应卡片说明原因，面板仍可独立检查和安装自身更新。旧控制服务须安装迁移版本并更新 root 拥有的执行器；Agent 制品准备与逐台／批量手动下发仍是独立操作。
 
 「设置 → 更新」由 Electron 主进程独立读取私有更新服务器的 Ed25519 签名索引，并在确认后校验安装包大小及 SHA-256、静默安装和重启。网页开发版只显示更新信息。
 面板 EXE 的 Authenticode 签名可选；有可信签名时会额外核对索引声明的证书指纹，未签名时索引不包含该字段且不会跳过 Ed25519 和 SHA-256 校验。发布用私钥仅保存在独立更新服务器的受限目录。
@@ -49,3 +50,12 @@ $env:NACHO_LOCAL_SERVER_DIR = "C:\Users\Administrator\Documents\Codex\Nacho\nach
 GitHub 文件达到 8 MiB 且正确支持 HTTP Range 时，Windows 默认使用最多四路分段下载；小文件、未知大小或不支持分段的端点使用单连接。网络中断后清理本次下载并换源，所有制品仍以签名索引中的官方 URL、大小和 SHA-256 为准。其他来源的下载和上传保持原有方式。
 
 Git 克隆保留浅克隆和实时进度，不使用 HTTP 文件分段。桌面构建缺少 GitHub 工具归档缓存时也通过同一下载器预取，并保留构建工具自身的完整性校验。此行为不修改全局 Git、代理或系统 TLS 配置。
+
+## 本机凭据加密与恢复
+
+- v2 连接记录使用 Windows DPAPI `CurrentUser`，由随安装包分发的独立 .NET helper 调用系统 API；只通过匿名 stdin/stdout 管道传输，明文不写入文件、参数或日志。构建增加 .NET 10 SDK 要求，安装后的 helper 为自包含程序。
+- v2 不再依赖 Chromium `Local State` 的中间密钥。它仍受 Windows 用户身份约束，不保证迁移到其他账户或重装 Windows 后自动解密。
+- 可读的 v1 `safeStorage` 记录在解密和字段校验成功后迁移，原始密文保留；缺少原匹配密钥的 v1 记录保持原样并进入恢复屏，不自动解锁、不回退 localStorage。
+- 每次保存先解密验证、写临时文件并落盘，再验证临时及最终磁盘记录；失败恢复原文件。每次读取重新验证磁盘，内存状态不掩盖下次启动失败。
+- 安装版显式保留 `%APPDATA%/nacho-panel-runtime` 和 `%LOCALAPPDATA%/NachoPanel`，开发版使用 `nacho-panel-runtime-dev` / `NachoPanel-dev`，防止混用凭据。
+- 恢复屏支持重试；用户逐字确认后才能将密文备份并重新建立本机连接／登录方式，用户名、主题和 Linux 服务端保持原样。此流程没有 SSH 恢复功能。

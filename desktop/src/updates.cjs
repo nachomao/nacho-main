@@ -7,7 +7,7 @@ const { promisify } = require("node:util")
 const execFileAsync = promisify(execFile)
 
 const UPDATE_ORIGIN = process.env.NACHO_UPDATE_ORIGIN || "https://updates.example.invalid"
-const INDEX_URL = `${UPDATE_ORIGIN}/updates/stable/index.json`
+const INDEX_URL = `${UPDATE_ORIGIN}/updates/index.json`
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEA2qjcjfU4N2/nMmD9XkemMqqq6P0K6OVfjAnwlBJDU1g=
 -----END PUBLIC KEY-----`
@@ -17,7 +17,6 @@ const FILES = {
   server: /^control-server-\d+\.\d+\.\d+-linux-x64\.tar\.gz$/,
   agent: /^nacho-agent-\d+\.\d+\.\d+-win-x64\.exe$/,
 }
-const CHANNELS = ["stable", "beta", "alpha"]
 function githubAsset(repo, version, name, asset) {
   if (!asset || asset.fileName !== name ||
       asset.url !== `https://github.com/nachomao/${repo}/releases/download/v${version}/${name}` ||
@@ -35,6 +34,8 @@ function normalizeV3(index) {
         !item.title?.trim() || !item.notes?.trim() || !Number.isFinite(Date.parse(item.publishedAt))) {
       throw new Error("双仓发布信息无效")
     }
+    if (index.schemaVersion === 4 && (typeof item.releaseType !== "string" ||
+        !/^[a-z][a-z0-9-]{0,31}$/.test(item.releaseType))) throw new Error("发布类型无效")
   }
   const exe = githubAsset("nacho-main", panel.version, `NachoPanel-Setup-${panel.version}.exe`, panel.asset)
   const source = githubAsset("nacho-server", server.version,
@@ -64,10 +65,11 @@ function verifyIndex(bytes, signature, key = PUBLIC_KEY, channel = "stable") {
   if (!bytes.length || bytes.length > 32768 || signature.length !== 64 ||
       !verify(null, bytes, key, signature)) throw new Error("发布索引签名无效")
   const index = JSON.parse(bytes.toString("utf8"))
-  if (![2, 3].includes(index.schemaVersion) || index.channel !== channel ||
+  if (![2, 3, 4].includes(index.schemaVersion) ||
+      (index.schemaVersion === 4 ? index.channel !== undefined : index.channel !== channel) ||
       !Number.isSafeInteger(index.sequence) || index.sequence < 1 ||
       !Number.isFinite(Date.parse(index.publishedAt)) || !index.releases) throw new Error("发布索引结构无效")
-  if (index.schemaVersion === 3) return normalizeV3(index)
+  if (index.schemaVersion === 3 || index.schemaVersion === 4) return normalizeV3(index)
   for (const component of ["panel", "server", "agent"]) {
     const item = index.releases[component]
     const expectedName = component === "panel" ? `NachoPanel-Setup-${item?.version}.exe` :
@@ -102,6 +104,7 @@ function verifyIndex(bytes, signature, key = PUBLIC_KEY, channel = "stable") {
 
 async function readRemote(url, max) {
   const response = await fetch(url, { signal: AbortSignal.timeout(15000), cache: "no-store" })
+  if (response.status === 404) throw new Error("更新服务器尚未提供推荐索引，请先迁移更新服务")
   if (!response.ok) throw new Error(`版本查询 HTTP ${response.status}`)
   if (Number(response.headers.get("content-length")) > max || !response.body) throw new Error("发布索引大小无效")
   const chunks = []
@@ -113,31 +116,21 @@ async function readRemote(url, max) {
   }
   const bytes = Buffer.concat(chunks)
   if (!bytes.length || bytes.length > max) throw new Error("发布索引大小无效")
-  return bytes
+  return { bytes, url: response.url || url }
 }
 
-function createUpdater(app) {
-  const statePath = path.join(app.getPath("userData"), "update-channel.json")
-  let channel = "stable"
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), "package.json"), "utf8"))
-    if (CHANNELS.includes(manifest.releaseChannel)) channel = manifest.releaseChannel
-  } catch {}
-  try {
-    const saved = JSON.parse(fs.readFileSync(statePath, "utf8"))
-    if (CHANNELS.includes(saved.channel)) channel = saved.channel
-  } catch {}
-  const cachePath = () => path.join(app.getPath("userData"), `release-index-cache-${channel}.json`)
+function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
+  const cachePath = () => path.join(app.getPath("userData"), "release-index-cache-recommended.json")
   let lastCheck = 0
   let checking = null
   let installing = false
   let notificationController = null
-  let subscriber = null
 
   function cached() {
     try {
       const object = JSON.parse(fs.readFileSync(cachePath(), "utf8"))
-      return verifyIndex(Buffer.from(object.bytes, "base64"), Buffer.from(object.signature, "base64"), PUBLIC_KEY, channel)
+      const index = verifyIndex(Buffer.from(object.bytes, "base64"), Buffer.from(object.signature, "base64"), publicKey)
+      return index.schemaVersion === 4 ? index : null
     } catch { return null }
   }
 
@@ -145,43 +138,60 @@ function createUpdater(app) {
     if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
     if (checking) return checking
     if (!force && Date.now() - lastCheck < 24 * 60 * 60 * 1000 && cached()) {
-      return { index: cached(), stale: false, currentVersion: app.getVersion(), channel }
+      return { index: cached(), stale: false, currentVersion: app.getVersion() }
     }
     checking = (async () => {
       const previous = cached()
       try {
         if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN)) throw new Error("更新服务器 HTTPS 地址无效")
-        const url = `${UPDATE_ORIGIN}/updates/${channel}/index.json`
-        const [bytes, signature] = await Promise.all([readRemote(url, 32768), readRemote(`${url}.sig`, 128)])
-        const index = verifyIndex(bytes, signature, PUBLIC_KEY, channel)
+        const { index, bytes, signature } = await readRecommended()
+        const componentChanged = previous && ["panel", "server", "agent"].some((key) => {
+          const next = index.releases[key], old = previous.releases[key]
+          return compareVersions(next.version, old.version) < 0 ||
+            (next.version === old.version && (next.sha256 !== old.sha256 || next.sizeBytes !== old.sizeBytes))
+        })
         if (previous && (index.sequence < previous.sequence ||
-            ["panel", "server", "agent"].some((key) =>
-              compareVersions(index.releases[key].version, previous.releases[key].version) < 0))) {
+            (index.sequence === previous.sequence && !bytes.equals(Buffer.from(JSON.parse(fs.readFileSync(cachePath(), "utf8")).bytes, "base64"))) ||
+            componentChanged)) {
           throw new Error("发布索引版本倒退")
         }
         fs.mkdirSync(path.dirname(cachePath()), { recursive: true })
         fs.writeFileSync(`${cachePath()}.tmp`, JSON.stringify({ bytes: bytes.toString("base64"), signature: signature.toString("base64") }))
         fs.renameSync(`${cachePath()}.tmp`, cachePath())
         lastCheck = Date.now()
-        return { index, stale: false, currentVersion: app.getVersion(), channel }
+        return { index, stale: false, currentVersion: app.getVersion() }
       } catch (error) {
+        lastCheck = 0
         if (previous && /HTTP|fetch|网络|超时|timed out|abort/i.test(String(error))) {
-          return { index: previous, stale: true, currentVersion: app.getVersion(), channel }
+          return { index: previous, stale: true, currentVersion: app.getVersion() }
         }
         throw error
       }
     })().finally(() => { checking = null })
     return checking
   }
+  async function readRecommended(sequence) {
+    if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN) ||
+        (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1))) throw new Error("推荐索引请求无效")
+    const url = sequence === undefined ? INDEX_URL : `${UPDATE_ORIGIN}/updates/revisions/${sequence}/index.json`
+    const remote = await readRemote(url, 32768)
+    const match = /^\/updates\/revisions\/([1-9]\d*)\/index\.json$/.exec(new URL(remote.url).pathname)
+    if (new URL(remote.url).origin !== UPDATE_ORIGIN || !match ||
+        (sequence !== undefined && Number(match[1]) !== sequence)) throw new Error("推荐索引固定地址无效")
+    const { bytes: signature } = await readRemote(`${remote.url}.sig`, 128)
+    const index = verifyIndex(remote.bytes, signature, publicKey)
+    if (index.schemaVersion !== 4 || index.sequence !== Number(match[1])) throw new Error("推荐索引序号或协议无效")
+    return { index, bytes: remote.bytes, signature }
+  }
   function subscribe(onRelease) {
     if (notificationController || UPDATE_ORIGIN === "https://updates.example.invalid") return
-    subscriber = onRelease
     notificationController = new AbortController()
     const signal = notificationController.signal
     void (async () => {
       while (!signal.aborted) {
         try {
-          const response = await fetch(`${UPDATE_ORIGIN}/updates/events?channel=${channel}`, { signal })
+          const response = await fetch(`${UPDATE_ORIGIN}/updates/events`, { signal })
           if (!response.ok || !response.body) throw new Error("更新通知连接失败")
           let buffer = ""
           for await (const chunk of response.body) {
@@ -196,7 +206,7 @@ function createUpdater(app) {
               if (data) {
                 try {
                   const notice = JSON.parse(data.slice(6))
-                  if (notice.channel === channel && Number.isSafeInteger(notice.sequence)) {
+                  if (Number.isSafeInteger(notice.sequence) && notice.sequence > 0) {
                     // Notification is only a hint; check() re-fetches and verifies the signed index.
                     const checked = await check(true)
                     if (!checked.stale && checked.index.sequence >= notice.sequence) onRelease(checked)
@@ -213,41 +223,20 @@ function createUpdater(app) {
       }
     })()
   }
-  function unsubscribe() { notificationController?.abort(); notificationController = null; subscriber = null }
-  async function setChannel(next) {
-    if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
-    if (!CHANNELS.includes(next)) throw new Error("无效更新频道")
-    if (next === channel) return check(true)
-    if (installing || checking) throw new Error("升级或检查正在执行")
-    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN)) throw new Error("更新服务器 HTTPS 地址无效")
-    const url = `${UPDATE_ORIGIN}/updates/${next}/index.json`
-    const [bytes, signature] = await Promise.all([readRemote(url, 32768), readRemote(`${url}.sig`, 128)])
-    const index = verifyIndex(bytes, signature, PUBLIC_KEY, next)
-    if (compareVersions(index.releases.panel.version, app.getVersion()) < 0) throw new Error("目标频道面板版本低于当前版本")
-    fs.mkdirSync(path.dirname(statePath), { recursive: true })
-    const nextCachePath = path.join(app.getPath("userData"), `release-index-cache-${next}.json`)
-    fs.writeFileSync(`${nextCachePath}.tmp`, JSON.stringify({ bytes: bytes.toString("base64"), signature: signature.toString("base64") }))
-    fs.renameSync(`${nextCachePath}.tmp`, nextCachePath)
-    fs.writeFileSync(`${statePath}.tmp`, JSON.stringify({ channel: next }))
-    fs.renameSync(`${statePath}.tmp`, statePath)
-    channel = next
-    lastCheck = Date.now()
-    if (notificationController) {
-      const callback = subscriber
-      unsubscribe()
-      if (callback) subscribe(callback)
-    }
-    return { index, stale: false, currentVersion: app.getVersion(), channel }
-  }
+  function unsubscribe() { notificationController?.abort(); notificationController = null }
 
-  async function installPanel() {
+  async function installPanel(sequence, version) {
+    if (!Number.isSafeInteger(sequence) || sequence < 1 || !VERSION.test(version)) throw new Error("安装版本参数无效")
     if (installing) throw new Error("升级已经在执行")
     if (process.platform !== "win32" || !app.isPackaged) throw new Error("仅 Windows 已安装面板支持应用内升级")
     installing = true
     try {
       const { index, stale } = await check(true)
       if (stale) throw new Error("离线缓存不可用于安装")
-      const release = index.releases.panel
+      const pinned = (await readRecommended(sequence)).index
+      const release = pinned.releases.panel
+      if (release.version !== version || index.releases.panel.version !== version ||
+          index.releases.panel.sha256 !== release.sha256) throw new Error("面板推荐版本已变化，请重新检查并确认")
       if (compareVersions(release.version, app.getVersion()) <= 0) throw new Error("当前面板已经是最新版本")
       const directory = path.join(app.getPath("userData"), "updates")
       fs.mkdirSync(directory, { recursive: true })
@@ -289,15 +278,16 @@ function createUpdater(app) {
       installing = false
     }
   }
-  async function transferRelease(kind, serverUrl, apiKey, onProgress) {
+  async function transferRelease(kind, serverUrl, apiKey, sequence, version, onProgress) {
     if (!["server", "agent"].includes(kind) || typeof serverUrl !== "string" ||
         !/^https?:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(serverUrl) ||
-        typeof apiKey !== "string" || !apiKey || installing) throw new Error("更新传输请求无效")
+        typeof apiKey !== "string" || !apiKey || installing ||
+        !Number.isSafeInteger(sequence) || sequence < 1 || !VERSION.test(version)) throw new Error("更新传输请求无效")
     installing = true
     try {
-      const checked = await check(true)
-      if (checked.stale || checked.index.schemaVersion !== 3) throw new Error("须先取得双仓签名索引")
-      const release = checked.index.releases.server
+      const { index } = await readRecommended(sequence)
+      const release = index.releases.server
+      if (release.version !== version) throw new Error("传输版本与已确认的发布不一致")
       const asset = kind === "server" ? release.source : release.agent
       const directory = path.join(app.getPath("userData"), "updates")
       fs.mkdirSync(directory, { recursive: true })
@@ -320,14 +310,15 @@ function createUpdater(app) {
         const saved = JSON.parse(fs.readFileSync(checkpoint, "utf8"))
         if (saved.serverUrl === serverUrl && saved.sha256 === asset.sha256) {
           const candidate = await api(`/product-updates/stages/${saved.id}`)
-          if (candidate.phase === "uploading" && candidate.version === release.version &&
-              candidate.sha256 === asset.sha256) stage = candidate
+          if (candidate.phase === "uploading" && candidate.feed === "recommended" &&
+              candidate.sequence === index.sequence && candidate.version === release.version &&
+              candidate.sha256 === asset.sha256 && candidate.sizeBytes === asset.sizeBytes) stage = candidate
         }
       } catch { /* 中断前未创建会话 */ }
       if (!stage) {
         stage = await api("/product-updates/stages", { method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind, version: release.version }) })
+          body: JSON.stringify({ kind, version: release.version, sequence: index.sequence }) })
         fs.writeFileSync(checkpoint, JSON.stringify({ id: stage.id, serverUrl, sha256: asset.sha256 }), {
           mode: 0o600,
         })
@@ -360,7 +351,7 @@ function createUpdater(app) {
     } finally { installing = false }
   }
 
-  return { check, cached, installPanel, transferRelease, setChannel, subscribe, unsubscribe, getChannel: () => channel }
+  return { check, cached, installPanel, transferRelease, subscribe, unsubscribe }
 }
 
 module.exports = { createUpdater, verifyIndex, compareVersions, INDEX_URL }

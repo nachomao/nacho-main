@@ -23,10 +23,9 @@ contextBridge.exposeInMainWorld("nachoWindow", {
 
 contextBridge.exposeInMainWorld("nachoUpdates", {
   check(force = false) { return ipcRenderer.invoke("updates:check", Boolean(force)) },
-  setChannel(channel) { return ipcRenderer.invoke("updates:set-channel", channel) },
-  installPanel() { return ipcRenderer.invoke("updates:install-panel") },
-  transferRelease(kind, serverUrl, apiKey) {
-    return ipcRenderer.invoke("updates:transfer", kind, serverUrl, apiKey)
+  installPanel(sequence, version) { return ipcRenderer.invoke("updates:install-panel", sequence, version) },
+  transferRelease(kind, serverUrl, apiKey, sequence, version) {
+    return ipcRenderer.invoke("updates:transfer", kind, serverUrl, apiKey, sequence, version)
   },
   onTransferProgress(callback) {
     if (typeof callback !== "function") return undefined
@@ -46,4 +45,6 @@ contextBridge.exposeInMainWorld("nachoConnection", {
   get() { return ipcRenderer.invoke("connection:get") },
   set(snapshot) { return ipcRenderer.invoke("connection:set", snapshot) },
   clear() { return ipcRenderer.invoke("connection:clear") },
+  retry() { return ipcRenderer.invoke("connection:retry") },
+  reinitialize(confirmation) { return ipcRenderer.invoke("connection:reinitialize", confirmation) },
 })

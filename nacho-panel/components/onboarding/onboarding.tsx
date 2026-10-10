@@ -7,6 +7,7 @@ import { NameRegister } from "./name-register"
 import { ServerRegister } from "./server-register"
 import { AuthRegister } from "./auth-register"
 import { LockScreen } from "./lock-screen"
+import { CredentialRecovery } from "./credential-recovery"
 
 const EASE = "cubic-bezier(0.32, 0.72, 0.24, 1)"
 
@@ -33,6 +34,11 @@ export function Onboarding() {
   const toAuth = useCallback(() => setStep("auth"), [])
 
   if (phase === "done") return null
+  if (phase === "recovery") return (
+    <div role="dialog" aria-modal="true" aria-label="NachoPanel 凭据恢复" className="fixed inset-0 z-[100] bg-background">
+      <CredentialRecovery />
+    </div>
+  )
 
   const unlocking = phase === "unlocking"
 

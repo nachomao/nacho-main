@@ -939,14 +939,18 @@ export function repairLocalControlServer() {
   })
 }
 
-/** Windows 本机服务只安装签名索引中固定版本的预构建制品，不克隆 main 分支。 */
-export function updateLocalControlServer(version: string, panelVersion: string) {
+/** Windows 本机服务安装已确认的签名发布；源码在暂存目录构建并验证。 */
+export function updateLocalControlServer(version: string, panelVersion: string, sequence: number) {
   return withMutationLock(async () => {
     const status = await getLocalControlServerStatus()
     requireWindows(status)
     if (!status.installed) throw new LocalControlServerError("本机服务尚未安装", 409)
-    const index = await fetchSignedProductIndex()
+    const latest = await fetchSignedProductIndex()
+    const index = await fetchSignedProductIndex(sequence)
     const target = index.releases.server
+    if (latest.releases.server.version !== version || latest.releases.server.sha256 !== target.sha256) {
+      throw new LocalControlServerError("服务端推荐版本已变化，请重新检查并确认", 409)
+    }
     const strict = /^\d+\.\d+\.\d+$/
     if (!strict.test(version) || version !== target.version) throw new LocalControlServerError("目标不是已签名的服务端发布", 409)
     const compare = (a: string, b: string) => {
@@ -991,7 +995,7 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
     let switched = false
     try {
       await mkdir(temporary, { recursive: true })
-      const sourceAsset = index.schemaVersion === 3 ? target.source : target.windows
+      const sourceAsset = index.schemaVersion >= 3 ? target.source : target.windows
       if (!sourceAsset) throw new LocalControlServerError("服务端发布缺少源码制品", 502)
       await downloadFile(sourceAsset.url, archive, {
         sizeBytes: sourceAsset.sizeBytes, sha256: sourceAsset.sha256, timeoutMs: 15 * 60_000,
@@ -1001,7 +1005,7 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
       if (entries.split(/\r?\n/).filter(Boolean).some((entry) => {
         const name = entry.replaceAll("\\", "/")
         return name.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(name) ||
-          !(index.schemaVersion === 3
+          !(index.schemaVersion >= 3
             ? /^(src|deploy|client|package\.json|package-lock\.json|tsconfig\.json)(\/|$)/.test(name)
             : /^(dist|node_modules|package\.json|package-lock\.json|deploy)(\/|$)/.test(name))
       })) throw new LocalControlServerError("Windows 发布包包含无效路径", 502)
@@ -1010,7 +1014,7 @@ export function updateLocalControlServer(version: string, panelVersion: string) 
         throw new LocalControlServerError("发布包包含链接或特殊文件", 502)
       }
       await runExecutable("tar", ["-xf", archive, "-C", temporary], path.dirname(serverDir), 5 * 60_000)
-      if (index.schemaVersion === 3) {
+      if (index.schemaVersion >= 3) {
         await runNpm(["ci", "--no-audit", "--no-fund"], temporary, 10 * 60_000)
         await runNpm(["run", "build"], temporary, 10 * 60_000)
         await rm(path.join(temporary, "node_modules"), { recursive: true, force: true })

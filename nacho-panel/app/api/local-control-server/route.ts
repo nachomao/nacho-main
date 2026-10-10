@@ -165,11 +165,12 @@ export async function POST(request: NextRequest) {
         data = await repairLocalControlServer()
         break
       case "update":
-        requireOnlyKeys(body, ["action", "version", "panelVersion"])
-        if (typeof body.version !== "string" || typeof body.panelVersion !== "string") {
+        requireOnlyKeys(body, ["action", "version", "panelVersion", "sequence"])
+        if (typeof body.version !== "string" || typeof body.panelVersion !== "string" ||
+            !Number.isSafeInteger(body.sequence) || Number(body.sequence) < 1) {
           throw new LocalControlServerError("升级版本参数无效", 400)
         }
-        data = await updateLocalControlServer(body.version, body.panelVersion)
+        data = await updateLocalControlServer(body.version, body.panelVersion, Number(body.sequence))
         break
       default:
         throw new LocalControlServerError("本地服务操作无效", 400)

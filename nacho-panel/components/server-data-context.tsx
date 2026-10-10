@@ -84,7 +84,7 @@ type ServerDataContextValue = {
   apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
   uploadRequest: <T>(path: string, file: File, onProgress: (percent: number) => void) => Promise<T>
   downloadRequest: (path: string, fallbackFileName: string) => Promise<void>
-  transferProductUpdate: (kind: "server" | "agent") => Promise<void>
+  transferProductUpdate: (kind: "server" | "agent", target: { sequence: number; version: string }) => Promise<void>
 }
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
@@ -114,9 +114,9 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     if (!serverSource) return null
     return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
   }, [serverSource])
-  const transferProductUpdate = useCallback(async (kind: "server" | "agent") => {
+  const transferProductUpdate = useCallback(async (kind: "server" | "agent", target: { sequence: number; version: string }) => {
     if (!connection || !window.nachoUpdates?.transferRelease) throw new Error("需要已连接的桌面面板")
-    await window.nachoUpdates.transferRelease(kind, connection.baseUrl, connection.key)
+    await window.nachoUpdates.transferRelease(kind, connection.baseUrl, connection.key, target.sequence, target.version)
   }, [connection])
 
   const apiRequest = useCallback(

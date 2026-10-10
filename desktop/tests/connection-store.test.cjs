@@ -28,37 +28,50 @@ function createSafeStorage() {
     },
   }
 }
+function createProtector() {
+  return {
+    protect: (value) => Buffer.from(`windows-user-fixture:${value}`),
+    unprotect: (value) => {
+      const text = value.toString()
+      if (!text.startsWith("windows-user-fixture:")) throw new Error("invalid protected bytes")
+      return text.slice("windows-user-fixture:".length)
+    },
+  }
+}
 
 function createTempStore() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nacho-connection-store-"))
   const safeStorage = createSafeStorage()
+  const protector = createProtector()
   const filePath = path.join(directory, "NachoPanel", "connection-secrets.json")
   return {
     directory,
     filePath,
     safeStorage,
-    store: createConnectionStore({ safeStorage, filePath }),
+    protector,
+    store: createConnectionStore({ safeStorage, protector, filePath }),
   }
 }
 
-test("connection store persists only ciphertext and restores a single cached snapshot", () => {
+test("connection store persists v2 ciphertext and verifies each disk read", () => {
   const context = createTempStore()
   try {
     context.store.set(fixture)
     const disk = fs.readFileSync(context.filePath, "utf8")
     const envelope = JSON.parse(disk)
-    assert.deepEqual(Object.keys(envelope).sort(), ["ciphertext", "version"])
-    assert.equal(envelope.version, 1)
+    assert.deepEqual(Object.keys(envelope).sort(), ["ciphertext", "scheme", "version"])
+    assert.equal(envelope.version, 2)
     assert.doesNotMatch(disk, /fixture-api-key|fixture-login-secret|panel\.example/)
 
     const restarted = createConnectionStore({
       safeStorage: context.safeStorage,
+      protector: context.protector,
       filePath: context.filePath,
     })
     assert.deepEqual(restarted.load(), { snapshot: fixture, persisted: true })
     assert.deepEqual(restarted.get(), { snapshot: fixture, persisted: true })
     assert.deepEqual(restarted.get(), { snapshot: fixture, persisted: true })
-    assert.equal(context.safeStorage.decryptions, 1)
+    assert.equal(context.safeStorage.decryptions, 0, "v2 does not depend on Electron profile decryption")
   } finally {
     fs.rmSync(context.directory, { recursive: true, force: true })
   }
@@ -74,13 +87,104 @@ test("tampered ciphertext is rejected without plaintext recovery", () => {
 
     const restarted = createConnectionStore({
       safeStorage: context.safeStorage,
+      protector: context.protector,
       filePath: context.filePath,
     })
     assert.throws(() => restarted.get(), /加密连接配置读取失败/)
-    assert.equal(context.safeStorage.decryptions, 1)
   } finally {
     fs.rmSync(context.directory, { recursive: true, force: true })
   }
+})
+
+test("read returns classified, non-sensitive error and never overwrites a failed record", () => {
+  const context = createTempStore()
+  try {
+    context.store.set(fixture)
+    const bad = JSON.stringify({ version: 1, ciphertext: Buffer.from("other-key-data").toString("base64") })
+    fs.writeFileSync(context.filePath, bad)
+    const result = context.store.read()
+    assert.equal(result.snapshot, null)
+    assert.equal(result.error.code, "decrypt-failed")
+    assert.doesNotMatch(JSON.stringify(result), /fixture-api-key|fixture-login-secret/)
+    assert.throws(() => context.store.set(fixture), /读取失败/)
+    assert.equal(fs.readFileSync(context.filePath, "utf8"), bad)
+    assert.throws(() => context.store.reinitialize("yes"), /明确确认/)
+    assert.equal(fs.readFileSync(context.filePath, "utf8"), bad)
+    assert.equal(context.store.reinitialize("RESET_LOCAL_CREDENTIALS").persisted, false)
+    const archives = fs.readdirSync(path.dirname(context.filePath)).filter((name) => name.includes(".recovery-"))
+    assert.ok(archives.length > 0)
+    assert.ok(archives.some((name) => fs.readFileSync(path.join(path.dirname(context.filePath), name), "utf8") === bad))
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
+})
+
+test("read detects disk tampering after a previous successful read instead of using cached credentials", () => {
+  const context = createTempStore()
+  try {
+    context.store.set(fixture)
+    assert.equal(context.store.get().persisted, true)
+    fs.writeFileSync(context.filePath, "{")
+    assert.equal(context.store.read().error.code, "invalid-format")
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
+})
+
+test("v1 migrates only after successful decryption and preserves original encrypted bytes", () => {
+  const context = createTempStore()
+  try {
+    fs.mkdirSync(path.dirname(context.filePath), { recursive: true })
+    const original = JSON.stringify({ version: 1, ciphertext: context.safeStorage.encryptString(JSON.stringify(fixture)).toString("base64") })
+    fs.writeFileSync(context.filePath, original)
+    assert.deepEqual(context.store.get().snapshot, fixture)
+    assert.equal(JSON.parse(fs.readFileSync(context.filePath, "utf8")).version, 2)
+    assert.equal(fs.readFileSync(`${context.filePath}.previous`, "utf8"), original)
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
+})
+
+test("v2 stays readable when Electron profile or legacy safeStorage changes", () => {
+  const context = createTempStore()
+  const store = createConnectionStore({ safeStorage: context.safeStorage, protector: context.protector, filePath: context.filePath })
+  try {
+    store.set(fixture)
+    const bytes = fs.readFileSync(context.filePath)
+    context.safeStorage.decryptString = () => { throw new Error("changed Chromium key") }
+    assert.deepEqual(store.retry().snapshot, fixture)
+    assert.ok(fs.readFileSync(context.filePath).equals(bytes))
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
+})
+
+test("post-commit disk verification failure restores the exact previous ciphertext", () => {
+  const context = createTempStore()
+  try {
+    context.store.set(fixture)
+    const previous = fs.readFileSync(context.filePath)
+    let installed = false
+    let corrupted = false
+    const io = Object.create(fs)
+    io.renameSync = (...args) => { fs.renameSync(...args); if (args[1] === context.filePath) installed = true }
+    io.readFileSync = (file, ...args) => {
+      if (file === context.filePath && installed && !corrupted) {
+        corrupted = true
+        fs.writeFileSync(file, "corrupted")
+      }
+      return fs.readFileSync(file, ...args)
+    }
+    const store = createConnectionStore({ safeStorage: context.safeStorage, protector: context.protector, filePath: context.filePath, fileSystem: io })
+    assert.throws(() => store.set({ ...fixture, locked: false }), /磁盘校验失败/)
+    assert.ok(fs.readFileSync(context.filePath).equals(previous))
+    assert.deepEqual(context.store.get().snapshot, fixture)
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
+})
+
+test("archived v1 without its key produces recovery status and stays unchanged", () => {
+  const context = createTempStore()
+  try {
+    const archivedPath = path.join(context.directory, "archived.json")
+    const bad = JSON.stringify({ version: 1, ciphertext: Buffer.from("lost-key").toString("base64") })
+    fs.writeFileSync(archivedPath, bad)
+    const store = createConnectionStore({ safeStorage: context.safeStorage, filePath: context.filePath, archivedPath })
+    assert.equal(store.read().error.code, "decrypt-failed")
+    assert.equal(fs.readFileSync(archivedPath, "utf8"), bad)
+    assert.equal(fs.existsSync(context.filePath), false)
+  } finally { fs.rmSync(context.directory, { recursive: true, force: true }) }
 })
 
 test("connection IPC accepts only the current main-window frame", async () => {
@@ -118,7 +222,7 @@ test("encryption unavailability never writes plaintext", () => {
     filePath,
   })
   try {
-    assert.throws(() => store.set(fixture), /加密不可用/)
+    assert.throws(() => store.set(fixture), /保存或磁盘校验失败/)
     assert.equal(fs.existsSync(filePath), false)
   } finally {
     fs.rmSync(directory, { recursive: true, force: true })
@@ -134,6 +238,8 @@ test("real Electron safeStorage survives a process restart", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nacho-electron-connection-"))
   const scriptPath = path.join(directory, "probe.cjs")
   const modulePath = path.resolve(__dirname, "..", "src", "connection-store.cjs")
+  const protectorModule = path.resolve(__dirname, "..", "src", "credential-protector.cjs")
+  const helperExe = path.resolve(__dirname, "..", "build", "credential-protector", "nacho-credential-protector.exe")
   const snapshot = {
     serverSource: { mode: "cloud", api: "https://electron.example", key: "electron-api-key" },
     auth: { mode: "key", secret: "electron-login-secret" },
@@ -142,6 +248,7 @@ test("real Electron safeStorage survives a process restart", (t) => {
   fs.writeFileSync(scriptPath, `
     const { app, safeStorage } = require("electron")
     const { createConnectionStore } = require(process.env.NACHO_CONNECTION_STORE_MODULE)
+    const { createCredentialProtector } = require(${JSON.stringify(protectorModule)})
     app.setPath("userData", process.env.NACHO_CONNECTION_USER_DATA)
     app.whenReady().then(() => {
       if (!safeStorage.isEncryptionAvailable()) {
@@ -151,6 +258,7 @@ test("real Electron safeStorage survives a process restart", (t) => {
       }
       const store = createConnectionStore({
         safeStorage,
+        protector: createCredentialProtector(${JSON.stringify(helperExe)}),
         filePath: process.env.NACHO_CONNECTION_STORE_PATH,
       })
       if (process.env.NACHO_CONNECTION_MODE === "set") {

@@ -11,10 +11,23 @@ export interface OnboardingSnapshot {
   locked: boolean
 }
 
+export type ConnectionStorageFailure = { code: string; message: string }
+export type ConnectionReadResult =
+  | { snapshot: OnboardingSnapshot; persisted: boolean; error?: never }
+  | { snapshot: null; persisted: true; error: ConnectionStorageFailure }
+
+export class ConnectionRestoreError extends Error {
+  constructor(public readonly failure: ConnectionStorageFailure) {
+    super(failure.message)
+  }
+}
+
 export interface ConnectionStorageBridge {
-  get(): Promise<{ snapshot: OnboardingSnapshot; persisted: boolean }>
+  get(): Promise<ConnectionReadResult>
   set(snapshot: OnboardingSnapshot): Promise<{ snapshot: OnboardingSnapshot; persisted: boolean }>
   clear(): Promise<{ snapshot: OnboardingSnapshot; persisted: boolean }>
+  retry?(): Promise<ConnectionReadResult>
+  reinitialize?(confirmation: "RESET_LOCAL_CREDENTIALS"): Promise<{ snapshot: OnboardingSnapshot; persisted: boolean }>
 }
 
 export interface KeyValueStorage {
@@ -120,6 +133,7 @@ export async function restoreOnboardingSnapshot(
   }
 
   const saved = await bridge.get()
+  if (saved.error) throw new ConnectionRestoreError(saved.error)
   if (saved.persisted) {
     removeLegacySnapshot(storage)
     return {
@@ -135,6 +149,14 @@ export async function restoreOnboardingSnapshot(
     removeLegacySnapshot(storage)
   }
   return legacy
+}
+
+export type OnboardingPhase = "intro" | "locked" | "recovery" | "unlocking" | "done"
+export function restoredOnboardingPhase(completed: boolean, snapshot: OnboardingSnapshot): OnboardingPhase {
+  // 已初始化记录缺少登录凭据时也进入恢复界面，不能默认变成未锁定会话。
+  if (completed && !snapshot.auth) return "recovery"
+  if (!completed) return "intro"
+  return snapshot.locked ? "locked" : "done"
 }
 
 export async function persistOnboardingSnapshot(

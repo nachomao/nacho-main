@@ -1,7 +1,7 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.2.2",
-  "releaseChannel": "beta",
+  "version": "0.2.5",
+  "releaseChannel": "stable",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
   "main": "app/main.cjs",
@@ -12,7 +12,8 @@
   "scripts": {
     "bump-version": "node scripts/bump-version.cjs",
     "build:panel": "node scripts/build-panel.cjs",
-    "stage": "node scripts/stage-app.cjs",
+    "build:credentials": "node scripts/build-credentials.cjs",
+    "stage": "pnpm run build:credentials && node scripts/stage-app.cjs",
     "build": "pnpm run build:panel && pnpm run stage && node scripts/build-desktop.cjs",
     "start": "pnpm run stage && electron .",
     "pack": "pnpm run stage && node scripts/build-desktop.cjs --dir",
@@ -28,6 +29,7 @@
     "electronDist": "node_modules/electron/dist",
     "npmRebuild": false,
     "asar": true,
+    "asarUnpack": ["nacho-credential-protector.exe"],
     "directories": {
       "app": "app",
       "output": "dist/NachoPanel"
