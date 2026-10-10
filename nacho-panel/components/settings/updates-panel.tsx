@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { Download, RefreshCw, Server, Monitor, HardDriveDownload } from "lucide-react"
+import { Download, RefreshCw, Server, Monitor, HardDriveDownload, Loader2 } from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
@@ -10,6 +10,10 @@ import { updateLocalControl } from "@/lib/local-control-server-client"
 import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
 import { PANEL_VERSION_LABEL, formatReleaseVersion } from "@/lib/panel-version"
 import { serverUpdateIssue } from "@/lib/product-update-status"
+import {
+  newerPanelInstallState, panelDownloadPercent, panelInstallActive, PANEL_INSTALL_LABELS,
+  type PanelInstallState,
+} from "@/lib/panel-install-progress"
 
 type Entry = {
   version: string
@@ -38,6 +42,8 @@ type Runtime = {
 type UpdateBridge = { version?: string; check(force?: boolean): Promise<Check>; installPanel(sequence: number, version: string): Promise<{ phase: string; version: string }>;
   transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string, sequence: number, version: string): Promise<unknown>;
   onAvailable?(callback: (check: Check) => void): (() => void) | undefined;
+  getPanelInstallState?(): Promise<PanelInstallState>;
+  onPanelInstallProgress?(callback: (state: PanelInstallState) => void): (() => void) | undefined;
   onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined }
 
 declare global { interface Window { nachoUpdates?: UpdateBridge } }
@@ -60,6 +66,9 @@ export function UpdatesPanel() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
+  const [panelInstall, setPanelInstall] = useState<PanelInstallState | null>(null)
+  const panelBusy = busy === "panel" || panelInstallActive(panelInstall)
+  const anyBusy = Boolean(busy) || panelInstallActive(panelInstall)
   const refresh = useCallback(async (force = false) => {
     try {
       const result = window.nachoUpdates
@@ -107,21 +116,44 @@ export function UpdatesPanel() {
     return () => { window.clearInterval(timer); unsubscribe?.(); stopProgress?.() }
   }, [refresh])
 
+  useEffect(() => {
+    let active = true
+    const bridge = window.nachoUpdates
+    const accept = (state: PanelInstallState) => {
+      if (active) setPanelInstall((current) => newerPanelInstallState(current, state))
+    }
+    const stop = bridge?.onPanelInstallProgress?.(accept)
+    void bridge?.getPanelInstallState?.().then(accept).catch(() => {})
+    return () => { active = false; stop?.() }
+  }, [])
+
   async function installPanel() {
-    if (!check || busy || !window.nachoUpdates) return
+    if (!check || anyBusy || !window.nachoUpdates) return
     if (!await confirm({
       title: "安装新版面板？", description: "面板将退出、安装并重新启动。当前本地设置会保留。",
       body: `${PANEL_VERSION_LABEL} → ${formatReleaseVersion(check.index.releases.panel.version, check.index.releases.panel.releaseType || "stable")}`,
       confirmLabel: "下载并安装", tone: "warning",
     })) return
+    setSourceError(null)
+    setPanelInstall((current) => ({
+      revision: current?.revision ?? 0, phase: "preparing", version: check.index.releases.panel.version,
+      downloadedBytes: 0, totalBytes: check.index.releases.panel.sizeBytes, error: null,
+    }))
     setBusy("panel")
-    try { await window.nachoUpdates.installPanel(check.index.sequence, check.index.releases.panel.version) }
-    catch (error) { setSourceError(error instanceof Error ? error.message : "面板安装失败") }
-    finally { setBusy(null) }
+    try {
+      await window.nachoUpdates.installPanel(check.index.sequence, check.index.releases.panel.version)
+      // 旧桌面桥没有进度事件时也保留退出前的安装状态。
+      setPanelInstall((current) => current ? { ...current, phase: "installing" } : current)
+    } catch (error) {
+      setPanelInstall((current) => current ? {
+        ...current, phase: "failed", error: error instanceof Error ? error.message : "面板安装失败",
+      } : current)
+      setBusy(null)
+    }
   }
 
   async function installServer() {
-    if (!check || !runtime || busy) return
+    if (!check || !runtime || anyBusy) return
     if (!await confirm({
       title: "升级服务端？", description: "升级期间连接将暂时断开，验证失败时会恢复旧版本。",
       body: `${runtime.version} → ${formatReleaseVersion(check.index.releases.server.version, check.index.releases.server.releaseType || "stable")}`,
@@ -177,7 +209,7 @@ export function UpdatesPanel() {
   }
 
   async function syncAgent() {
-    if (!runtime || busy) return
+    if (!runtime || anyBusy) return
     setBusy("agent")
     try {
       if (check?.index.schemaVersion === 4) {
@@ -222,25 +254,27 @@ export function UpdatesPanel() {
         当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
       </p>}
       {serverError && <p role="status" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{serverError}</p>}
-      {progress !== null && busy && <p role="status" className="text-xs text-muted-foreground">制品传输 {progress}%</p>}
+      {progress !== null && (busy === "server" || busy === "agent") && <p role="status" className="text-xs text-muted-foreground">制品传输 {progress}%</p>}
       <div className="grid gap-3 lg:grid-cols-2">
         <UpdateCard icon={<Monitor className="size-5" />} title="Windows 面板" current={PANEL_VERSION_LABEL}
           release={releases?.panel} releaseLabel={releases ? formatReleaseVersion(releases.panel.version, releases.panel.releaseType || "stable") : undefined}
           note={!desktop ? "安装新版需使用 Windows 桌面面板。" : !releases ? "尚未取得发布信息" :
             panelNew ? "可安装新版" : compare(check?.currentVersion || null, releases.panel.version) === 1 ? "已安装版本高于推荐版本" : "已是推荐版本"}
-          action="下载并安装" disabled={!panelNew || !desktop || Boolean(check?.stale) || Boolean(busy)} onClick={() => void installPanel()} />
+          action={panelBusy ? PANEL_INSTALL_LABELS[panelInstall?.phase || "preparing"] : panelInstall?.phase === "failed" ? "重试下载并安装" : "下载并安装"}
+          loading={panelBusy} extra={panelInstall && panelInstall.phase !== "idle" ? <PanelInstallProgress state={panelInstall} /> : undefined}
+          disabled={!panelNew || !desktop || Boolean(check?.stale) || anyBusy} onClick={() => void installPanel()} />
         <UpdateCard icon={<Server className="size-5" />} title="控制服务端" current={runtime?.version || "未连接"}
           release={releases?.server} releaseLabel={releases ? formatReleaseVersion(releases.server.version, releases.server.releaseType || "stable") : undefined}
           note={serverIssue || (panelRequired ? "需先升级面板" : runtime?.updateStatus ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}` : "服务端独立升级")}
           action={serverSource?.mode === "local" ? "升级本机服务" : "升级云端服务"}
           disabled={!serverNew || Boolean(check?.stale) || panelRequired || Boolean(serverIssue) || !desktop ||
-            (serverSource?.mode !== "local" && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || Boolean(busy)}
+            (serverSource?.mode !== "local" && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || anyBusy}
           onClick={() => void installServer()}
           extra={<div className="border-t border-border pt-3 text-xs">
             <p className="flex items-center gap-2 font-semibold"><HardDriveDownload className="size-4" />同批 Agent 制品</p>
             <p className="mt-2 text-muted-foreground">已准备 {runtime?.agentArtifactVersion || "无"} · 发布 {releases ? formatReleaseVersion(releases.agent.version, releases.agent.releaseType || "stable") : "未取得"}。仍需逐台或批量手动下发。</p>
             {agentIssue && agentIssue !== serverIssue && <p className="mt-2 text-warning">{agentIssue}</p>}
-            <button type="button" disabled={!agentNew || Boolean(check?.stale) || Boolean(agentIssue) || !runtime || Boolean(busy)}
+            <button type="button" disabled={!agentNew || Boolean(check?.stale) || Boolean(agentIssue) || !runtime || anyBusy}
               onClick={() => void syncAgent()} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40">准备新版制品</button>
           </div>} />
       </div>
@@ -249,8 +283,28 @@ export function UpdatesPanel() {
   )
 }
 
-function UpdateCard({ icon, title, current, release, releaseLabel, note, action, disabled, onClick, extra }: {
-  icon: React.ReactNode; title: string; current: string; release?: Entry; releaseLabel?: string; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode
+function PanelInstallProgress({ state }: { state: PanelInstallState }) {
+  const percent = panelDownloadPercent(state)
+  const failed = state.phase === "failed"
+  return <div className={`rounded-xl border p-3 text-xs ${failed ? "border-destructive/30 bg-destructive/5" : "border-border bg-surface"}`}>
+    <p role={failed ? "alert" : "status"} className={failed ? "break-words text-destructive" : "text-foreground"}>
+      {failed ? state.error || PANEL_INSTALL_LABELS.failed : PANEL_INSTALL_LABELS[state.phase]}
+    </p>
+    {!failed && <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"
+      role="progressbar" aria-label="面板安装包下载进度" aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={percent ?? undefined} aria-valuetext={percent === null ? PANEL_INSTALL_LABELS[state.phase] : `${percent}% · ${PANEL_INSTALL_LABELS[state.phase]}`}>
+      <div className={`h-full rounded-full bg-primary ${percent === null ? "w-1/3 animate-pulse motion-reduce:animate-none" : "transition-[width] duration-200 motion-reduce:transition-none"}`}
+        style={percent === null ? undefined : { width: `${percent}%` }} />
+    </div>}
+    {state.totalBytes !== null && <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-muted-foreground">
+      <span>已下载 {size(state.downloadedBytes)} / {size(state.totalBytes)}</span>
+      {percent !== null && <span className="font-mono tabular-nums">{percent}%</span>}
+    </div>}
+  </div>
+}
+
+function UpdateCard({ icon, title, current, release, releaseLabel, note, action, disabled, onClick, extra, loading = false }: {
+  icon: React.ReactNode; title: string; current: string; release?: Entry; releaseLabel?: string; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode; loading?: boolean
 }) {
   return <section className="flex min-h-52 flex-col gap-3 rounded-2xl border border-border bg-card p-5">
     <div className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</div>
@@ -260,8 +314,8 @@ function UpdateCard({ icon, title, current, release, releaseLabel, note, action,
     {release?.title && <p className="text-xs font-medium">{release.title}</p>}
     {release?.notes && <p className="max-h-24 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{release.notes}</p>}
     {extra}
-    <button type="button" disabled={disabled} onClick={onClick} className="mt-auto rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">
-      <Download className="mr-2 inline size-4" />{action}
+    <button type="button" disabled={disabled} aria-busy={loading} onClick={onClick} className="mt-auto rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">
+      {loading ? <Loader2 aria-hidden="true" className="mr-2 inline size-4 animate-spin motion-reduce:animate-none" /> : <Download aria-hidden="true" className="mr-2 inline size-4" />}{action}
     </button>
   </section>
 }

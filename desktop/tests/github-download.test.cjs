@@ -18,6 +18,7 @@ async function fixture(context, size = PARALLEL_MIN_BYTES) {
   bytes[size - 1] = 91
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "nacho-download-test-"))
   const state = { peak: 0, active: 0, requests: [], behavior: null }
+  const events = []
   const server = http.createServer((request, response) => {
     const source = request.url.split("/")[1]
     const range = request.headers.range
@@ -54,8 +55,10 @@ async function fixture(context, size = PARALLEL_MIN_BYTES) {
     await new Promise((resolve) => server.close(resolve))
     await fs.rm(directory, { recursive: true, force: true })
   })
-  return { bytes, directory, state, fetcher, output: path.join(directory, "file.bin"),
-    options: { fetcher, platform: "win32", sizeBytes: size, sha256: digest(bytes), probeTimeoutMs: 1000 } }
+  return { bytes, directory, state, fetcher, events, output: path.join(directory, "file.bin"),
+    options: { fetcher, platform: "win32", sizeBytes: size, sha256: digest(bytes), probeTimeoutMs: 1000,
+      onPhase: (phase) => events.push({ phase }),
+      onProgress: (bytes, total) => events.push({ bytes, total }) } }
 }
 
 test("defaults retain five-second probing, public API mirror support and strict Content-Range", () => {
@@ -77,6 +80,14 @@ test("GitHub range downloads use four concurrent connections and assemble out-of
   assert.deepEqual(await fs.readFile(f.output), f.bytes)
   assert.equal(f.state.requests.filter((request) => !request.probe && request.range).length, 4)
   assert.equal((await fs.readdir(f.directory)).length, 1)
+  const progress = f.events.filter((event) => event.bytes !== undefined)
+  assert.equal(progress[0].bytes, 0)
+  assert.equal(progress.at(-1).bytes, f.bytes.length)
+  assert.ok(progress.every((event, index) => event.total === f.bytes.length &&
+    event.bytes <= f.bytes.length && (!index || event.bytes >= progress[index - 1].bytes)))
+  assert.deepEqual(f.events.filter((event) => event.phase).map((event) => event.phase),
+    ["connecting", "downloading", "verifying"])
+  assert.equal(f.events.at(-2).bytes, f.bytes.length, "校验开始前已经报告完整实际字节")
 })
 
 test("a hanging direct probe is cancelled at the shared deadline and selects the first mirror", async (context) => {
@@ -124,6 +135,10 @@ test("non-GitHub downloads and small GitHub files use a single connection", asyn
   assert.equal(result.connections, 1)
   assert.equal(f.state.requests.length, 1)
   assert.equal(f.state.requests[0].range, undefined)
+  assert.equal(f.events[0].phase, "connecting")
+  assert.equal(f.events[1].phase, "downloading")
+  assert.equal(f.events.at(-2).bytes, f.bytes.length)
+  assert.equal(f.events.at(-1).phase, "verifying")
   const second = await downloadFile(URL, f.output, f.options)
   assert.equal(second.connections, 1)
 })
@@ -146,14 +161,23 @@ test("a server that ignores Range uses a single download without rejecting a slo
 test("wrong range responses cancel all segments and restart with one connection", async (context) => {
   const f = await fixture(context)
   f.state.behavior = (entry, _request, response) => {
-    if (!entry.range || entry.probe) return false
-    response.writeHead(206, { "Content-Range": `bytes 0-1/${f.bytes.length}`, "Content-Length": 2 })
-    response.end(f.bytes.subarray(0, 2))
+    if (!entry.range || entry.probe || !entry.range.startsWith("bytes=0-")) return false
+    setTimeout(() => {
+      response.writeHead(206, { "Content-Range": `bytes 0-1/${f.bytes.length}`, "Content-Length": 2 })
+      response.end(f.bytes.subarray(0, 2))
+    }, 80)
     return true
   }
   const result = await downloadFile(URL, f.output, f.options)
   assert.equal(result.connections, 1)
   assert.deepEqual(await fs.readFile(f.output), f.bytes)
+  const retry = f.events.findIndex((event) => event.phase === "retrying")
+  assert.ok(f.events.slice(0, retry).some((event) => event.bytes > 0), "回退前已经写入部分分段")
+  assert.deepEqual(f.events.slice(retry, retry + 3), [
+    { phase: "retrying" }, { phase: "downloading" }, { bytes: 0, total: f.bytes.length },
+  ])
+  assert.equal(f.events.at(-2).bytes, f.bytes.length)
+  assert.equal(f.events.at(-1).phase, "verifying")
 })
 
 test("interrupted downloads discard all segments before switching to a mirror", async (context) => {
@@ -169,12 +193,35 @@ test("interrupted downloads discard all segments before switching to a mirror", 
   assert.deepEqual(await fs.readdir(f.directory), ["file.bin"])
 })
 
+test("单连接收到部分字节后换源，重试重新从零计算下载进度", async (context) => {
+  const f = await fixture(context, 64 * 1024)
+  f.state.behavior = (entry, _request, response) => {
+    if (entry.source !== "direct" || entry.probe) return false
+    response.writeHead(200, { "Content-Length": f.bytes.length })
+    response.write(f.bytes.subarray(0, f.bytes.length / 2))
+    setTimeout(() => response.destroy(), 30)
+    return true
+  }
+  const result = await downloadFile(URL, f.output, f.options)
+  assert.equal(result.source, "gh-proxy.com")
+  const retry = f.events.findIndex((event) => event.phase === "retrying")
+  assert.ok(f.events.slice(0, retry).some((event) => event.bytes > 0))
+  assert.deepEqual(f.events.slice(retry, retry + 4), [
+    { phase: "retrying" }, { phase: "connecting" }, { phase: "downloading" }, { bytes: 0, total: f.bytes.length },
+  ])
+  assert.equal(f.events.at(-2).bytes, f.bytes.length)
+  assert.equal(f.events.at(-1).phase, "verifying")
+  assert.deepEqual(await fs.readFile(f.output), f.bytes)
+})
+
 test("SHA-256 mismatches cannot replace an existing verified file", async (context) => {
   const f = await fixture(context, 1024)
   await fs.writeFile(f.output, "previous-verified-file")
   await assert.rejects(downloadFile(URL, f.output, { ...f.options, sha256: "a".repeat(64) }), /SHA-256/)
   assert.equal(await fs.readFile(f.output, "utf8"), "previous-verified-file")
   assert.deepEqual(await fs.readdir(f.directory), ["file.bin"])
+  assert.equal(f.events.at(-2).bytes, f.bytes.length)
+  assert.equal(f.events.at(-1).phase, "verifying", "完整收齐后进入真实校验，失败不能声称安装成功")
 })
 
 test("public API probes reject invalid JSON and never send credentials to mirrors", async () => {

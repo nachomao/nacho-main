@@ -25,7 +25,11 @@ let panelProcess = null
 let panelPort = null
 let panelProcessExited = true
 let isQuitting = false
-const updates = createUpdater(app)
+const updates = createUpdater(app, {
+  onPanelInstallProgress(state) {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updates:panel-install-progress", state)
+  },
+})
 
 function log(message, error) {
   const detail = error instanceof Error ? error.stack || error.message : error ? String(error) : ""
@@ -198,6 +202,10 @@ function registerWindowBridge() {
   ipcMain.handle("updates:install-panel", (event, sequence, version) => {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
     return updates.installPanel(sequence, version)
+  })
+  ipcMain.handle("updates:panel-install-state", (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
+    return updates.getPanelInstallState()
   })
   ipcMain.handle("updates:transfer", (event, kind, serverUrl, apiKey, sequence, version) => {
     if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")

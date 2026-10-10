@@ -20,6 +20,7 @@ export type DownloadOptions = TransportOptions & {
   prepareAria2?: () => Promise<void>
   checksum?: { algorithm: "sha256" | "sha512" | "sha1"; value: string; encoding?: "hex" | "base64" }
   onProgress?: (bytes: number, total: number | null) => void
+  onPhase?: (phase: "connecting" | "downloading" | "retrying" | "verifying") => void
 }
 export type DownloadResult = { source: string; sizeBytes: number; sha256: string; connections: number }
 export const PROBE_TIMEOUT_MS: number

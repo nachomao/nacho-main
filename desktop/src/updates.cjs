@@ -119,12 +119,36 @@ async function readRemote(url, max) {
   return { bytes, url: response.url || url }
 }
 
-function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
+function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } = {}) {
   const cachePath = () => path.join(app.getPath("userData"), "release-index-cache-recommended.json")
   let lastCheck = 0
   let checking = null
   let installing = false
   let notificationController = null
+  let panelInstallState = {
+    revision: 0, phase: "idle", version: null, downloadedBytes: 0, totalBytes: null, error: null,
+  }
+  let lastPanelProgressNotice = 0
+  let panelProgressTimer = null
+
+  function getPanelInstallState() { return { ...panelInstallState } }
+  function sendPanelInstallProgress() {
+    clearTimeout(panelProgressTimer)
+    panelProgressTimer = null
+    lastPanelProgressNotice = Date.now()
+    onPanelInstallProgress?.(getPanelInstallState())
+  }
+  function reportPanelInstall(patch, immediate = true) {
+    if (Object.entries(patch).every(([key, value]) => panelInstallState[key] === value)) return
+    panelInstallState = { ...panelInstallState, ...patch, revision: panelInstallState.revision + 1 }
+    const now = Date.now()
+    if (immediate || now - lastPanelProgressNotice >= 200) {
+      sendPanelInstallProgress()
+    } else if (!panelProgressTimer) {
+      // 网络暂停前最后一块也必须显示；阶段变化会取消此定时发送并立即通知。
+      panelProgressTimer = setTimeout(sendPanelInstallProgress, 200 - (now - lastPanelProgressNotice))
+    }
+  }
 
   function cached() {
     try {
@@ -230,6 +254,7 @@ function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
     if (installing) throw new Error("升级已经在执行")
     if (process.platform !== "win32" || !app.isPackaged) throw new Error("仅 Windows 已安装面板支持应用内升级")
     installing = true
+    reportPanelInstall({ phase: "preparing", version, downloadedBytes: 0, totalBytes: null, error: null })
     try {
       const { index, stale } = await check(true)
       if (stale) throw new Error("离线缓存不可用于安装")
@@ -241,8 +266,23 @@ function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
       const directory = path.join(app.getPath("userData"), "updates")
       fs.mkdirSync(directory, { recursive: true })
       const installer = path.join(directory, release.fileName)
+      reportPanelInstall({ totalBytes: release.sizeBytes })
       await downloadFile(release.url, installer, { sizeBytes: release.sizeBytes,
-        sha256: release.sha256, timeoutMs: 20 * 60_000, onLog: console.info })
+        sha256: release.sha256, timeoutMs: 20 * 60_000, onLog: console.info,
+        onPhase(phase) {
+          if (phase === "connecting") {
+            if (panelInstallState.phase !== "retrying") reportPanelInstall({ phase: "preparing" })
+          } else {
+            reportPanelInstall({ phase,
+              ...(phase === "downloading" || phase === "retrying" ? { downloadedBytes: 0 } : {}) })
+          }
+        },
+        onProgress(downloadedBytes) {
+          reportPanelInstall({ downloadedBytes },
+            downloadedBytes === 0 || downloadedBytes === release.sizeBytes)
+        },
+      })
+      reportPanelInstall({ phase: "verifying", downloadedBytes: release.sizeBytes })
       if (release.authenticodeThumbprint) {
         const safePath = installer.replaceAll("'", "''")
         const signatureCheck = `$s=Get-AuthenticodeSignature -LiteralPath '${safePath}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint.ToUpperInvariant() -ne '${release.authenticodeThumbprint}') { exit 5 }`
@@ -271,11 +311,19 @@ function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
         "-File", script, "-Installer", installer, "-AppPath", app.getPath("exe"),
         "-ParentPid", String(process.pid), "-StatusPath", path.join(directory, "last-result.txt"),
       ], { detached: true, stdio: "ignore", windowsHide: true })
+      // 成功创建安装进程后才退出；启动失败仍留在面板展示错误并允许重试。
+      await new Promise((resolve, reject) => {
+        child.once("spawn", resolve)
+        child.once("error", reject)
+      })
       child.unref()
+      reportPanelInstall({ phase: "installing" })
       setTimeout(() => app.quit(), 300)
       return { phase: "installing", version: release.version }
-    } finally {
+    } catch (error) {
+      reportPanelInstall({ phase: "failed", error: error instanceof Error ? error.message : "面板安装失败" })
       installing = false
+      throw error
     }
   }
   async function transferRelease(kind, serverUrl, apiKey, sequence, version, onProgress) {
@@ -351,7 +399,7 @@ function createUpdater(app, { publicKey = PUBLIC_KEY } = {}) {
     } finally { installing = false }
   }
 
-  return { check, cached, installPanel, transferRelease, subscribe, unsubscribe }
+  return { check, cached, installPanel, getPanelInstallState, transferRelease, subscribe, unsubscribe }
 }
 
 module.exports = { createUpdater, verifyIndex, compareVersions, INDEX_URL }

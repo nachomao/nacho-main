@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld("nachoWindow", {
 contextBridge.exposeInMainWorld("nachoUpdates", {
   check(force = false) { return ipcRenderer.invoke("updates:check", Boolean(force)) },
   installPanel(sequence, version) { return ipcRenderer.invoke("updates:install-panel", sequence, version) },
+  getPanelInstallState() { return ipcRenderer.invoke("updates:panel-install-state") },
+  onPanelInstallProgress(callback) {
+    if (typeof callback !== "function") return undefined
+    const listener = (_event, state) => callback(state)
+    ipcRenderer.on("updates:panel-install-progress", listener)
+    return () => ipcRenderer.removeListener("updates:panel-install-progress", listener)
+  },
   transferRelease(kind, serverUrl, apiKey, sequence, version) {
     return ipcRenderer.invoke("updates:transfer", kind, serverUrl, apiKey, sequence, version)
   },

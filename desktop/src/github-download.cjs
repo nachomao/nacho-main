@@ -453,6 +453,7 @@ async function downloadFile(url, output, options = {}) {
   let aria2Ready
   try {
     while (remaining.length) {
+      options.onPhase?.("connecting")
       const source = github
         ? await selectSource(remaining, probeFile, { ...options, signal })
         : { ...remaining[0], sizeBytes: options.sizeBytes || null, ranges: false }
@@ -468,6 +469,8 @@ async function downloadFile(url, output, options = {}) {
         options.timeoutMs || 15 * 60_000)
       try {
         log(options, `从 ${source.name} 下载文件（${parallel ? "最多 4 路分段" : "单连接"}）`)
+        options.onPhase?.("downloading")
+        options.onProgress?.(0, size || null)
         if (parallel) {
           try {
             if ((options.platform || process.platform) === "linux") await aria2Download(source, temporary, options, signal)
@@ -478,10 +481,14 @@ async function downloadFile(url, output, options = {}) {
             await fs.rm(temporary, { force: true })
             await fs.rm(`${temporary}.aria2`, { force: true })
             log(options, "下载端点不支持正确分段，本次改为单连接")
+            options.onPhase?.("retrying")
             parallel = false
+            options.onPhase?.("downloading")
+            options.onProgress?.(0, size || null)
             await singleDownload(source, temporary, options, signal)
           }
         } else await singleDownload(source, temporary, options, signal)
+        options.onPhase?.("verifying")
         const actual = (await fs.stat(temporary)).size
         if ((size && actual !== size) || actual < 1 || actual > (options.maxBytes || 2 * 1024 ** 3)) {
           throw new IntegrityError("下载文件大小不匹配")
@@ -506,6 +513,7 @@ async function downloadFile(url, output, options = {}) {
         signal.throwIfAborted()
         if (error instanceof IntegrityError) throw error
         log(options, `${source.name} 下载失败，尝试剩余源：${error.message}`)
+        if (remaining.length) options.onPhase?.("retrying")
       }
     }
     throw lastError || new Error("文件下载失败")
