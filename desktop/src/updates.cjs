@@ -299,12 +299,13 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
         "param([string]$Installer, [string]$AppPath, [int]$ParentPid, [string]$StatusPath)",
         "$ErrorActionPreference = 'Stop'",
         "try { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction Stop } catch { Start-Sleep -Seconds 2 }",
+        "Set-Content -LiteralPath $StatusPath -Value 'started' -Encoding UTF8",
         "try {",
-        "  $process = Start-Process -FilePath $Installer -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden",
+        "  $process = Start-Process -FilePath $Installer -Verb RunAs -Wait -PassThru",
         "  if ($process.ExitCode -ne 0) { throw \"安装程序退出码 $($process.ExitCode)\" }",
         "  Set-Content -LiteralPath $StatusPath -Value 'installed' -Encoding UTF8",
-        "  Start-Process -FilePath $AppPath",
         "} catch { Set-Content -LiteralPath $StatusPath -Value $_.Exception.Message -Encoding UTF8 }",
+        "Start-Process -FilePath $AppPath",
       ].join("\r\n"), "utf8")
       const child = spawn("powershell.exe", [
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
