@@ -1,7 +1,7 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.2.10",
-  "releaseChannel": "stable",
+  "version": "0.3.0",
+  "releaseChannel": "beta",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
   "main": "app/main.cjs",
