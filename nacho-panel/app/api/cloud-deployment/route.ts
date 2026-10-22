@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { CloudDeploymentError, deployCloudServer, inspectCloudHost, validateCloudDeployInput, validateCloudHost } from "@/lib/cloud-deployment"
+import { checkCloudDeploymentAvailability, CloudDeploymentError, deployCloudServer, inspectCloudHost, validateCloudDeployInput, validateCloudHost } from "@/lib/cloud-deployment"
 import { isSameOriginRequest } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
@@ -13,9 +13,8 @@ function json(data: unknown, status = 200) {
 }
 
 export async function POST(request: NextRequest) {
-  if (process.platform !== "win32" || process.env.VERCEL || !["localhost", "127.0.0.1"].includes(request.nextUrl.hostname)) {
-    return json({ ok: false, message: "云端自动部署仅支持在 Windows 本机面板使用" }, 403)
-  }
+  const availability = checkCloudDeploymentAvailability({ hostname: request.nextUrl.hostname })
+  if (!availability.allowed) return json({ ok: false, message: availability.message }, 403)
   if (!isSameOriginRequest(request.headers, request.nextUrl.origin)) {
     return json({ ok: false, message: "仅允许面板同源请求" }, 403)
   }

@@ -5,7 +5,7 @@ import { test } from "node:test"
 import { NextRequest } from "next/server"
 import type { Client } from "ssh2"
 import { POST } from "../app/api/cloud-deployment/route"
-import { buildCloudInstallCommand, CloudDeploymentError, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
+import { buildCloudInstallCommand, checkCloudDeploymentAvailability, CloudDeploymentError, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
 
 const input = {
   action: "deploy",
@@ -73,6 +73,22 @@ test("cloud install gets the server source from GitHub on the target host", () =
   assert.doesNotMatch(command, /bundle\.tar\.gz/)
 })
 
+test("cloud deployment is available on local Windows and Linux panels only", () => {
+  assert.deepEqual(checkCloudDeploymentAvailability({ platform: "win32", hostname: "localhost" }), { allowed: true })
+  assert.deepEqual(checkCloudDeploymentAvailability({ platform: "linux", hostname: "127.0.0.1" }), { allowed: true })
+  assert.deepEqual(checkCloudDeploymentAvailability({ platform: "linux", hostname: "LOCALHOST" }), { allowed: true })
+  assert.deepEqual(checkCloudDeploymentAvailability({ platform: "linux", hostname: "[::1]" }), { allowed: true })
+  const hosted = checkCloudDeploymentAvailability({ platform: "linux", hostname: "localhost", hosted: true })
+  assert.equal(hosted.allowed, false)
+  assert.match(hosted.allowed === false ? hosted.message : "", /托管部署环境/)
+  const unsupported = checkCloudDeploymentAvailability({ platform: "darwin", hostname: "localhost" })
+  assert.equal(unsupported.allowed, false)
+  assert.match(unsupported.allowed === false ? unsupported.message : "", /Windows 或 Linux/)
+  const remote = checkCloudDeploymentAvailability({ platform: "linux", hostname: "panel.example.com" })
+  assert.equal(remote.allowed, false)
+  assert.match(remote.allowed === false ? remote.message : "", /本机地址/)
+})
+
 test("Windows local endpoint enforces same-origin and validates input before SSH", async () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!
   const vercel = process.env.VERCEL
@@ -88,6 +104,28 @@ test("Windows local endpoint enforces same-origin and validates input before SSH
     assert.equal((await POST(request("same-origin", { action: "inspect", host: "127.0.0.1" }))).status, 400)
     assert.equal((await POST(request("same-origin", { ...input, fingerprint: "unverified" }))).status, 400)
     assert.equal((await POST(request("same-origin", { action: "inspect", host: input.host, password: input.password }))).status, 400)
+  } finally {
+    Object.defineProperty(process, "platform", platform)
+    if (vercel === undefined) delete process.env.VERCEL
+    else process.env.VERCEL = vercel
+  }
+})
+
+test("Linux local panel passes the deployment gate and keeps the request checks", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  const vercel = process.env.VERCEL
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" })
+  delete process.env.VERCEL
+  const request = (site: string, body: unknown) => new NextRequest("http://localhost:3000/api/cloud-deployment", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "http://localhost:3000", "sec-fetch-site": site },
+    body: JSON.stringify(body),
+  })
+  try {
+    assert.equal((await POST(request("same-origin", { action: "inspect", host: "127.0.0.1" }))).status, 400)
+    assert.equal((await POST(request("same-origin", { ...input, fingerprint: "unverified" }))).status, 400)
+    assert.equal((await POST(request("same-origin", { action: "inspect", host: input.host, password: input.password }))).status, 400)
+    assert.equal((await POST(request("cross-site", { action: "inspect", host: input.host }))).status, 403)
   } finally {
     Object.defineProperty(process, "platform", platform)
     if (vercel === undefined) delete process.env.VERCEL
@@ -133,7 +171,7 @@ test("cloud install streams real output but keeps installer keys out of its summ
   assert.match(form, /<InstallationConsole output=\{output\} active=\{busy === "deploy"\}/)
 })
 
-test("remote deployment endpoint refuses to run outside the local Windows panel", async () => {
+test("remote deployment endpoint refuses to run outside a local panel", async () => {
   const request = new NextRequest("https://preview.example/api/cloud-deployment", {
     method: "POST",
     headers: { "content-type": "application/json", origin: "https://preview.example", "sec-fetch-site": "same-origin" },
@@ -143,5 +181,6 @@ test("remote deployment endpoint refuses to run outside the local Windows panel"
   assert.equal(response.status, 403)
   const body = await response.json()
   assert.equal(body.ok, false)
+  assert.match(body.message, /本机地址/)
   assert.doesNotMatch(JSON.stringify(body), /example-ssh-password/)
 })

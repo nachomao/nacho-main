@@ -9,10 +9,37 @@ export type CloudDeploymentResult = { api: string; key: string }
 export const NACHO_SERVER_REPOSITORY = "https://github.com/nachomao/nacho-server.git"
 export const NACHO_SERVER_BRANCH = "main"
 
+/** 允许发起云端自动部署的运行平台：本机面板可在 Windows 或 Linux 上运行。 */
+export const CLOUD_DEPLOYMENT_PLATFORMS = ["win32", "linux"] as const
+/** 只接受本机回环地址，避免面板被外部主机借作 SSH 探测跳板。 */
+export const CLOUD_DEPLOYMENT_LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"] as const
+
+export type CloudDeploymentAvailability = { allowed: true } | { allowed: false; message: string }
+
 export class CloudDeploymentError extends Error {
   constructor(message: string, public status = 400) {
     super(message)
   }
+}
+
+/**
+ * 云端自动部署只在本机面板开放：托管部署环境、非 Windows/Linux 系统和非回环访问地址一律拒绝。
+ */
+export function checkCloudDeploymentAvailability(options: {
+  platform?: NodeJS.Platform
+  hostname: string
+  hosted?: boolean
+}): CloudDeploymentAvailability {
+  const platform = options.platform ?? process.platform
+  const hosted = options.hosted ?? Boolean(process.env.VERCEL)
+  if (hosted) return { allowed: false, message: "云端自动部署不支持托管部署环境，请在本机面板使用" }
+  if (!(CLOUD_DEPLOYMENT_PLATFORMS as readonly string[]).includes(platform)) {
+    return { allowed: false, message: "云端自动部署仅支持在 Windows 或 Linux 本机面板使用" }
+  }
+  if (!(CLOUD_DEPLOYMENT_LOCAL_HOSTS as readonly string[]).includes(options.hostname.trim().toLowerCase())) {
+    return { allowed: false, message: "云端自动部署仅支持通过本机地址访问的面板使用" }
+  }
+  return { allowed: true }
 }
 
 export function validateCloudHost(value: unknown) {
