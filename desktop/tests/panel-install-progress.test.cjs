@@ -9,6 +9,7 @@ const test = require("node:test")
 process.env.NACHO_UPDATE_ORIGIN ||= "https://maojiu.cc"
 const downloader = require("../src/github-download.cjs")
 const childProcess = require("node:child_process")
+const handoff = require("../src/update-handoff.cjs")
 let download, launch
 downloader.downloadFile = (...args) => download(...args)
 childProcess.spawn = (...args) => launch(...args)
@@ -91,7 +92,8 @@ test("面板安装报告真实进度、节流字节事件，快照保留最新�
   assert.ok(full >= 0 && verified > full, "100% 下载事件先于校验，不能直接认为安装完成")
   assert.ok(f.events.every((state, i) => !i || state.revision > f.events[i - 1].revision))
   assert.equal(f.spawns.length, 1)
-  assert.equal(f.spawns[0].file, "powershell.exe")
+  assert.equal(f.spawns[0].file, "cmd.exe", "交接必须由 cmd start 承载，面板退出后脚本才能继续")
+  assert.ok(f.spawns[0].args.includes("start") && f.spawns[0].args.includes("/b"))
   assert.equal(f.spawns[0].options.windowsHide, true)
   assert.equal(f.updater.getPanelInstallState().phase, "installing")
   await assert.rejects(f.updater.installPanel(7, f.version), /升级已经在执行/, "安装交接后仍拦截重复请求")

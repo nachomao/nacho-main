@@ -41,6 +41,7 @@ copyRequired(path.join(desktopDir, "src", "credential-protector.cjs"), path.join
 copyRequired(path.join(desktopDir, "build", "credential-protector", "nacho-credential-protector.exe"),
   path.join(appDir, "nacho-credential-protector.exe"))
 copyRequired(path.join(desktopDir, "src", "updates.cjs"), path.join(appDir, "updates.cjs"))
+copyRequired(path.join(desktopDir, "src", "update-handoff.cjs"), path.join(appDir, "update-handoff.cjs"))
 copyRequired(path.join(desktopDir, "src", "github-download.cjs"), path.join(appDir, "github-download.cjs"))
 copyRequired(path.join(desktopDir, "src", "panel-runner.cjs"), path.join(stagedPanelDir, "panel-runner.cjs"))
 

@@ -1,8 +1,9 @@
 const { verify } = require("node:crypto")
-const { execFile, spawn } = require("node:child_process")
+const { execFile } = require("node:child_process")
 const fs = require("node:fs")
 const path = require("node:path")
 const { downloadFile } = require("./github-download.cjs")
+const { startHandoff, waitForHandoff } = require("./update-handoff.cjs")
 const { promisify } = require("node:util")
 const execFileAsync = promisify(execFile)
 
@@ -307,17 +308,12 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
         "} catch { Set-Content -LiteralPath $StatusPath -Value $_.Exception.Message -Encoding UTF8 }",
         "Start-Process -FilePath $AppPath",
       ].join("\r\n"), "utf8")
-      const child = spawn("powershell.exe", [
-        "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-        "-File", script, "-Installer", installer, "-AppPath", app.getPath("exe"),
-        "-ParentPid", String(process.pid), "-StatusPath", path.join(directory, "last-result.txt"),
-      ], { detached: true, stdio: "ignore", windowsHide: true })
-      // 成功创建安装进程后才退出；启动失败仍留在面板展示错误并允许重试。
-      await new Promise((resolve, reject) => {
-        child.once("spawn", resolve)
-        child.once("error", reject)
-      })
-      child.unref()
+      const statusPath = path.join(directory, "last-result.txt")
+      // 交接脚本必须脱离面板生命周期独立存活；Windows 上 detached 启动的 PowerShell
+      // 会立刻退出且不执行脚本，因此由 update-handoff 用 cmd /c start /b 承载。
+      const handoff = startHandoff(script, installer, app.getPath("exe"), process.pid, statusPath)
+      // 承载进程创建失败时仍留在面板展示错误并允许重试。
+      await waitForHandoff(handoff)
       reportPanelInstall({ phase: "installing" })
       setTimeout(() => app.quit(), 300)
       return { phase: "installing", version: release.version }
