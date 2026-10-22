@@ -20,7 +20,32 @@ node_modules
 **/tsconfig.tsbuildinfo
 nacho-panel/tmp/
 tmp-*.ps1
+
+# Lock files: 面板与根包统一用 pnpm（packageManager=pnpm@10.28.2），
+# npm 锁文件只保留服务端实际执行 npm ci 所需的那一份。
+nacho-panel/package-lock.json
 package-lock.json
+!server/package-lock.json
+
+# 运行时数据与密钥
+.env
+.env.local
+**/.nacho-local/
+**/.nacho-runtime/
+**/data/
+tmp-*.db*
+tmp-script-check/
+
+# 编译与打包中间产物
+**/bin/
+**/obj/
+server/dist/
+**/*.tsbuildinfo
+*.log
+*.pid
+
+# 验收证据（截图、patch、回滚脚本），仅供追溯，不属于源码
+artifacts/evidence/
 
 # Desktop (Electron) build artifacts
 desktop/app/
@@ -30,4 +55,3 @@ desktop/native/**/bin/
 desktop/native/**/obj/
 desktop/build.log
 desktop/nacho-main/desktop/update-source.json
-package-lock.json
