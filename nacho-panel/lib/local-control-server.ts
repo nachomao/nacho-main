@@ -114,10 +114,6 @@ function managedServerDirectory() {
   return path.join(localAppData, "NachoPanel", "server")
 }
 
-function legacyServerDirectoryCandidates() {
-  return [path.resolve(process.cwd(), "server"), path.resolve(process.cwd(), "..", "server")]
-}
-
 async function isTrustedServerDirectory(candidate: string) {
   if (path.basename(candidate).toLowerCase() !== "server") return false
   try {
@@ -131,27 +127,15 @@ async function isTrustedServerDirectory(candidate: string) {
 }
 
 export async function resolveLocalServerDirectory() {
-  const candidates = process.env.NACHO_LOCAL_SERVER_DIR
-    ? [managedServerDirectory()]
-    : [managedServerDirectory(), ...legacyServerDirectoryCandidates()]
-  for (const candidate of candidates) {
-    if (await isTrustedServerDirectory(candidate)) return candidate
-  }
+  // 服务端源码已迁至独立仓库 nacho-server，本机部署一律使用
+  // %LOCALAPPDATA%/NachoPanel/server 下由本面板从 GitHub 克隆的副本。
+  const managed = managedServerDirectory()
+  if (await isTrustedServerDirectory(managed)) return managed
   throw new LocalControlServerError("未找到可信的 server 项目目录，请先从 GitHub 获取服务端代码", 404)
 }
 
 async function resolveManagementServerDirectory() {
-  const managed = managedServerDirectory()
-  if (await isTrustedServerDirectory(managed)) return managed
-
-  // 兼容旧版已安装实例：只有检测到旧目录确实承载过本地服务时才继续使用。
-  for (const candidate of legacyServerDirectoryCandidates()) {
-    if (!(await isTrustedServerDirectory(candidate))) continue
-    if (await exists(managementPaths(candidate).env) || await exists(managementPaths(candidate).distEntry)) {
-      return candidate
-    }
-  }
-  return managed
+  return managedServerDirectory()
 }
 
 async function isGitAvailable() {

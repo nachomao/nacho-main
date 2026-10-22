@@ -10,7 +10,7 @@ Nacho 由三个组件组成，分布在**两个仓库**：
 
 三者之间的依赖关系、数据流、凭据模型和**改动归属**见 **[ARCHITECTURE.md](./ARCHITECTURE.md)**。
 
-> 过渡期说明：本仓的 `server/` 目录是拆分前的副本，与 `nachomao/nacho-server` 暂时并存，后续会移除。以 `nachomao/nacho-server` 为服务端唯一来源。
+> 本仓的 `server/` 目录已于 2026-10-22 移除。服务端与 Agent 以 `nachomao/nacho-server` 为唯一来源。
 
 ## 面板
 

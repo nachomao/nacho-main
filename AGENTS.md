@@ -30,23 +30,25 @@
 
 ### 2.2 控制服务端（三种部署模式）
 
-- 源码目录：`server/`。
+- 源码目录：**不在本仓库**，位于独立仓库 `nacho-server`（GitHub: `nachomao/nacho-server`）的仓库根 `src/` 与 `deploy/`。
+- 本仓库 `nacho-main/server/` 已于 2026-10-22 删除；服务端与 Agent 的任何改动一律在 `nacho-server/` 进行。
 - 技术栈：Node.js 22+、Express 4、WebSocket、Zod、TypeScript、内置 `node:sqlite`。
-- 主要目录：
-  - `server/src/routes/`：面板、Agent 与公开制品路由。
-  - `server/src/services/`：客户端、命令、升级、任务、插件、日志和健康数据业务逻辑。
-  - `server/src/db/`：SQLite 初始化与增量建表逻辑。
-  - `server/src/tests/`：服务端自动化测试。
-  - `server/deploy/`：Linux 服务端及 Windows Agent 安装／卸载脚本。
-  - `server/artifacts/windows/`：发布脚本生成的 Windows Agent 制品与 `latest.json`。
-- 服务端支持三种互斥选择的运行模式：**Windows 本机部署**、**WSL2 部署**、**独立 Linux 服务器部署**。三种模式使用同一套 `server/` 源码和 API 协议，但进程管理、数据目录、监听地址与验收命令不同。
+- 主要目录（均在 `nacho-server` 仓库内）：
+  - `src/routes/`：面板、Agent 与公开制品路由。
+  - `src/services/`：客户端、命令、升级、任务、插件、日志和健康数据业务逻辑。
+  - `src/db/`：SQLite 初始化与增量建表逻辑。
+  - `src/tests/`：服务端自动化测试。
+  - `deploy/`：Linux 服务端及 Windows Agent 安装／卸载脚本。
+  - `artifacts/windows/`：发布脚本生成的 Windows Agent 制品与 `latest.json`。
+- 服务端支持三种互斥选择的运行模式：**Windows 本机部署**、**WSL2 部署**、**独立 Linux 服务器部署**。三种模式使用同一套服务端源码和 API 协议，但进程管理、数据目录、监听地址与验收命令不同。
 - 面板和 Agent 在一次运行中只连接一个选定的控制服务端。不得因普通 Windows 本机任务自动启动 WSL，也不得把某一模式的运行状态当作另一模式的状态。
 - 多种模式在同一设备并存时必须使用不同端口；修改端口后同步更新面板连接地址、Agent `serverUrl`、防火墙与自启配置。
 
 #### 2.2.1 Windows 本机部署
 
-- 由 Windows 上的面板首次引导或“设置 → 连接”管理，运行仓库中的 `server/dist/index.js`。
-- 管理脚本：`server/deploy/windows/local-control-server.ps1`；配置：`server/.env`；状态与日志：`server/.nacho-local/`；默认地址：`http://127.0.0.1:8443`，端口冲突时从面板修改。
+- 由 Windows 上的面板首次引导或“设置 → 连接”管理，运行 `%LOCALAPPDATA%/NachoPanel/server/dist/index.js`。
+- 该目录由面板从 `nacho-server` 仓库克隆（`nacho-panel/lib/local-control-server.ts`），**不再回退到本仓库内的 `server/`**。
+- 管理脚本：`%LOCALAPPDATA%/NachoPanel/server/deploy/windows/local-control-server.ps1`；配置：同目录 `.env`；状态与日志：同目录 `.nacho-local/`；默认地址：`http://127.0.0.1:8443`，端口冲突时从面板修改。
 - 进程使用当前 Windows 用户的 HKCU 登录自启，不依赖 WSL、systemd 或 `/opt/control-server`。
 - 安装、启动、停止、修复、端口迁移和卸载均走面板本机 API；只在配置局域网防火墙规则时请求 UAC。
 
@@ -54,21 +56,21 @@
 
 - 当前测试发行版／用户为 WSL2 `Debian` / `debian`；运行副本为 `/opt/control-server`，systemd 单元为 `control-server.service`，默认端口为 `8443`。
 - WSL 模式适合本机 Linux 兼容验证或明确选择的 WSL 常驻服务。只有任务明确指向 WSL、`/opt/control-server` 或 `control-server.service` 时才启动发行版。
-- `/opt/control-server` 是运行副本，仓库 `server/` 才是源码来源。先验证源码，再备份运行态并同步部署；保持部署侧 `.env`、SQLite 数据库和 systemd 配置原样。
+- `/opt/control-server` 是运行副本，`nacho-server` 仓库才是源码来源。先验证源码，再备份运行态并同步部署；保持部署侧 `.env`、SQLite 数据库和 systemd 配置原样。
 - 需要提权时使用当前会话提供的 `WSL_SUDO_PASSWORD`，或由调用方显式选择 WSL root；凭据只经标准输入传递，不进入仓库、日志或摘要。
 
 #### 2.2.3 独立 Linux 服务器部署
 
-- 支持 Ubuntu、Debian、CentOS、RHEL、Rocky Linux、AlmaLinux 与 Fedora；使用 `server/deploy/install.sh` 安装 Node.js、系统用户和 `control-server.service`。
+- 支持 Ubuntu、Debian、CentOS、RHEL、Rocky Linux、AlmaLinux 与 Fedora；使用 `nacho-server` 的 `deploy/install.sh` 安装 Node.js、系统用户和 `control-server.service`。
 - 默认安装目录为 `/opt/control-server`，数据库与持久化目录按部署脚本配置；面板和 Agent 使用服务器可达的 HTTP(S) 地址，不得使用浏览器所在机器的 `localhost`。
 - 远程部署遵循“源码验证 → 备份配置/数据库 → 同步或执行安装脚本 → 重启 systemd → 健康/API 验证 → 失败回滚”，并保持远程 `.env` 与凭据不出现在聊天输出。
 
 ### 2.3 Windows Agent 客户端（当前 Windows 设备）
 
-- 源码目录：`server/client/`。
+- 源码目录：`nacho-server` 仓库的 `client/`。
 - 技术栈：.NET 10、Windows Service、自包含 `win-x64` 单文件发布。
-- 项目：`server/client/src/Nacho.Agent/Nacho.Agent.csproj`。
-- 测试：`server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj`。
+- 项目：`nacho-server/client/src/Nacho.Agent/Nacho.Agent.csproj`。
+- 测试：`nacho-server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj`。
 - Windows 服务：`NachoAgent`，以 `LocalSystem` 自动启动。
 - 安装程序：`%ProgramFiles%/Nacho/Agent/nacho-agent.exe`。
 - 配置与持久化状态：`%ProgramData%/Nacho/agent.json`、`state.dat`、`queue/` 及更新／重启 intent 文件。
@@ -101,19 +103,21 @@
 
 ### 4.2 服务端改动
 
-- 路由层负责认证、Zod 校验和 HTTP envelope；业务规则放在 `server/src/services/`；SQLite 映射集中在 db/service 层。
+- 服务端代码在 `nacho-server` 仓库，本仓库不再包含服务端源码。
+- 路由层负责认证、Zod 校验和 HTTP envelope；业务规则放在 `nacho-server/src/services/`；SQLite 映射集中在 db/service 层。
 - 数据库变更采用可重复执行的增量初始化，兼容现有 `/opt/control-server` 数据库。
 - 修改命令契约时同时检查 HTTP、WebSocket、SQLite、日志裁剪、离线队列和重复投递。
 - 新增写操作时记录必要的业务审计摘要，同时避免把命令完整结果、凭据或采集正文复制进服务日志。
-- 保持 `server/.env.example` 只包含示例值。运行中的 `.env` 仅用于部署，不读取到聊天输出。
+- 保持 `nacho-server/.env.example` 只包含示例值。运行中的 `.env` 仅用于部署，不读取到聊天输出。
 
 ### 4.3 Agent 改动
 
+- Agent 代码在 `nacho-server` 仓库的 `client/`。
 - 命令执行继续串行化，并沿用 `CommandJournal` 的先持久化、ACK、执行、报告和重试流程。
 - 程序／Shell／包安装、文件部署与回滚、服务／进程／用户／注册表管理、消息／URL、系统重启和日志采集继续执行各自的本机策略、权限与允许列表；升级保留既有 `agent.json`、DPAPI 身份和 journal。
 - Windows 操作优先使用现有 .NET／Win32 API，不引入额外 shell 链路。
 - 真实服务、进程、重启、日志和升级验收均使用专门夹具或当前任务指定对象，记录并恢复测试前状态。
-- 发布只通过 `server/client/deploy/publish.ps1` 生成制品和清单；发布后再验证清单、文件大小和 SHA-256。
+- 发布只通过 `nacho-server/client/deploy/publish.ps1` 生成制品和清单；发布后再验证清单、文件大小和 SHA-256。
 
 ### 4.4 新命令或新业务的完成定义
 
@@ -136,15 +140,15 @@
 - `nacho-panel/components/ai-mode/ai-workspace.tsx` 仍是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
 - `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 仍是本地模拟终端和模拟文件系统。
 - `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/nacho.ps1`。
-- `server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
+- `nacho-server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
 - 发现“注释宣称真实、实现仍为本地 state 或定时模拟”的情况时，以代码行为为准，并在相关任务中修正注释。
 
 ## 6. 文件与依赖管理
 
-- 根 `package.json` 与根 `pnpm-lock.yaml` 是 Vercel 部署及命令代理入口，不得作为多余文件删除；面板使用 `nacho-panel/pnpm-lock.yaml` 与 pnpm，`server/` 使用 `package-lock.json` 与 npm，Agent 使用 dotnet/NuGet。各层保持各自包管理器。
-- 业务源码修改范围通常为 `nacho-panel/app/`、`nacho-panel/components/`、`nacho-panel/lib/`、`server/src/`、`server/client/src/` 和对应测试。
-- 生成目录和运行数据保持只读：`nacho-panel/.next/`、各级 `node_modules/`、`server/dist/`、`server/data/`、`server/tmp-*`、`**/bin/`、`**/obj/`。
-- `server/artifacts/windows/*.exe` 是发布制品；源码任务不直接编辑二进制文件。
+- 根 `package.json` 与根 `pnpm-lock.yaml` 是 Vercel 部署及命令代理入口，不得作为多余文件删除；面板使用 `nacho-panel/pnpm-lock.yaml` 与 pnpm。服务端与 Agent 已迁至 `nacho-server` 仓库：服务端使用 `package-lock.json` 与 npm，Agent 使用 dotnet/NuGet。各层保持各自包管理器。
+- 本仓库业务源码修改范围为 `nacho-panel/app/`、`nacho-panel/components/`、`nacho-panel/lib/` 和对应测试；服务端与 Agent 改动在 `nacho-server/`。
+- 生成目录和运行数据保持只读：`nacho-panel/.next/`、各级 `node_modules/`、`**/bin/`、`**/obj/`。
+- `nacho-server/artifacts/windows/*.exe` 是发布制品；源码任务不直接编辑二进制文件。
 - `.codex-*`、`.v0-backups/`、`*.bak` 和无引用的调试截图属于临时文件，不提交到仓库；正式 UI 图片和 `public/` 运行资源不按扩展名批量清理。
 - 当前仓库基线可能尚未建立 tracked files。每次检查 `git ls-files`；当结果为空时，`git diff` 的覆盖范围并不完整，需要同时核对文件清单和内容。清理、重置、暂存、提交与推送均以用户明确要求为触发条件。
 - 保留用户已有的未提交文件和运行数据；修改聚焦当前任务涉及的文件。
@@ -178,7 +182,7 @@ Pop-Location
 
 ### 7.2 服务端：按部署模式验证
 
-源码级测试在 `server/` 中执行：
+源码级测试在 **`nacho-server` 仓库根**执行：
 
 ```bash
 npm test
@@ -199,7 +203,7 @@ curl -fsS http://localhost:8443/health
 systemctl is-active control-server.service
 ```
 
-- `server/node_modules` 可能由 Windows npm 安装，其中 `esbuild` 原生包与 Linux 不兼容。WSL 测试使用 WSL 文件系统中的隔离目录：复制 `server/package*.json`、`server/tsconfig.json`、`server/src/`，执行 `npm ci --no-audit --no-fund`、测试和构建，完成后校验临时路径位于 `/tmp/` 再清理。
+- `nacho-server/node_modules` 可能由 Windows npm 安装，其中 `esbuild` 原生包与 Linux 不兼容。WSL 测试使用 WSL 文件系统中的隔离目录：复制 `package*.json`、`tsconfig.json`、`src/`，执行 `npm ci --no-audit --no-fund`、测试和构建，完成后校验临时路径位于 `/tmp/` 再清理。
 - 服务端测试不直接覆盖 `/opt/control-server`。部署验收按“源码通过 -> 备份运行态 -> 同步部署副本 -> 重启服务 -> 健康/API 验证 -> 失败则回滚”的顺序执行。
 
 独立 Linux 服务器部署在目标主机执行：
@@ -214,15 +218,17 @@ curl -fsS http://127.0.0.1:PORT/health
 
 ### 7.3 Agent：在当前 Windows 设备运行
 
+在 `nacho-server` 仓库根执行：
+
 ```powershell
-dotnet test server/client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj
-dotnet build server/client/src/Nacho.Agent/Nacho.Agent.csproj -c Release
+dotnet test client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj
+dotnet build client/src/Nacho.Agent/Nacho.Agent.csproj -c Release
 ```
 
 - 涉及发布时追加：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File server/client/deploy/publish.ps1
+powershell -ExecutionPolicy Bypass -File client/deploy/publish.ps1
 ```
 
 - 涉及已安装服务时，先查询 `Get-CimInstance Win32_Service -Filter "Name='NachoAgent'"`，再执行最小真实验收；结束时恢复服务、配置和夹具状态。

@@ -3,7 +3,9 @@ import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import test from "node:test"
 
-const sourceRoots = ["app", "components", "lib", "tests", "../server/src", "../server/client/src", "../server/client/tests"]
+// 服务端源码已迁至独立仓库 nacho-server，其编码由该仓库的
+// src/tests/source-encoding.test.ts 负责校验；面板侧只覆盖自身源码。
+const sourceRoots = ["app", "components", "lib", "tests"]
 const textExtensions = new Set([
   ".cs",
   ".csproj",

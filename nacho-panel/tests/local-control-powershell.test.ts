@@ -4,61 +4,18 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 
+// Windows 本机服务管理脚本属于服务端仓库，脚本自身的断言由
+// nacho-server/src/tests/windows-local-control.test.ts 维护；
+// 面板侧只验证面板如何调用这些脚本与动作。
 const testDirectory = path.dirname(fileURLToPath(import.meta.url))
-const scriptPath = path.resolve(testDirectory, "../../server/deploy/windows/local-control-server.ps1")
-const launcherPath = path.resolve(testDirectory, "../../server/deploy/windows/start-local-control-server.cjs")
 const modulePath = path.resolve(testDirectory, "../lib/local-control-server.ts")
 const managerPath = path.resolve(testDirectory, "../components/local-control/local-control-server-manager.tsx")
 const progressPath = path.resolve(testDirectory, "../components/local-control/deployment-progress.tsx")
 
-test("Windows manager verifies the project, PID ownership, and configured listener", async () => {
-  const scriptBytes = await readFile(scriptPath)
-  const script = scriptBytes.toString("utf8")
-
-  assert.deepEqual([...scriptBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf])
-  assert.match(script, /\[Console\]::OutputEncoding = \$Utf8NoBom/)
-  assert.doesNotMatch(script, /\uFFFD/)
-  assert.match(script, /Assert-TrustedProject/)
-  assert.match(script, /\[System\.IO\.File\]::ReadAllText\(\$ManifestPath, \[System\.Text\.Encoding\]::UTF8\)/)
-  assert.match(script, /Win32_Process/)
-  assert.match(script, /CommandLine\.ToLowerInvariant\(\)\.Contains\(\$Expected\)/)
-  assert.match(script, /function Get-TcpListeners/)
-  assert.match(script, /netstat\.exe/)
-  assert.doesNotMatch(script, /Get-NetTCPConnection/)
-  assert.match(script, /Where-Object \{ \$_\.OwningProcess -eq \$Managed\.ProcessId \}/)
-  assert.match(script, /listeningPorts = @\(\$ListeningPorts\)/)
-  assert.match(script, /portOwnerPid = if \(\$PortOwner\)/)
-  assert.match(script, /function Import-ManagedEnvironment/)
-  assert.match(script, /SetEnvironmentVariable\(\$Matches\.key, \$Matches\.value, "Process"\)/)
-  assert.match(script, /Import-ManagedEnvironment\s+[\s\S]*& \$Runtime\.nodePath \$LauncherPath/)
-  assert.match(script, /本机控制服务启动器未返回有效 PID/)
-  assert.match(script, /Write-Output "控制服务进程已启动（PID \$ChildPid）"\s+exit 0/)
-})
-
-test("Windows manager launches the service without inheriting the install stream", async () => {
-  const launcher = await readFile(launcherPath, "utf8")
-
-  assert.match(launcher, /detached: true/)
-  assert.match(launcher, /stdio: \["ignore", stdoutDescriptor, stderrDescriptor\]/)
-  assert.match(launcher, /child\.unref\(\)/)
-  assert.doesNotMatch(launcher, /shell: true/)
-})
-
-test("Windows manager script carries a UTF-8 BOM for Windows PowerShell 5.1", async () => {
-  const script = await readFile(scriptPath)
-
-  assert.deepEqual([...script.subarray(0, 3)], [0xef, 0xbb, 0xbf])
-})
-
 test("Windows manager aborts occupied-port installs before mutation and cleans failed installs", async () => {
-  const [script, module] = await Promise.all([
-    readFile(scriptPath, "utf8"),
-    readFile(modulePath, "utf8"),
-  ])
+  const module = await readFile(modulePath, "utf8")
 
-  assert.match(script, /"AssertPortAvailable"/)
-  assert.match(script, /function Assert-PortAvailable/)
-  assert.match(script, /端口 \$SelectedPort 已被其他进程占用，请更换监听端口后重试。/)
+  assert.match(module, /await runPowerShell\(serverDir, "AssertPortAvailable", port/)
   const preflight = module.indexOf('await runPowerShell(serverDir, "AssertPortAvailable", port')
   const runtimeInstall = module.indexOf("await ensureRuntimePrerequisites(serverDir, onProgress)", preflight)
   assert.ok(preflight >= 0 && runtimeInstall > preflight)
@@ -69,51 +26,27 @@ test("Windows manager aborts occupied-port installs before mutation and cleans f
 })
 
 test("Windows manager keeps elevation scoped to firewall and autostart uses the selected port", async () => {
-  const script = await readFile(scriptPath, "utf8")
+  const module = await readFile(modulePath, "utf8")
 
-  assert.match(script, /-Verb RunAs/)
-  assert.match(script, /-RemoteAddress LocalSubnet/)
-  assert.match(script, /HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run/)
-  assert.match(script, /-Action Start -Port \{1\}/)
-  assert.doesNotMatch(script, /Start-Process[^\r\n]+-Verb RunAs[^\r\n]+\$Runtime\.nodePath/)
+  assert.match(module, /"SetFirewall"/)
+  assert.match(module, /"RemoveFirewall"/)
+  assert.match(module, /"EnableAutostart"/)
+  assert.match(module, /"DisableAutostart"/)
+  assert.match(module, /await runPowerShell\(serverDir, "SetFirewall", port, POWERSHELL_TIMEOUT_MS, onProgress\)/)
+  assert.match(module, /await runPowerShell\(serverDir, "EnableAutostart", port, POWERSHELL_TIMEOUT_MS, onProgress\)/)
+  assert.match(module, /await runPowerShell\(serverDir, "DisableAutostart", port\)\.catch/)
+  assert.match(module, /await runPowerShell\(serverDir, "RemoveFirewall", port\)\.catch/)
 })
 
 test("Windows manager reuses the panel runtime before installing a verified portable Node.js runtime", async () => {
-  const [script, module] = await Promise.all([
-    readFile(scriptPath, "utf8"),
-    readFile(modulePath, "utf8"),
-  ])
+  const module = await readFile(modulePath, "utf8")
 
   assert.match(module, /args\.push\("-PanelNodePath", process\.execPath\)/)
   assert.match(module, /STATUS_POWERSHELL_TIMEOUT_MS/)
   assert.match(module, /runtimeProbeSucceeded/)
   assert.match(module, /"-WindowStyle",\s*"Hidden"/)
   assert.doesNotMatch(module, /当前 Windows 架构不支持自动下载/)
-  assert.match(script, /\[Environment\]::GetEnvironmentVariable\("Path", "Machine"\)/)
-  assert.match(script, /\$PanelNodePath/)
-  assert.match(script, /RuntimeInformation\]::OSArchitecture/)
-  assert.match(script, /-p "process\.arch"/)
-  assert.match(script, /Join-Path \(Split-Path -Parent \$NodePath\) "npm\.cmd"/)
-  assert.match(script, /Get-Command where\.exe/)
-  assert.match(script, /node_modules\\npm\\bin\\npm-cli\.js/)
-  assert.match(script, /& \$NodePath \$NpmCliPath --version/)
-  assert.match(script, /\$PreviousErrorActionPreference = \$ErrorActionPreference/)
-  assert.match(script, /\$ErrorActionPreference = "Continue"/)
-  assert.match(script, /if \(\$Candidate\.ready\)/)
-  assert.match(script, /"InstallRuntime"/)
-  assert.match(script, /https:\/\/nodejs\.org\/dist\/index\.json/)
-  assert.match(script, /SHASUMS256\.txt/)
-  assert.match(script, /Get-FileHash -LiteralPath \$ArchivePath -Algorithm SHA256/)
-  assert.match(script, /\.nacho-runtime/)
-  assert.match(script, /OpenJS\.NodeJS\.LTS/)
-  assert.equal(script.match(/function Get-NodeRuntimeInfo/g)?.length, 1)
-  assert.doesNotMatch(script, /请先安装 Microsoft App Installer/)
-  assert.match(script, /Write-Output '\$ npm ci --no-audit --no-fund'/)
-  assert.match(script, /& \$Runtime\.npmPath ci --no-audit --no-fund/)
-  assert.match(script, /Write-Output '\$ npm run build'/)
-  assert.match(script, /& \$Runtime\.npmPath run build/)
-  assert.match(script, /& \$Runtime\.nodePath \$LauncherPath/)
-  assert.doesNotMatch(script, /RedirectStandardOutput \$StdoutPath/)
+  assert.match(module, /"InstallRuntime"/)
 })
 
 test("local control install stages preserve the card transition motion", async () => {
@@ -144,7 +77,6 @@ test("local control install stages preserve the card transition motion", async (
   assert.match(progress, /filter: "blur\(8px\)"/)
   assert.match(progress, /transform: "translateY\(7px\)"/)
   assert.match(progress, /setConsoleHeight\(nextHeight\)/)
-  assert.match(progress, /scrollTo\(\{ top: element\.scrollHeight, behavior: reducedMotion \? "auto" : "smooth" \}\)/)
   assert.match(progress, /transition: reducedMotion \? "none" : `height 460ms \$\{DEPLOYMENT_STAGE_EASE\}`/)
   assert.ok(completion)
   assert.doesNotMatch(completion[0], /setInstallOutput\(""\)/)

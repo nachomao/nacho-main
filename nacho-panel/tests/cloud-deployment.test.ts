@@ -121,15 +121,13 @@ test("SSH stdout and stderr stream by line without losing split UTF-8 or exposin
 })
 
 test("cloud install streams real output but keeps installer keys out of its summary", async () => {
-  const [source, script, route, form] = await Promise.all([
+  const [source, route, form] = await Promise.all([
     readFile(new URL("../lib/cloud-deployment.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../server/deploy/install.sh", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cloud-deployment/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../components/onboarding/cloud-deploy-form.tsx", import.meta.url), "utf8"),
   ])
   assert.match(source, /NACHO_HIDE_INSTALL_SECRETS=1 bash/)
   assert.doesNotMatch(source, /deploy\/install\.sh >\/dev\/null 2>&1/)
-  assert.match(script, /if \[ "\$\{NACHO_HIDE_INSTALL_SECRETS:-0\}" != "1" \]; then/)
   assert.match(route, /type: "log", content/)
   assert.match(form, /<DeploymentStagePanel stage="install" active=\{attemptStarted && !result\}>/)
   assert.match(form, /<InstallationConsole output=\{output\} active=\{busy === "deploy"\}/)
