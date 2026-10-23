@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { resolve4 } from "node:dns/promises"
 import { isIP } from "node:net"
 import { Client } from "ssh2"
-import { gitCloneShell } from "../../desktop/src/github-download.cjs"
+import { gitCloneShell, sourceArchiveShell } from "../../desktop/src/github-download.cjs"
 
 type Target = { host: string; username: string; password: string; fingerprint: string }
 export type CloudDeploymentResult = { api: string; key: string }
@@ -164,7 +164,7 @@ export function sanitizeCloudInstallLine(line: string, password: string) {
   return text
 }
 
-export function runRemote(client: Client, command: string, sudoPassword?: string, onOutput?: (line: string) => void): Promise<{ code: number; output: string }> {
+export function runRemote(client: Client, command: string, sudoPassword?: string, onOutput?: (line: string) => void, timeoutMs = 15 * 60_000): Promise<{ code: number; output: string }> {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, channel) => {
       if (error) return reject(new CloudDeploymentError("无法执行远程部署命令", 502))
@@ -201,7 +201,7 @@ export function runRemote(client: Client, command: string, sudoPassword?: string
       const timeout = setTimeout(() => {
         channel.close()
         reject(new CloudDeploymentError("远程命令执行超时，请检查目标系统", 504))
-      }, 15 * 60_000)
+      }, timeoutMs)
       timeout.unref()
       channel.on("data", (chunk: Buffer) => {
         output = (output + chunk.toString("utf8")).slice(-4096)
@@ -224,15 +224,17 @@ export function runRemote(client: Client, command: string, sudoPassword?: string
   })
 }
 
-function runAsRoot(client: Client, username: string, password: string, script: string, onOutput?: (line: string) => void) {
+function runAsRoot(client: Client, username: string, password: string, script: string, onOutput?: (line: string) => void, timeoutMs?: number) {
   const quoted = `'${script.replaceAll("'", "'\\''")}'`
   const command = username === "root" ? `sh -c ${quoted}` : `sudo -S -p '' sh -c ${quoted}`
   return runRemote(client, command, username === "root" ? undefined : password,
-    onOutput ? (line) => onOutput(sanitizeCloudInstallLine(line, password)) : undefined)
+    onOutput ? (line) => onOutput(sanitizeCloudInstallLine(line, password)) : undefined, timeoutMs)
 }
 
 export function buildCloudInstallCommand(remoteDirectory: string) {
   const sourceDirectory = `${remoteDirectory}/nacho-server`
+  // 国内网络对 git 智能协议限速严重，优先下载 codeload 源码包（约快一个数量级），
+  // curl/tar 缺失或下载校验失败时才回退到 git 克隆。
   return [
     "set -e",
     "if command -v git >/dev/null 2>&1; then :",
@@ -242,7 +244,8 @@ export function buildCloudInstallCommand(remoteDirectory: string) {
     "else echo '目标系统没有可用的包管理器，无法安装 Git' >&2; exit 43",
     "fi",
     `rm -rf '${sourceDirectory}'`,
-    gitCloneShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH),
+    // 源码包与克隆回退必须拼成同一个 AND-OR 片段：放入两个数组元素会被 "; " 拼成非法的 "; ||"。
+    `${sourceArchiveShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH)} || ${gitCloneShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH)}`,
     `test -f '${sourceDirectory}/deploy/install.sh'`,
     `NACHO_HIDE_INSTALL_SECRETS=1 bash '${sourceDirectory}/deploy/install.sh'`,
   ].join("; ")
@@ -283,6 +286,8 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
         if (outputLines <= 600) onLog(line)
         else if (outputLines === 601) onLog("[Nacho] 输出过多，后续内容已停止显示；部署仍在继续")
       },
+      // 源码包（最多 4 分钟）+ 克隆回退（内部上限 15 分钟）需要比默认 15 分钟更长的预算。
+      20 * 60_000,
     )
     const rollback = async () => {
       onProgress("安装未完成，正在清理本次部署")

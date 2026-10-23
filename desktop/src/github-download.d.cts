@@ -35,6 +35,7 @@ export function fetchGitHubJson<T = unknown>(url: string,
 export function cloneGitHub(repository: string, destination: string,
   options?: TransportOptions & { branch?: string; cwd?: string; timeoutMs?: number }): Promise<unknown>
 export function gitCloneShell(repository: string, destination: string, branch?: string): string
+export function sourceArchiveShell(repository: string, destination: string, branch?: string): string
 export function hashFile(file: string, algorithm?: string): Promise<string>
 export function aria2Available(options?: TransportOptions): Promise<boolean>
 export function ensureAria2(options?: DownloadOptions): Promise<boolean>

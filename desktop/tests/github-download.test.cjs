@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict")
+const { spawnSync } = require("node:child_process")
 const { createHash } = require("node:crypto")
 const fs = require("node:fs/promises")
 const http = require("node:http")
@@ -8,6 +9,7 @@ const test = require("node:test")
 const {
   downloadFile, fetchGitHubJson, cloneGitHub, candidates, contentRange,
   PROBE_TIMEOUT_MS, PARALLEL_MIN_BYTES, ensureAria2, runProcess,
+  sourceArchiveShell, gitCloneShell,
 } = require("../src/github-download.cjs")
 
 const URL = "https://github.com/example/project/releases/download/v1.0.0/file.bin"
@@ -47,7 +49,7 @@ async function fixture(context, size = PARALLEL_MIN_BYTES) {
   const origin = `http://127.0.0.1:${server.address().port}`
   const fetcher = (url, init) => {
     const source = url.startsWith("https://gh-proxy.com/") ? "first" :
-      url.startsWith("https://ghfast.top/") ? "second" : "direct"
+      url.startsWith("https://ghproxy.net/") ? "second" : "direct"
     return fetch(`${origin}/${source}`, init)
   }
   context.after(async () => {
@@ -107,7 +109,7 @@ test("direct and first-mirror errors select the second mirror", async (context) 
     response.writeHead(502); response.end()
     return true
   }
-  assert.equal((await downloadFile(URL, f.output, f.options)).source, "ghfast.top")
+  assert.equal((await downloadFile(URL, f.output, f.options)).source, "ghproxy.net")
 })
 
 test("all unavailable sources fail without creating partial files", async (context) => {
@@ -334,4 +336,42 @@ test("cancelled process probes terminate descendants and return promptly", async
     { signal: controller.signal }), /probe deadline/)
     assert.ok(Date.now() - began < 1500)
   } finally { clearTimeout(timer) }
+})
+
+test("source archive scripts pin the branch head commit and verify the extracted root", () => {
+  const script = sourceArchiveShell("https://github.com/example/project.git",
+    "/tmp/nacho-deploy.ABC123/nacho-server")
+  assert.match(script, /codeload\.github\.com\/example\/project\/tar\.gz\/\$\{commit\}/)
+  assert.match(script, /api\.github\.com\/repos\/example\/project\/git\/ref\/heads\/main/)
+  assert.match(script, /gh-proxy\.com\/https:\/\/api\.github\.com/)
+  assert.match(script, /ghproxy\.net\/https:\/\/github\.com\/example\/project\/archive\/\$\{commit\}\.tar\.gz/)
+  assert.match(script, /"\$root" != "project-\$\{commit\}\/"/)
+  assert.match(script, /--strip-components=1/)
+  assert.match(script, /nacho-source\.XXXXXXXX/)
+  assert.match(script, /exit 44/)
+  assert.match(script, /回退 Git 克隆/)
+  assert.doesNotMatch(script, /ghfast\.top/)
+})
+
+test("source archive scripts reject non-GitHub repositories and unsafe inputs", () => {
+  const destination = "/tmp/nacho-deploy.ABC123/nacho-server"
+  assert.throws(() => sourceArchiveShell("https://example.com/example/project.git", destination), /仅支持 GitHub/)
+  assert.throws(() => sourceArchiveShell("https://github.com/example/project/extra/x.git", destination), /仓库地址/)
+  assert.throws(() => sourceArchiveShell("https://github.com/example/project.git", "/opt/control-server"), /暂存目录/)
+  assert.throws(() => sourceArchiveShell("https://github.com/example/project.git", destination, "main; rm -rf /"), /分支/)
+})
+
+test("generated remote scripts parse as bash", () => {
+  const probe = spawnSync("bash", ["-c", "true"])
+  if (probe.error || probe.status !== 0) return
+  const scripts = [
+    sourceArchiveShell("https://github.com/example/project.git", "/tmp/nacho-deploy.ABC123/nacho-server"),
+    gitCloneShell("https://github.com/example/project.git", "/tmp/nacho-deploy.ABC123/nacho-server"),
+  ]
+  for (const script of scripts) {
+    const match = /^bash -c '(.*)'$/s.exec(script)
+    assert.ok(match, "远程脚本应通过 bash -c 包装")
+    const result = spawnSync("bash", ["-n", "-c", match[1].replaceAll("'\\''", "'")], { encoding: "utf8" })
+    assert.equal(result.status, 0, result.stderr)
+  }
 })

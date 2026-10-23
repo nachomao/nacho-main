@@ -7,7 +7,7 @@ const path = require("node:path")
 const PROBE_TIMEOUT_MS = 5000
 const PARALLEL_MIN_BYTES = 8 * 1024 * 1024
 const MAX_CONNECTIONS = 4
-const MIRRORS = ["https://gh-proxy.com/", "https://ghfast.top/"]
+const MIRRORS = ["https://gh-proxy.com/", "https://ghproxy.net/"]
 const FILE_HOSTS = new Set(["github.com", "raw.githubusercontent.com", "codeload.github.com",
   "release-assets.githubusercontent.com", "objects.githubusercontent.com"])
 
@@ -527,6 +527,21 @@ async function downloadFile(url, output, options = {}) {
 
 function shellQuote(value) { return `'${value.replaceAll("'", "'\\''")}'` }
 
+/** 从 GitHub 仓库地址解析 owner 与仓库名，供源码包地址拼装使用。 */
+function repositoryParts(repository) {
+  const parsed = new URL(canonicalUrl(repository))
+  if (parsed.protocol !== "https:" || parsed.hostname !== "github.com") {
+    throw new Error("源码包下载仅支持 GitHub 仓库")
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean)
+  if (segments.length !== 2) throw new Error("GitHub 仓库地址无效")
+  const repo = segments[1].replace(/\.git$/i, "")
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(segments[0]) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repo)) {
+    throw new Error("GitHub 仓库名称包含非法字符")
+  }
+  return { owner: segments[0], repo }
+}
+
 function gitCloneShell(repository, destination, branch = "main") {
   if (!/^\/tmp\/nacho-deploy\.[A-Za-z0-9]+\/nacho-server$/.test(destination) ||
       !/^[A-Za-z0-9._/-]+$/.test(branch)) throw new Error("远程克隆暂存目录或分支无效")
@@ -606,9 +621,115 @@ exit 46`
   return `bash -c ${shellQuote(script)}`
 }
 
+/**
+ * 生成在目标 Linux 服务器上以 GitHub 源码包（codeload tar.gz）获取仓库源码的脚本。
+ *
+ * 国内网络对 git 智能协议限速严重（常见几十 KB/s），而 codeload 源码包基本不受影响，
+ * 因此云端部署优先下载源码包，失败时再由调用方回退到 gitCloneShell。
+ * 源码包按分支头 commit 下载，解包根目录固定为 `<仓库名>-<commit>`，可据此校验内容归属。
+ * 任一步骤失败都以非零退出码结束（41 缺 curl / 42 缺 tar / 43 解析不到 commit /
+ * 44 下载或校验失败 / 45 缺少 install.sh），由调用方决定回退。
+ */
+function sourceArchiveShell(repository, destination, branch = "main") {
+  if (!/^\/tmp\/nacho-deploy\.[A-Za-z0-9]+\/nacho-server$/.test(destination) ||
+      !/^[A-Za-z0-9._/-]+$/.test(branch)) throw new Error("远程源码包暂存目录或分支无效")
+  const { owner, repo } = repositoryParts(repository)
+  const refPath = `repos/${owner}/${repo}/git/ref/heads/${branch}`
+  const apiUrls = [`https://api.github.com/${refPath}`, `${MIRRORS[0]}https://api.github.com/${refPath}`]
+  const gitUrls = [`https://github.com/${owner}/${repo}.git`,
+    ...MIRRORS.map((prefix) => `${prefix}https://github.com/${owner}/${repo}.git`)]
+  const archiveUrls = [`https://codeload.github.com/${owner}/${repo}/tar.gz/\${commit}`,
+    `https://github.com/${owner}/${repo}/archive/\${commit}.tar.gz`,
+    ...MIRRORS.map((prefix) => `${prefix}https://github.com/${owner}/${repo}/archive/\${commit}.tar.gz`)]
+  // owner/repo/branch 已按安全字符集校验，commit 由脚本内的 40 位十六进制 grep 产出，
+  // 因此这几处用双引号让 bash 展开 $commit 也不会引入注入字符。
+  const archiveArgs = archiveUrls.map((url) => `"${url}"`).join(" ")
+  const root = `"${repo}-\${commit}/"`
+  const script = `set -eu
+command -v curl >/dev/null 2>&1 || { echo '[Nacho] 目标系统缺少 curl，无法下载源码包' >&2; exit 41; }
+command -v tar >/dev/null 2>&1 || { echo '[Nacho] 目标系统缺少 tar，无法解包源码' >&2; exit 42; }
+branch=${shellQuote(branch)}
+dest=${shellQuote(destination)}
+deadline=$((SECONDS+240))
+budget=$((deadline-SECONDS))
+commit=''
+# 先经 GitHub API 解析分支头 commit，直连被墙时由 gh-proxy 镜像代理 JSON API。
+for url in ${apiUrls.map(shellQuote).join(" ")}; do
+  budget=$((deadline-SECONDS))
+  [ "$budget" -gt 0 ] || break
+  echo '[Nacho] 通过 GitHub API 解析分支头提交'
+  body=$(curl -fsSL --connect-timeout 5 --max-time "$budget" "$url" 2>/dev/null || true)
+  [ -n "$body" ] || continue
+  commit=$(printf '%s' "$body" | grep -o '"sha": *"[0-9a-f]\\{40\\}"' | head -n 1 | grep -o '[0-9a-f]\\{40\\}' || true)
+  if [ -n "$commit" ]; then break; fi
+done
+# API 不可用时退回 git ls-remote：请求体只有几 KB，镜像限流下仍可完成。
+if [ -z "$commit" ] && command -v git >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  echo '[Nacho] GitHub API 不可用，改用 git ls-remote 解析分支头提交'
+  for url in ${gitUrls.map(shellQuote).join(" ")}; do
+    budget=$((deadline-SECONDS))
+    [ "$budget" -gt 0 ] || break
+    refs=$(timeout --signal=KILL 10s git -c credential.helper= -c core.askPass= -c http.sslVerify=true ls-remote --heads "$url" ${shellQuote(`refs/heads/${branch}`)} 2>/dev/null || true)
+    commit=$(printf '%s' "$refs" | grep -o '^[0-9a-f]\\{40\\}' | head -n 1 || true)
+    if [ -n "$commit" ]; then break; fi
+  done
+fi
+if [ -z "$commit" ]; then
+  echo '[Nacho] 无法解析分支头提交，回退 Git 克隆' >&2
+  exit 43
+fi
+echo "[Nacho] 分支 $branch 头提交 $commit，改用源码包下载"
+mkdir -p -- "\${dest%/*}"
+tmp=$(mktemp "\${dest%/*}/nacho-source.XXXXXXXX")
+ok=''
+for url in ${archiveArgs}; do
+  budget=$((deadline-SECONDS))
+  if [ "$budget" -le 0 ]; then
+    echo '[Nacho] 源码包下载超过总时间限制' >&2
+    break
+  fi
+  echo "[Nacho] 下载源码包（剩余 \${budget} 秒）：$url"
+  # 低于 100 KB/s 持续 45 秒即判定该源不可用：本仓库源码包约 33 MB，4 分钟预算内达不到该速率的源
+  # 只会白白耗尽预算，早失败早换下一个地址（含镜像）。
+  if ! curl -fL --connect-timeout 10 --speed-limit 102400 --speed-time 45 --max-time "$budget" -o "$tmp" "$url" 2>/dev/null; then
+    echo '[Nacho] 当前源码包地址不可用，尝试下一个地址' >&2
+    rm -f -- "$tmp"
+    continue
+  fi
+  # GitHub 源码包根目录固定为 <仓库名>-<commit>，以此确认内容归属该提交。
+  root=$(tar -tzf "$tmp" 2>/dev/null | head -n 1 || true)
+  if [ "$root" != ${root} ]; then
+    echo '[Nacho] 源码包内容与分支头提交不符，尝试下一个地址' >&2
+    rm -f -- "$tmp"
+    continue
+  fi
+  rm -rf -- "$dest"
+  mkdir -p -- "$dest"
+  if ! tar -xzf "$tmp" -C "$dest" --strip-components=1 2>/dev/null; then
+    echo '[Nacho] 源码包解包失败，尝试下一个地址' >&2
+    rm -rf -- "$dest"
+    rm -f -- "$tmp"
+    continue
+  fi
+  ok=1
+  break
+done
+rm -f -- "$tmp"
+if [ -z "$ok" ]; then
+  echo '[Nacho] 源码包获取失败，回退 Git 克隆' >&2
+  exit 44
+fi
+if [ ! -f "$dest/deploy/install.sh" ]; then
+  echo '[Nacho] 源码包缺少 deploy/install.sh，回退 Git 克隆' >&2
+  exit 45
+fi
+echo "[Nacho] 源码包下载并校验完成（$commit）"`
+  return `bash -c ${shellQuote(script)}`
+}
+
 module.exports = {
   PROBE_TIMEOUT_MS, PARALLEL_MIN_BYTES, MAX_CONNECTIONS, MIRRORS,
   IntegrityError, candidates, isGitHubFile, contentRange, selectSource,
-  fetchGitHubJson, downloadFile, cloneGitHub, gitCloneShell, hashFile,
+  fetchGitHubJson, downloadFile, cloneGitHub, gitCloneShell, sourceArchiveShell, hashFile,
   runProcess, aria2Available, ensureAria2,
 }

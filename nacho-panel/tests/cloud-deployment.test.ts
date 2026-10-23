@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { readFile } from "node:fs/promises"
 import { test } from "node:test"
@@ -58,19 +59,33 @@ test("SSH credentials and confirmed fingerprint have strict shapes", () => {
   }
 })
 
-test("cloud install gets the server source from GitHub on the target host", () => {
+test("cloud install prefers the pinned GitHub source archive and falls back to git clone", () => {
   const command = buildCloudInstallCommand("/tmp/nacho-deploy.ABC123")
   assert.match(command, /apt-get update -y/)
   assert.match(command, /dnf install -y git/)
   assert.match(command, /yum install -y git/)
+  assert.match(command, /codeload\.github\.com\/nachomao\/nacho-server\/tar\.gz\/\$\{commit\}/)
+  assert.match(command, /api\.github\.com\/repos\/nachomao\/nacho-server\/git\/ref\/heads\/main/)
   assert.match(command, /ls-remote --heads/)
   assert.match(command, /5s git/)
   assert.match(command, /--progress/)
+  assert.match(command, /--strip-components=1/)
   assert.match(command, /gh-proxy\.com/)
-  assert.match(command, /ghfast\.top/)
+  assert.match(command, /ghproxy\.net/)
   assert.match(command, /https:\/\/github\.com\/nachomao\/nacho-server\.git/)
   assert.match(command, /nacho-server\/deploy\/install\.sh/)
+  assert.match(command, /源码包获取失败，回退 Git 克隆/)
+  assert.doesNotMatch(command, /ghfast\.top/)
   assert.doesNotMatch(command, /bundle\.tar\.gz/)
+})
+
+test("the composed install command parses with a POSIX shell", () => {
+  const probe = spawnSync("sh", ["-c", "true"])
+  if (probe.error || probe.status !== 0) return
+  const command = buildCloudInstallCommand("/tmp/nacho-deploy.ABC123")
+  const result = spawnSync("sh", ["-n", "-c", command], { encoding: "utf8" })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(command, /' \|\| bash -c '/)
 })
 
 test("cloud deployment is available on local Windows and Linux panels only", () => {

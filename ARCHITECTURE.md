@@ -73,7 +73,8 @@
 ### 4.2 软件安装（面板 → 目标服务器 → Agent）
 
 ```
-面板"云端部署"：SSH/SFTP 把服务端源码 + Agent 制品推到远程 /tmp
+面板"云端部署"：SSH 在目标服务器上按分支头 commit 下载 GitHub 源码包（codeload，直接连接国内更快，
+  失败时依次尝试镜像并回退 git 克隆），校验解包根目录后解压到远程 /tmp
   → 远端执行 deploy/install.sh
   → 安装 Node、编译、建系统用户、写 .env、装 systemd 单元 control-server.service
 

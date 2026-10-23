@@ -46,11 +46,11 @@ $env:NACHO_LOCAL_SERVER_DIR = "C:\Users\Administrator\Documents\Codex\Nacho\nach
 
 ## GitHub 下载与镜像
 
-本机源码、云端源码和 GitHub 文件下载会在实际下载的机器上并行探测，检测预算为 5 秒。直连成功时优先使用 GitHub；连接失败或超时后依次尝试 `gh-proxy.com`、`ghfast.top`。公开 API 备用入口仅使用支持 JSON 的 `gh-proxy.com`。能连接但速度慢时不会主动切换。
+本机源码、云端源码和 GitHub 文件下载会在实际下载的机器上并行探测，检测预算为 5 秒。直连成功时优先使用 GitHub；连接失败或超时后依次尝试 `gh-proxy.com`、`ghproxy.net`。公开 API 备用入口仅使用支持 JSON 的 `gh-proxy.com`。能连接但速度慢时不会主动切换（Git 智能协议在国内常被限速，云端部署因此优先改用源码包，见下条）。
 
 GitHub 文件达到 8 MiB 且正确支持 HTTP Range 时，Windows 默认使用最多四路分段下载；小文件、未知大小或不支持分段的端点使用单连接。网络中断后清理本次下载并换源，所有制品仍以签名索引中的官方 URL、大小和 SHA-256 为准。其他来源的下载和上传保持原有方式。
 
-Git 克隆保留浅克隆和实时进度，不使用 HTTP 文件分段。桌面构建缺少 GitHub 工具归档缓存时也通过同一下载器预取，并保留构建工具自身的完整性校验。此行为不修改全局 Git、代理或系统 TLS 配置。
+Git 克隆保留浅克隆和实时进度，不使用 HTTP 文件分段。云端部署优先按分支头 commit 下载 GitHub 源码包（codeload，国内实测比 Git 智能协议快一个数量级），源码包根目录固定为 `仓库名-commit`，可据此校验内容归属；缺少 `curl`/`tar`、解析不到提交或校验不符时自动回退浅克隆。桌面构建缺少 GitHub 工具归档缓存时也通过同一下载器预取，并保留构建工具自身的完整性校验。此行为不修改全局 Git、代理或系统 TLS 配置。
 
 ## 本机凭据加密与恢复
 
