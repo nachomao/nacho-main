@@ -1,13 +1,13 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { AlertCircle, ArrowRight, Check, Copy, Fingerprint, Loader2, ServerCog, ShieldCheck } from "lucide-react"
+import { AlertCircle, ArrowRight, Check, CloudAlert, Copy, Fingerprint, Loader2, ServerCog, ShieldCheck } from "lucide-react"
 import { InstallationConsole, DeploymentStagePanel, type InstallationOutputChunk } from "@/components/local-control/deployment-progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-type DeploymentResult = { api: string; key: string }
+type DeploymentResult = { api: string; key: string; warning?: string }
 type DeployEvent = { type: "progress"; step: string } | { type: "log"; content: string } | { type: "complete"; data: DeploymentResult } | { type: "error"; message: string }
 
 async function readResponse<T>(response: Response): Promise<T> {
@@ -68,7 +68,9 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
       }
       onConnected({ mode: "cloud", api: deployment.api, key: deployment.key })
     } catch {
-      setError("服务已部署，但浏览器暂时无法访问 API。请检查服务器 8443 端口、防火墙及浏览器的 HTTP/HTTPS 限制，再重试验证。")
+      setError(deployment.warning
+        ? "浏览器仍无法访问服务端 API；请按上方端口提示放行后点击“重试验证并继续”。"
+        : "服务已部署，但浏览器暂时无法访问 API。请检查服务器 8443 端口、防火墙及浏览器的 HTTP/HTTPS 限制，再重试验证。")
     } finally {
       setBusy(null)
     }
@@ -183,6 +185,7 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
                   <AlertDescription className="flex flex-col gap-2">
                     <span>请与服务器控制台提供的 SSH 主机指纹核对，确认一致后再部署。若指纹变化，部署会自动中止。</span>
                     <code className="break-all rounded-lg bg-background/50 px-2.5 py-2 font-mono text-xs text-foreground" aria-label="SSH 主机 SHA256 指纹">{fingerprint}</code>
+                    <span>部署时会自动检测并尝试放行 8443 端口防火墙；若云安全组未放行，部署完成后会给出提示。</span>
                   </AlertDescription>
                 </Alert>
                 <Button type="button" variant="outline" size="lg" disabled={!username.trim() || !password || busy !== null} onClick={() => void deploy()} className="h-11 w-full rounded-xl focus-visible:ring-inset">
@@ -209,6 +212,13 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
       </DeploymentStagePanel>
 
       <DeploymentStagePanel stage="installed" active={!!result}>
+        {result?.warning && (
+          <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+            <CloudAlert className="text-amber-500" aria-hidden="true" />
+            <AlertTitle>疑似云防火墙策略拦截 8443 端口</AlertTitle>
+            <AlertDescription>{result.warning}</AlertDescription>
+          </Alert>
+        )}
         {result && (
           <div className="flex flex-col gap-3 rounded-2xl border border-border/50 bg-background/20 p-4">
             <span className="flex items-center gap-2 text-sm font-medium text-foreground"><Check className="size-4" aria-hidden="true" />服务已部署至 {result.api}</span>

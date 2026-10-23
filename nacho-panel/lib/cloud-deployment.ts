@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto"
 import { resolve4 } from "node:dns/promises"
-import { isIP } from "node:net"
+import { connect as netConnect, isIP } from "node:net"
 import { Client } from "ssh2"
 import { gitCloneShell, sourceArchiveShell } from "../../desktop/src/github-download.cjs"
 
+/** 云端部署固定使用的服务端端口。 */
+export const CLOUD_DEPLOY_PORT = 8443
+
 type Target = { host: string; username: string; password: string; fingerprint: string }
-export type CloudDeploymentResult = { api: string; key: string }
+export type CloudDeploymentResult = { api: string; key: string; warning?: string }
 export const NACHO_SERVER_REPOSITORY = "https://github.com/nachomao/nacho-server.git"
 export const NACHO_SERVER_BRANCH = "main"
 
@@ -128,8 +131,7 @@ export async function inspectCloudHost(host: string): Promise<string> {
   })
 }
 
-async function connectCloudHost(target: Target): Promise<Client> {
-  const address = await resolveCloudHost(target.host)
+async function connectCloudHost(target: Target, address: string): Promise<Client> {
   return new Promise((resolve, reject) => {
     const client = new Client()
     let mismatch = false
@@ -231,6 +233,149 @@ function runAsRoot(client: Client, username: string, password: string, script: s
     onOutput ? (line) => onOutput(sanitizeCloudInstallLine(line, password)) : undefined, timeoutMs)
 }
 
+export type CloudFirewallBackend = "ufw" | "firewalld" | "nftables" | "iptables" | "none"
+
+export type CloudFirewallReport = {
+  backend: CloudFirewallBackend
+  active: boolean
+  /** 脚本执行后是否确认 8443/tcp 已放行。 */
+  allowed: boolean
+  /** 本次脚本是否新增了放行规则（此前未放行、执行后已放行）。 */
+  opened: boolean
+}
+
+const CLOUD_FIREWALL_MARKER = "NACHO_FIREWALL "
+const CLOUD_FIREWALL_LABELS: Record<CloudFirewallBackend, string> = {
+  ufw: "ufw",
+  firewalld: "firewalld",
+  nftables: "nftables",
+  iptables: "iptables",
+  none: "无",
+}
+const CLOUD_PORT_PROBE_ATTEMPTS = 2
+const CLOUD_PORT_PROBE_TIMEOUT_MS = 5_000
+const CLOUD_PORT_PROBE_INTERVAL_MS = 800
+
+/**
+ * 生成在目标服务器上执行的防火墙检测脚本：仅自动放行运行中的 ufw/firewalld，
+ * 裸 nftables/iptables 只识别不修改，避免覆盖管理员自定义规则。
+ */
+export function buildCloudFirewallCommand(port = CLOUD_DEPLOY_PORT) {
+  return [
+    `PORT=${port}`,
+    "backend=none",
+    "active=no",
+    "allowed_before=no",
+    "allowed_after=no",
+    'if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi "^Status: active"; then',
+    "  backend=ufw",
+    "  active=yes",
+    '  if ufw status 2>/dev/null | grep -Eq "^$PORT/tcp[[:space:]]+ALLOW"; then',
+    "    allowed_before=yes",
+    "  else",
+    '    ufw allow "$PORT/tcp" >/dev/null || true',
+    "  fi",
+    '  if ufw status 2>/dev/null | grep -Eq "^$PORT/tcp[[:space:]]+ALLOW"; then',
+    "    allowed_after=yes",
+    "  fi",
+    'elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then',
+    "  backend=firewalld",
+    "  active=yes",
+    '  if firewall-cmd --query-port="$PORT/tcp" >/dev/null 2>&1; then',
+    "    allowed_before=yes",
+    "  else",
+    '    firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null || true',
+    "    firewall-cmd --reload >/dev/null || true",
+    "  fi",
+    '  if firewall-cmd --query-port="$PORT/tcp" >/dev/null 2>&1; then',
+    "    allowed_after=yes",
+    "  fi",
+    'elif command -v nft >/dev/null 2>&1 && [ -n "$(nft list ruleset 2>/dev/null)" ]; then',
+    "  backend=nftables",
+    "  active=yes",
+    'elif command -v iptables >/dev/null 2>&1 && [ -n "$(iptables -S 2>/dev/null)" ]; then',
+    "  backend=iptables",
+    "  active=yes",
+    "fi",
+    `echo "${CLOUD_FIREWALL_MARKER}backend=$backend active=$active allowed_before=$allowed_before allowed_after=$allowed_after"`,
+  ].join("\n")
+}
+
+/** 解析防火墙脚本最后输出的内部标记行；缺少标记时返回 null。 */
+export function parseCloudFirewallReport(output: string): CloudFirewallReport | null {
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).reverse()
+  for (const line of lines) {
+    const match = /^NACHO_FIREWALL backend=(ufw|firewalld|nftables|iptables|none) active=(yes|no) allowed_before=(yes|no) allowed_after=(yes|no)$/.exec(line)
+    if (!match) continue
+    const [, backend, active, allowedBefore, allowedAfter] = match
+    return {
+      backend: backend as CloudFirewallBackend,
+      active: active === "yes",
+      allowed: allowedAfter === "yes",
+      opened: allowedBefore === "no" && allowedAfter === "yes",
+    }
+  }
+  return null
+}
+
+/** 把防火墙检测结果转成部署控制台可读的中文日志。 */
+export function describeCloudFirewallReport(report: CloudFirewallReport | null, port = CLOUD_DEPLOY_PORT): string[] {
+  if (!report) return ["[Nacho] 无法确认目标服务器防火墙状态，将继续部署并在公网端口探测阶段判断"]
+  if (report.backend === "none") return ["[Nacho] 未检测到运行中的 ufw/firewalld，也未发现 nftables/iptables 规则"]
+  const label = CLOUD_FIREWALL_LABELS[report.backend]
+  const lines = [`[Nacho] 目标服务器防火墙：${label}${report.active ? "（运行中）" : ""}`]
+  if (report.backend === "ufw" || report.backend === "firewalld") {
+    if (report.opened) lines.push(`[Nacho] ${port}/tcp 此前未放行，已执行 ${label} 放行命令`)
+    if (report.allowed) lines.push(`[Nacho] ${port}/tcp 已放行（${label}）`)
+    else lines.push(`[Nacho] ${port}/tcp 放行未生效，请检查本机 ${label} 与云安全组`)
+  } else {
+    lines.push(`[Nacho] 检测到 ${label} 规则，为避免覆盖现有策略未自动修改；请确认 ${port}/tcp 已放行`)
+  }
+  return lines
+}
+
+/** 回滚本次部署时撤销由面板新增的 ufw/firewalld 放行规则。 */
+export function buildCloudFirewallCleanupCommand(port: number, backend: CloudFirewallBackend) {
+  if (backend === "ufw") return `ufw delete allow ${port}/tcp`
+  if (backend === "firewalld") return `firewall-cmd --permanent --remove-port=${port}/tcp && firewall-cmd --reload`
+  return ""
+}
+
+/** 从面板侧发起一次 TCP 连接，判断目标公网端口是否真的开放。 */
+export function probeCloudPort(address: string, port = CLOUD_DEPLOY_PORT, timeoutMs = CLOUD_PORT_PROBE_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = netConnect({ host: address, port })
+    let settled = false
+    const finish = (reachable: boolean) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(reachable)
+    }
+    socket.setTimeout(timeoutMs)
+    socket.once("connect", () => finish(true))
+    socket.once("timeout", () => finish(false))
+    socket.once("error", () => finish(false))
+  })
+}
+
+/**
+ * 本机防火墙已处理但公网端口仍不可达时的提示。云厂商安全组无法通过 SSH 修改，
+ * 因此只报告疑似云厂商防火墙策略并引导用户到云控制台放行后重试验证。
+ */
+export function buildCloudPortWarning(options: { port?: number; localFirewall: CloudFirewallReport | null }) {
+  const port = options.port ?? CLOUD_DEPLOY_PORT
+  const report = options.localFirewall
+  const localState = report === null
+    ? "无法确认服务器本机防火墙状态"
+    : report.backend === "none"
+      ? "服务器未检测到运行中的本机防火墙"
+      : report.allowed
+        ? `服务器本机防火墙（${CLOUD_FIREWALL_LABELS[report.backend]}）已放行 ${port}/tcp`
+        : `服务器本机防火墙（${CLOUD_FIREWALL_LABELS[report.backend]}）未能确认放行 ${port}/tcp`
+  return `${localState}，但面板仍无法访问公网 ${port} 端口。疑似腾讯云（仅作示例，阿里云、华为云、AWS 等其他云厂商同理）的防火墙策略（安全组或云防火墙）未放行 TCP ${port}，或面板到该地址的网络访问受到限制。请在云控制台为该实例添加来源 0.0.0.0/0（或你的固定 IP）、协议 TCP、端口 ${port} 的入站放行规则；若服务器使用 iptables/nftables，也请手动确认本机规则。处理后点击“重试验证并继续”。`
+}
+
 export function buildCloudInstallCommand(remoteDirectory: string) {
   const sourceDirectory = `${remoteDirectory}/nacho-server`
   // 国内网络对 git 智能协议限速严重，优先下载 codeload 源码包（约快一个数量级），
@@ -252,7 +397,8 @@ export function buildCloudInstallCommand(remoteDirectory: string) {
 }
 
 export async function deployCloudServer(target: Target, onProgress: (step: string) => void, onLog: (line: string) => void): Promise<CloudDeploymentResult> {
-  const client = await connectCloudHost(target)
+  const address = await resolveCloudHost(target.host)
+  const client = await connectCloudHost(target, address)
   let remoteDirectory: string | null = null
   try {
     onProgress("检查目标系统与现有安装")
@@ -276,6 +422,20 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     }
     remoteDirectory = temporary.output
 
+    // 身份核对与前置检查均已通过后再触碰防火墙；失败只记录日志，不阻断部署。
+    onProgress("检测并尝试放行 8443 端口防火墙")
+    const firewallResult = await runAsRoot(client, target.username, target.password,
+      buildCloudFirewallCommand(CLOUD_DEPLOY_PORT),
+      (line) => {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith(CLOUD_FIREWALL_MARKER)) return
+        onLog(trimmed)
+      },
+      60_000,
+    ).catch(() => null)
+    const firewallReport = firewallResult?.code === 0 ? parseCloudFirewallReport(firewallResult.output) : null
+    for (const line of describeCloudFirewallReport(firewallReport, CLOUD_DEPLOY_PORT)) onLog(line)
+
     onProgress("在目标服务器获取服务端代码并安装")
     let outputLines = 0
     const install = await runAsRoot(client, target.username, target.password,
@@ -291,8 +451,11 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     )
     const rollback = async () => {
       onProgress("安装未完成，正在清理本次部署")
+      const firewallCleanup = firewallReport?.opened && (firewallReport.backend === "ufw" || firewallReport.backend === "firewalld")
+        ? buildCloudFirewallCleanupCommand(CLOUD_DEPLOY_PORT, firewallReport.backend)
+        : ""
       const cleanup = await runAsRoot(client, target.username, target.password,
-        `set -e; bash ${remoteDirectory}/nacho-server/deploy/uninstall.sh >/dev/null 2>&1; rm -rf /var/lib/control-server`,
+        `set -e; bash ${remoteDirectory}/nacho-server/deploy/uninstall.sh >/dev/null 2>&1; rm -rf /var/lib/control-server${firewallCleanup ? `; ${firewallCleanup} >/dev/null 2>&1 || true` : ""}`,
       ).catch(() => null)
       return cleanup?.code === 0
     }
@@ -305,7 +468,7 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     }
 
     onProgress("验证服务状态并读取面板密钥")
-    const health = await runRemote(client, "node -e 'fetch(\"http://127.0.0.1:8443/health\").then(r=>r.json()).then(v=>process.exit(v.ok && v.service===\"nacho-server\"?0:1)).catch(()=>process.exit(1))'")
+    const health = await runRemote(client, `node -e 'fetch("http://127.0.0.1:${CLOUD_DEPLOY_PORT}/health").then(r=>r.json()).then(v=>process.exit(v.ok && v.service==="nacho-server"?0:1)).catch(()=>process.exit(1))'`)
     if (health.code !== 0) {
       const cleaned = await rollback()
       throw new CloudDeploymentError(cleaned ? "服务健康检查未通过，已清理本次安装" : "服务健康检查未通过，自动清理未完成；请检查目标服务器", 502)
@@ -317,7 +480,22 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
       const cleaned = await rollback()
       throw new CloudDeploymentError(cleaned ? "读取面板密钥失败，已清理本次安装" : "读取面板密钥失败，自动清理未完成；请检查目标服务器", 502)
     }
-    return { api: `http://${target.host}:8443`, key: secret.output }
+    onProgress("验证公网 8443 端口可达性")
+    let reachable = false
+    for (let attempt = 0; attempt < CLOUD_PORT_PROBE_ATTEMPTS && !reachable; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, CLOUD_PORT_PROBE_INTERVAL_MS))
+      reachable = await probeCloudPort(address, CLOUD_DEPLOY_PORT)
+    }
+    const api = `http://${target.host}:${CLOUD_DEPLOY_PORT}`
+    if (reachable) {
+      onLog(`[Nacho] 面板已可访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
+      return { api, key: secret.output }
+    }
+    // 服务已在本机健康运行，问题通常在云安全组：保留安装并给出可操作的提示，不回滚。
+    const warning = buildCloudPortWarning({ port: CLOUD_DEPLOY_PORT, localFirewall: firewallReport })
+    onLog(`[Nacho] 面板无法访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
+    onLog(`[Nacho] ${warning}`)
+    return { api, key: secret.output, warning }
   } finally {
     if (remoteDirectory) await runRemote(client, `rm -rf ${remoteDirectory}`).catch(() => undefined)
     client.end()

@@ -77,6 +77,8 @@
   失败时依次尝试镜像并回退 git 克隆），校验解包根目录后解压到远程 /tmp
   → 远端执行 deploy/install.sh
   → 安装 Node、编译、建系统用户、写 .env、装 systemd 单元 control-server.service
+  → 身份核对后检测本机防火墙：运行中的 ufw/firewalld 自动放行 TCP 8443，裸 nftables/iptables 只提示
+  → 安装后从面板探测公网 8443；本机已处理仍不可达时提示疑似云厂商安全组/云防火墙策略
 
 Agent 安装：浏览器执行 irm http://SERVER:8443/nacho.ps1 | iex
   → 该脚本由服务端按当前安装档案动态生成

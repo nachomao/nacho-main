@@ -2,11 +2,12 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { readFile } from "node:fs/promises"
+import { createServer, type AddressInfo } from "node:net"
 import { test } from "node:test"
 import { NextRequest } from "next/server"
 import type { Client } from "ssh2"
 import { POST } from "../app/api/cloud-deployment/route"
-import { buildCloudInstallCommand, checkCloudDeploymentAvailability, CloudDeploymentError, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
+import { buildCloudFirewallCleanupCommand, buildCloudFirewallCommand, buildCloudInstallCommand, buildCloudPortWarning, checkCloudDeploymentAvailability, CLOUD_DEPLOY_PORT, CloudDeploymentError, describeCloudFirewallReport, parseCloudFirewallReport, probeCloudPort, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
 
 const input = {
   action: "deploy",
@@ -198,4 +199,103 @@ test("remote deployment endpoint refuses to run outside a local panel", async ()
   assert.equal(body.ok, false)
   assert.match(body.message, /本机地址/)
   assert.doesNotMatch(JSON.stringify(body), /example-ssh-password/)
+})
+
+test("cloud firewall command opens only managed firewalls and never edits raw rules", () => {
+  assert.equal(CLOUD_DEPLOY_PORT, 8443)
+  const command = buildCloudFirewallCommand(8443)
+  for (const fragment of [
+    'grep -qi "^Status: active"',
+    'ufw allow "$PORT/tcp"',
+    'firewall-cmd --query-port="$PORT/tcp"',
+    'firewall-cmd --permanent --add-port="$PORT/tcp"',
+    "firewall-cmd --reload",
+    "nft list ruleset",
+    "iptables -S",
+    "NACHO_FIREWALL backend=$backend",
+  ]) {
+    assert.ok(command.includes(fragment), `缺少片段：${fragment}`)
+  }
+  assert.ok(!command.includes("iptables -I"))
+  assert.ok(!command.includes("nft add"))
+  assert.ok(!command.includes("ufw disable"))
+  assert.equal(buildCloudFirewallCleanupCommand(8443, "ufw"), "ufw delete allow 8443/tcp")
+  assert.match(buildCloudFirewallCleanupCommand(8443, "firewalld"), /--remove-port=8443\/tcp/)
+  assert.equal(buildCloudFirewallCleanupCommand(8443, "nftables"), "")
+
+  const probe = spawnSync("sh", ["-c", "true"])
+  if (probe.error || probe.status !== 0) return
+  const parsed = spawnSync("sh", ["-n", "-c", command], { encoding: "utf8" })
+  assert.equal(parsed.status, 0, parsed.stderr)
+})
+
+test("firewall report parsing derives whether the panel opened the port", () => {
+  assert.deepEqual(
+    parseCloudFirewallReport("ufw status\nNACHO_FIREWALL backend=ufw active=yes allowed_before=no allowed_after=yes\r\n"),
+    { backend: "ufw", active: true, allowed: true, opened: true },
+  )
+  assert.deepEqual(
+    parseCloudFirewallReport("NACHO_FIREWALL backend=firewalld active=yes allowed_before=yes allowed_after=yes"),
+    { backend: "firewalld", active: true, allowed: true, opened: false },
+  )
+  assert.deepEqual(
+    parseCloudFirewallReport("NACHO_FIREWALL backend=nftables active=yes allowed_before=no allowed_after=no"),
+    { backend: "nftables", active: true, allowed: false, opened: false },
+  )
+  assert.deepEqual(
+    parseCloudFirewallReport("NACHO_FIREWALL backend=none active=no allowed_before=no allowed_after=no"),
+    { backend: "none", active: false, allowed: false, opened: false },
+  )
+  assert.equal(parseCloudFirewallReport("目标服务器没有可用的防火墙标记"), null)
+})
+
+test("firewall report becomes readable deployment logs", () => {
+  const opened = describeCloudFirewallReport({ backend: "ufw", active: true, allowed: true, opened: true }, 8443)
+  assert.ok(opened.some((line) => line.includes("此前未放行")))
+  assert.ok(opened.some((line) => line.includes("已放行")))
+  const failed = describeCloudFirewallReport({ backend: "firewalld", active: true, allowed: false, opened: false }, 8443)
+  assert.ok(failed.some((line) => line.includes("放行未生效")))
+  const raw = describeCloudFirewallReport({ backend: "iptables", active: true, allowed: false, opened: false }, 8443)
+  assert.ok(raw.some((line) => line.includes("未自动修改")))
+  assert.ok(describeCloudFirewallReport(null, 8443)[0].includes("无法确认"))
+  assert.ok(describeCloudFirewallReport({ backend: "none", active: false, allowed: false, opened: false }, 8443)[0].includes("未检测到"))
+})
+
+test("TCP port probe distinguishes a listening port from a closed one", async () => {
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as AddressInfo).port
+  assert.equal(await probeCloudPort("127.0.0.1", port, 1_000), true)
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  assert.equal(await probeCloudPort("127.0.0.1", port, 1_000), false)
+})
+
+test("cloud port warning names the suspected cloud firewall policy", () => {
+  const allowed = buildCloudPortWarning({ localFirewall: { backend: "ufw", active: true, allowed: true, opened: false } })
+  assert.match(allowed, /疑似腾讯云/)
+  assert.match(allowed, /安全组或云防火墙/)
+  assert.match(allowed, /8443/)
+  assert.match(allowed, /重试验证/)
+  assert.match(allowed, /ufw/)
+  const unknown = buildCloudPortWarning({ localFirewall: null })
+  assert.match(unknown, /无法确认服务器本机防火墙状态/)
+  assert.match(unknown, /iptables\/nftables/)
+  const raw = buildCloudPortWarning({ localFirewall: { backend: "iptables", active: true, allowed: false, opened: false } })
+  assert.match(raw, /iptables/)
+  const absent = buildCloudPortWarning({ localFirewall: { backend: "none", active: false, allowed: false, opened: false } })
+  assert.match(absent, /未检测到运行中的本机防火墙/)
+})
+
+test("cloud deployment checks the firewall and reports an unreachable public port", async () => {
+  const [source, form] = await Promise.all([
+    readFile(new URL("../lib/cloud-deployment.ts", import.meta.url), "utf8"),
+    readFile(new URL("../components/onboarding/cloud-deploy-form.tsx", import.meta.url), "utf8"),
+  ])
+  assert.match(source, /onProgress\("检测并尝试放行 8443 端口防火墙"\)/)
+  assert.match(source, /buildCloudFirewallCommand\(CLOUD_DEPLOY_PORT\)/)
+  assert.match(source, /probeCloudPort\(address, CLOUD_DEPLOY_PORT\)/)
+  assert.match(source, /return \{ api, key: secret\.output, warning \}/)
+  assert.match(form, /deployment\.warning/)
+  assert.match(form, /疑似云防火墙策略拦截 8443 端口/)
+  assert.match(form, /部署时会自动检测并尝试放行 8443 端口防火墙/)
 })
