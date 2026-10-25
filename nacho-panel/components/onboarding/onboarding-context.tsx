@@ -15,6 +15,11 @@ import {
   type OnboardingPhase,
   type OnboardingSnapshot,
 } from "@/lib/onboarding-connection-storage"
+import {
+  DEVELOPER_PREVIEW_API,
+  DEVELOPER_PREVIEW_KEY,
+  DEVELOPER_PREVIEW_LOGIN_SECRET,
+} from "@/lib/developer-preview"
 
 /** 服务端来源：本地部署或云端服务；云端自动部署和云端对接共用 API + Key 连接协议 */
 export type ServerSource = OnboardingSnapshot["serverSource"]
@@ -52,6 +57,10 @@ interface OnboardingContextValue {
   lock: () => void
   /** 触发覆盖层渐隐离场，动画结束后自动进入 done */
   startUnlock: () => void
+  /** 开发者预览：写入固定预览连接与登录凭据，跳过真实服务端校验直接进入主界面 */
+  enterDeveloperPreview: () => Promise<void>
+  /** 退出开发者预览并重新开始首次引导（保留用户名/头像/主题等本地偏好） */
+  exitDeveloperPreview: () => Promise<void>
   /** 清除本机保存的首次引导数据，并重新开始初始化流程 */
   reset: () => void
   recoveryError: ConnectionStorageFailure | null
@@ -178,6 +187,31 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     })
   }, [persistSnapshot, update])
 
+  const enterDeveloperPreview = useCallback(async () => {
+    const source: Exclude<ServerSource, null> = {
+      mode: "cloud",
+      api: DEVELOPER_PREVIEW_API,
+      key: DEVELOPER_PREVIEW_KEY,
+    }
+    const previewAuth: AuthMethod = { mode: "key", secret: DEVELOPER_PREVIEW_LOGIN_SECRET }
+    // 与服务端校验无关：只写入本地预览连接与登录凭据，随后直接放行主界面。
+    if (!await persistSnapshot({ ...snapshot.current, serverSource: source, auth: previewAuth, locked: false })) return
+    setServerSourceState(source)
+    setAuthState(previewAuth)
+    await update({ onboardingCompleted: true })
+    setPhase("unlocking")
+    window.setTimeout(() => setPhase("done"), 1050)
+  }, [persistSnapshot, update])
+
+  const exitDeveloperPreview = useCallback(async () => {
+    await clearOnboardingSnapshot(
+      typeof window === "undefined" ? undefined : window.nachoConnection,
+      localStorage,
+    )
+    await update({ onboardingCompleted: false })
+    window.location.reload()
+  }, [update])
+
   const setServerSource = useCallback((source: ServerSource) => {
     setServerSourceState(source)
     persistSnapshot({ ...snapshot.current, serverSource: source })
@@ -213,6 +247,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
         setAuth,
         lock,
         startUnlock,
+        enterDeveloperPreview,
+        exitDeveloperPreview,
         reset,
         recoveryError,
         retryRecovery,

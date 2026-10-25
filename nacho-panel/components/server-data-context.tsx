@@ -16,6 +16,8 @@ import { defaultServerBaseUrl, normalizeServerBaseUrl } from "@/lib/server-conne
 import { canApplyNotificationSnapshot } from "@/lib/notification-state"
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { PANEL_VERSION } from "@/lib/panel-version"
+import { developerPreviewUnsupportedMessage, isDeveloperPreviewSource } from "@/lib/developer-preview"
+import { createDeveloperPreviewTransport } from "@/lib/developer-preview-transport"
 
 export type Overview = {
   clients: {
@@ -65,6 +67,8 @@ type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; message?: string; err
 
 type ServerDataContextValue = {
   serverBaseUrl: string
+  /** 开发者预览模式：使用内置演示数据，不连接真实控制服务端。 */
+  developerPreview: boolean
   overview: Overview | null
   clients: Client[]
   groups: string[]
@@ -114,13 +118,21 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     if (!serverSource) return null
     return { baseUrl: normalizeServerBaseUrl(serverSource.api), key: serverSource.key }
   }, [serverSource])
+  const developerPreview = isDeveloperPreviewSource(serverSource)
+  // 预览模式用内存演示数据替换全部 /api/panel 请求；切换连接来源后自动重建。
+  const previewTransport = useMemo(
+    () => developerPreview ? createDeveloperPreviewTransport() : null,
+    [developerPreview],
+  )
   const transferProductUpdate = useCallback(async (kind: "server" | "agent", target: { sequence: number; version: string }) => {
+    if (developerPreview) throw new Error(developerPreviewUnsupportedMessage("下发产品更新"))
     if (!connection || !window.nachoUpdates?.transferRelease) throw new Error("需要已连接的桌面面板")
     await window.nachoUpdates.transferRelease(kind, connection.baseUrl, connection.key, target.sequence, target.version)
-  }, [connection])
+  }, [connection, developerPreview])
 
   const apiRequest = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      if (previewTransport) return previewTransport.request<T>(path, init)
       if (!connection) throw new Error("尚未配置服务端连接")
       let response: Response
       try {
@@ -145,11 +157,12 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
       }
       return body.data
     },
-    [connection],
+    [connection, previewTransport],
   )
 
   const uploadRequest = useCallback(
     <T,>(path: string, file: File, onProgress: (percent: number) => void): Promise<T> => {
+      if (developerPreview) return Promise.reject(new Error(developerPreviewUnsupportedMessage("上传文件")))
       if (!connection) return Promise.reject(new Error("尚未配置服务端连接"))
       return new Promise<T>((resolve, reject) => {
         const request = new XMLHttpRequest()
@@ -179,10 +192,11 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
         request.send(file)
       })
     },
-    [connection],
+    [connection, developerPreview],
   )
 
   const downloadRequest = useCallback(async (path: string, fallbackFileName: string): Promise<void> => {
+    if (developerPreview) throw new Error(developerPreviewUnsupportedMessage("下载文件"))
     if (!connection) throw new Error("尚未配置服务端连接")
     let response: Response
     try {
@@ -210,7 +224,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     } finally {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     }
-  }, [connection])
+  }, [connection, developerPreview])
 
   const mutateNotifications = useCallback(async (path: string, init: RequestInit) => {
     const epoch = ++notificationMutationEpoch.current
@@ -295,16 +309,17 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!onboardingHydrated) return
     void refresh()
-    if (!connection) return
+    // 预览模式使用内存演示数据，不需要轮询刷新。
+    if (!connection || developerPreview) return
     // 客户端状态（尤其是卸载后的“已注销”）需要尽快反映到卡片；
     // 3 秒轮询仍可避免请求风暴，同时把可见延迟控制在一个交互节拍内。
     const timer = window.setInterval(() => void refresh(), 3_000)
     return () => window.clearInterval(timer)
-  }, [connection, onboardingHydrated, refresh])
+  }, [connection, developerPreview, onboardingHydrated, refresh])
 
   const value = useMemo(
-    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),
-    [connection, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate],
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), developerPreview, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),
+    [connection, developerPreview, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate],
   )
 
   return <ServerDataContext.Provider value={value}>{children}</ServerDataContext.Provider>

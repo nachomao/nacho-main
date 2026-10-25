@@ -1,16 +1,22 @@
 "use client"
 
 import { useState } from "react"
-import { Cloud, Copy, Eye, EyeOff, RefreshCw, ServerCog } from "lucide-react"
+import { Cloud, Copy, Eye, EyeOff, RefreshCw, ServerCog, Sparkles } from "lucide-react"
 import { CloudDeployForm } from "@/components/onboarding/cloud-deploy-form"
 import { CloudModeTransition } from "@/components/onboarding/cloud-mode-transition"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useServerData } from "@/components/server-data-context"
 import { LocalControlServerManager } from "@/components/local-control/local-control-server-manager"
+import {
+  DEVELOPER_PREVIEW_API,
+  DEVELOPER_PREVIEW_KEY,
+  isDeveloperPreviewCredentials,
+  isDeveloperPreviewSource,
+} from "@/lib/developer-preview"
 
 export function ConnectionPanel() {
-  const { serverSource, setServerSource } = useOnboarding()
+  const { serverSource, setServerSource, exitDeveloperPreview } = useOnboarding()
   const { error, loading, refreshing, refresh } = useServerData()
   const [showKey, setShowKey] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -29,7 +35,12 @@ export function ConnectionPanel() {
     const api = cloudApi.trim().replace(/\/+$/, "")
     const key = cloudKey.trim()
     if (!api || !key) return
-    setServerSource({ mode: "cloud", api, key })
+    // 开发者预览凭据：保存为固定预览来源，由 ServerDataProvider 使用内置演示数据。
+    if (isDeveloperPreviewCredentials(cloudApi, cloudKey)) {
+      setServerSource({ mode: "cloud", api: DEVELOPER_PREVIEW_API, key: DEVELOPER_PREVIEW_KEY })
+    } else {
+      setServerSource({ mode: "cloud", api, key })
+    }
     window.setTimeout(() => void refresh(), 0)
   }
 
@@ -42,11 +53,14 @@ export function ConnectionPanel() {
 
   const showLocalOperations = !serverSource || serverSource.mode === "local"
   const showCloudOperations = !serverSource || serverSource.mode === "cloud"
-  const description = serverSource?.mode === "local"
-    ? "管理当前 Windows 本机控制服务。"
-    : serverSource?.mode === "cloud"
-      ? "管理当前云端控制服务连接。"
-      : "选择 Windows 本机服务，或部署与对接云端控制服务。"
+  const previewSource = isDeveloperPreviewSource(serverSource)
+  const description = previewSource
+    ? "开发者预览模式：使用内置演示数据，不连接真实服务端。"
+    : serverSource?.mode === "local"
+      ? "管理当前 Windows 本机控制服务。"
+      : serverSource?.mode === "cloud"
+        ? "管理当前云端控制服务连接。"
+        : "选择 Windows 本机服务，或部署与对接云端控制服务。"
 
   return (
     <div className="flex flex-col gap-4">
@@ -76,7 +90,12 @@ export function ConnectionPanel() {
               <p className="text-sm font-semibold text-foreground">云端服务</p>
               <p className="text-[11px] text-muted-foreground">连接到远程部署的控制服务端</p>
             </div>
-            {serverSource?.mode === "cloud" && (
+            {previewSource ? (
+              <span className="ml-auto flex items-center gap-1.5 text-xs text-primary">
+                <Sparkles className="size-3.5" aria-hidden="true" />
+                开发者预览
+              </span>
+            ) : serverSource?.mode === "cloud" && (
               <span className="ml-auto flex items-center gap-1.5 text-xs text-emerald-400">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
                 当前来源
@@ -145,7 +164,7 @@ export function ConnectionPanel() {
               </button>
               {serverSource?.mode === "cloud" && (
                 <span className="text-xs text-muted-foreground">
-                  状态：{loading ? "连接中" : error ? "连接失败" : "已连接"}
+                  状态：{previewSource ? "预览模式" : loading ? "连接中" : error ? "连接失败" : "已连接"}
                 </span>
               )}
             </div>
@@ -158,24 +177,44 @@ export function ConnectionPanel() {
 
       <section className="card-glow rounded-3xl bg-card p-6" aria-live="polite">
         <div className="flex flex-wrap items-center gap-3">
-          <RefreshCw className={refreshing ? "size-3.5 animate-spin text-primary" : "size-3.5 text-muted-foreground"} aria-hidden="true" />
+          <RefreshCw className={refreshing || (!previewSource && loading) ? "size-3.5 animate-spin text-primary" : "size-3.5 text-muted-foreground"} aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-foreground">当前连接状态</h3>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {serverSource ? `${serverSource.mode === "local" ? "本机服务" : "云端服务"} · ${serverSource.api}` : "尚未选择控制服务来源"}
+              {previewSource
+                ? "开发者预览 · 使用内置演示数据"
+                : serverSource
+                  ? `${serverSource.mode === "local" ? "本机服务" : "云端服务"} · ${serverSource.api}`
+                  : "尚未选择控制服务来源"}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={!serverSource || refreshing}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
-          >
-            重新检测
-          </button>
+          {previewSource ? (
+            <button
+              type="button"
+              onClick={() => void exitDeveloperPreview()}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+            >
+              退出开发者预览
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              disabled={!serverSource || refreshing}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+            >
+              重新检测
+            </button>
+          )}
         </div>
-        <p className={error ? "mt-3 text-xs text-destructive" : "mt-3 text-xs text-muted-foreground"}>
-          {!serverSource ? "配置本机部署或云端连接后，面板才会读取真实业务数据。" : loading || refreshing ? "正在验证控制服务连接…" : error || "控制服务连接正常。"}
+        <p className={error && !previewSource ? "mt-3 text-xs text-destructive" : "mt-3 text-xs text-muted-foreground"}>
+          {previewSource
+            ? "开发者预览模式不连接真实服务端。退出后会重新进入首次引导，用户名、头像与主题偏好保留。"
+            : !serverSource
+              ? "配置本机部署或云端连接后，面板才会读取真实业务数据。"
+              : loading || refreshing
+                ? "正在验证控制服务连接…"
+                : error || "控制服务连接正常。"}
         </p>
       </section>
     </div>

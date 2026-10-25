@@ -120,7 +120,7 @@ function profileValues(profile: InstallProfile): InstallProfileValues {
 }
 
 export function ScriptsView() {
-  const { apiRequest, serverBaseUrl } = useServerData()
+  const { apiRequest, serverBaseUrl, developerPreview } = useServerData()
   const { confirm, promptText } = useConfirm()
   const [profiles, setProfiles] = useState<InstallProfile[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -154,17 +154,20 @@ export function ScriptsView() {
         setForm(profileValues(nextSelected))
         await loadRevisions(nextSelected.id)
       }
-      const response = await fetch(`${serverBaseUrl}/agent/downloads/windows/latest.json`, { signal: AbortSignal.timeout(8000) })
-      if (response.ok) {
-        const manifest = await response.json() as { version?: string }
-        setArtifactVersion(manifest.version || "—")
+      // 开发者预览模式没有真实 Agent 制品，跳过直连清单请求，版本位显示占位符。
+      if (!developerPreview) {
+        const response = await fetch(`${serverBaseUrl}/agent/downloads/windows/latest.json`, { signal: AbortSignal.timeout(8000) })
+        if (response.ok) {
+          const manifest = await response.json() as { version?: string }
+          setArtifactVersion(manifest.version || "—")
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "加载安装档案失败")
     } finally {
       setLoading(false)
     }
-  }, [apiRequest, loadRevisions, selectedId, serverBaseUrl])
+  }, [apiRequest, developerPreview, loadRevisions, selectedId, serverBaseUrl])
 
   useEffect(() => { void load() }, [load])
 

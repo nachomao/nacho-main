@@ -20,7 +20,7 @@ const EASE = "cubic-bezier(0.32, 0.72, 0.24, 1)"
  * 确认后直接进入登录方式注册，不再叠加额外的模拟终端页。
  */
 export function Onboarding() {
-  const { phase, startUnlock } = useOnboarding()
+  const { phase, startUnlock, enterDeveloperPreview } = useOnboarding()
   const [step, setStep] = useState<"logo" | "name" | "server" | "auth">("logo")
   // 进入 locked 后固定走锁屏分支，unlocking 期间也保持渲染锁屏直至卸载
   const [lockFlow, setLockFlow] = useState(false)
@@ -63,7 +63,7 @@ export function Onboarding() {
         <>
           {step === "logo" && <IntroLogo onDone={toName} />}
           {step === "name" && <NameRegister onDone={toServer} />}
-          {step === "server" && <ServerRegister onDone={toAuth} />}
+          {step === "server" && <ServerRegister onDone={toAuth} onDeveloperPreview={enterDeveloperPreview} />}
           {step === "auth" && <AuthRegister onDone={startUnlock} />}
         </>
       )}

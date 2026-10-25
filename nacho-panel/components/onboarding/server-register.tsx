@@ -23,6 +23,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
+import { describeMixedContentBlock, isMixedContentBlocked } from "@/lib/cloud-connection-diagnosis"
+import { isDeveloperPreviewCredentials } from "@/lib/developer-preview"
 import { useOnboarding, type ServerSource } from "./onboarding-context"
 
 const EASE = "cubic-bezier(0.22, 1, 0.36, 1)"
@@ -60,7 +62,14 @@ function isOverviewResponse(value: unknown): value is { ok: true; data: object }
   return response.ok === true && typeof response.data === "object" && response.data !== null
 }
 
-export function ServerRegister({ onDone }: { onDone: () => void }) {
+export function ServerRegister({
+  onDone,
+  onDeveloperPreview,
+}: {
+  onDone: () => void
+  /** 开发者预览：固定凭据命中后直接进入，不发起真实服务端校验。 */
+  onDeveloperPreview?: () => void | Promise<void>
+}) {
   const { setServerSource } = useOnboarding()
   const [shown, setShown] = useState(false)
   const [selected, setSelected] = useState<Mode | null>(null)
@@ -109,6 +118,19 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
       return
     }
 
+    // 开发者预览：localhost + localhosttest 不访问任何服务端，直接进入内置演示数据。
+    if (isDeveloperPreviewCredentials(baseUrl, apiKey)) {
+      if (!onDeveloperPreview) {
+        setConnectionStatus("error")
+        setConnectionError("开发者预览入口不可用，请重启面板后重试")
+        return
+      }
+      setConnectionStatus("success")
+      setConnectionError("")
+      window.setTimeout(() => { if (!leaving) void onDeveloperPreview() }, 500)
+      return
+    }
+
     setConnectionStatus("testing")
     setConnectionError("")
     const controller = new AbortController()
@@ -140,9 +162,11 @@ export function ServerRegister({ onDone }: { onDone: () => void }) {
     } catch (error) {
       setConnectionStatus("error")
       setConnectionError(
-        error instanceof DOMException && error.name === "AbortError"
-          ? "连接超时，请检查地址与网络"
-          : "连接服务端失败，请检查 API 地址、网络和跨域配置",
+        isMixedContentBlocked(window.location.protocol, baseUrl)
+          ? describeMixedContentBlock(baseUrl)
+          : error instanceof DOMException && error.name === "AbortError"
+            ? "连接超时，请检查地址与网络"
+            : "连接服务端失败，请检查 API 地址、网络和跨域配置",
       )
     } finally {
       window.clearTimeout(timeout)

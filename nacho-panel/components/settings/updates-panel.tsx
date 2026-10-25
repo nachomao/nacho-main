@@ -57,7 +57,7 @@ function compare(a: string | null, b: string) {
 }
 
 export function UpdatesPanel() {
-  const { apiRequest, transferProductUpdate } = useServerData()
+  const { apiRequest, transferProductUpdate, developerPreview } = useServerData()
   const { serverSource } = useOnboarding()
   const { confirm } = useConfirm()
   const [check, setCheck] = useState<Check | null>(null)
@@ -70,19 +70,25 @@ export function UpdatesPanel() {
   const panelBusy = busy === "panel" || panelInstallActive(panelInstall)
   const anyBusy = Boolean(busy) || panelInstallActive(panelInstall)
   const refresh = useCallback(async (force = false) => {
-    try {
-      const result = window.nachoUpdates
-        ? await window.nachoUpdates.check(force)
-        : await fetch("/api/product-updates", { cache: "no-store" }).then(async (response) => {
-          const body = await response.json() as { ok: boolean; data?: Check; message?: string }
-          if (!body.ok || !body.data) throw new Error(body.message || "检查更新失败")
-          return body.data
-        })
-      setCheck(result)
-      setSourceError(result.stale ? "网络暂不可用，显示上次验证的发布信息；缓存不能用于安装。" : null)
-    } catch (error) {
+    if (developerPreview) {
+      // 预览模式不访问更新服务器，只展示服务端版本卡片。
       setCheck(null)
-      setSourceError(error instanceof Error ? error.message : "检查更新失败")
+      setSourceError("开发者预览模式不检查更新")
+    } else {
+      try {
+        const result = window.nachoUpdates
+          ? await window.nachoUpdates.check(force)
+          : await fetch("/api/product-updates", { cache: "no-store" }).then(async (response) => {
+            const body = await response.json() as { ok: boolean; data?: Check; message?: string }
+            if (!body.ok || !body.data) throw new Error(body.message || "检查更新失败")
+            return body.data
+          })
+        setCheck(result)
+        setSourceError(result.stale ? "网络暂不可用，显示上次验证的发布信息；缓存不能用于安装。" : null)
+      } catch (error) {
+        setCheck(null)
+        setSourceError(error instanceof Error ? error.message : "检查更新失败")
+      }
     }
     try {
       const nextRuntime = await apiRequest<Runtime>("/runtime-info")
@@ -106,15 +112,19 @@ export function UpdatesPanel() {
       }
       setServerError(error instanceof Error ? error.message : "服务端尚未连接")
     }
-  }, [apiRequest, serverSource?.mode])
+  }, [apiRequest, developerPreview, serverSource?.mode])
 
   useEffect(() => {
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 60_000)
+    const timer = developerPreview ? null : window.setInterval(() => void refresh(), 60_000)
     const unsubscribe = window.nachoUpdates?.onAvailable?.(() => void refresh(true))
     const stopProgress = window.nachoUpdates?.onTransferProgress?.(setProgress)
-    return () => { window.clearInterval(timer); unsubscribe?.(); stopProgress?.() }
-  }, [refresh])
+    return () => {
+      if (timer) window.clearInterval(timer)
+      unsubscribe?.()
+      stopProgress?.()
+    }
+  }, [developerPreview, refresh])
 
   useEffect(() => {
     let active = true
@@ -249,6 +259,11 @@ export function UpdatesPanel() {
           <RefreshCw className="mr-2 inline size-4" />检查更新
         </button>
       </div>
+      {developerPreview && (
+        <p role="status" className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm text-primary">
+          开发者预览模式：使用内置演示数据，不访问更新服务器，更新检查与安装已禁用。
+        </p>
+      )}
       {sourceError && <p role="status" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">{sourceError}</p>}
       {connectedPanelIncompatible && <p role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
         当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。

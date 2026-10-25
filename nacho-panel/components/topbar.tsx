@@ -462,6 +462,22 @@ function IconButton({
   )
 }
 
+/** 顶栏开发者预览标识：提示当前使用内置演示数据，点击回到连接设置。 */
+function DeveloperPreviewBadge() {
+  const { developerPreview } = useServerData()
+  if (!developerPreview) return null
+  return (
+    <Link
+      href="/settings?tab=connection"
+      title="开发者预览模式：使用内置演示数据，不连接真实服务端"
+      className="flex h-12 shrink-0 items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+    >
+      <Sparkles className="h-4 w-4" aria-hidden="true" />
+      开发者预览
+    </Link>
+  )
+}
+
 /** 顶栏通知入口：正常状态只展示完整的铃铛图标；断线时展开连接提示。 */
 function NotificationIsland({ onOpen }: { onOpen?: () => void }) {
   const { error, refreshing, refresh } = useServerData()
@@ -991,6 +1007,7 @@ export function Topbar() {
 
       {/* 常驻右侧控件：不管切换到哪个页面都始终显示 */}
       <div className="ml-auto flex items-center gap-4">
+        <DeveloperPreviewBadge />
         <NotificationIsland onOpen={actions?.openNotices} />
         <IconButton label="全局搜索" expandLabel="Ctrl K" onClick={actions?.openSearch}>
           <Search className="h-5 w-5" />

@@ -1,12 +1,13 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { AlertCircle, ArrowRight, Check, CloudAlert, Copy, Fingerprint, Loader2, ServerCog, ShieldCheck } from "lucide-react"
 import { InstallationConsole, DeploymentStagePanel, type InstallationOutputChunk } from "@/components/local-control/deployment-progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { describeCloudVerificationFailure } from "@/lib/cloud-connection-diagnosis"
 type DeploymentResult = { api: string; key: string; warning?: string }
 type DeployEvent = { type: "progress"; step: string } | { type: "log"; content: string } | { type: "complete"; data: DeploymentResult } | { type: "error"; message: string }
 
@@ -28,6 +29,10 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
   const [error, setError] = useState("")
   const [result, setResult] = useState<DeploymentResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [pageProtocol, setPageProtocol] = useState("")
+
+  // 在 effect 中读取，避免服务端渲染与客户端水合时生成不同的提示结构。
+  useEffect(() => { setPageProtocol(window.location.protocol) }, [])
 
   const appendOutput = (content: string) => {
     outputId.current += 1
@@ -67,10 +72,13 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
         throw new Error("服务端响应异常")
       }
       onConnected({ mode: "cloud", api: deployment.api, key: deployment.key })
-    } catch {
-      setError(deployment.warning
-        ? "浏览器仍无法访问服务端 API；请按上方端口提示放行后点击“重试验证并继续”。"
-        : "服务已部署，但浏览器暂时无法访问 API。请检查服务器 8443 端口、防火墙及浏览器的 HTTP/HTTPS 限制，再重试验证。")
+    } catch (cause) {
+      setError(describeCloudVerificationFailure({
+        pageProtocol: window.location.protocol,
+        api: deployment.api,
+        warning: deployment.warning,
+        errorName: cause instanceof Error ? cause.name : undefined,
+      }))
     } finally {
       setBusy(null)
     }
@@ -138,6 +146,13 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
   return (
     <section className="flex flex-col gap-5" aria-label="自动部署 Linux 控制服务">
       <DeploymentStagePanel stage="setup" active={!attemptStarted && !result}>
+      {pageProtocol === "https:" && (
+        <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+          <CloudAlert className="text-amber-500" aria-hidden="true" />
+          <AlertTitle>当前页面通过 HTTPS 打开</AlertTitle>
+          <AlertDescription>浏览器会拦截本页面对 HTTP API 的请求（混合内容）。部署仍可继续，但完成后无法在本页面自动验证并填入连接；请改用桌面面板或本机 http://localhost 面板，或为服务端配置 HTTPS。</AlertDescription>
+        </Alert>
+      )}
       <div className="flex items-start gap-3 rounded-2xl border border-border/50 bg-background/25 p-4">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/5 text-foreground">
           <ServerCog className="size-4" aria-hidden="true" />

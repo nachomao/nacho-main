@@ -28,6 +28,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 局域网模式会单独请求 UAC，只放行专用 TCP 端口的 `Private + LocalSubnet` 入站流量。登录自启写入当前用户 `HKCU`，不是 Windows Service；设置页可执行启动、停止、重启、修复和彻底卸载。修复会备份并回滚失败的构建和配置，卸载会删除本机数据与运行产物但保留源码。
 
+## 开发者预览模式
+
+在首次引导或「设置 → 连接 → 云端对接」中填写 API 地址 `localhost`、Panel API Key `localhosttest`，面板会跳过真实服务端校验，直接进入使用内置演示数据的「开发者预览」界面。该模式不发起 `/api/panel/*` 网络请求，适合在无法访问 HTTP API 的 HTTPS 托管环境（如 v0 预览）中审查界面；顶栏会显示预览标识，可在「设置 → 连接」中退出。未覆盖的命令下发、文件传输等接口会返回明确的「开发者预览模式不支持该操作」提示。
+
 Windows 的受限日志快照入口位于“客户端管理 → 批量操作 → Windows → 日志采集”。目标 Agent 的 `%ProgramData%\Nacho\agent.json` 必须由管理员显式设置 `"allowLogCollection": true` 才会读取固定 `agent/system/application` 来源；默认值为 `false`，单次窗口最多 24 小时、1000 条和 512 KiB。
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.

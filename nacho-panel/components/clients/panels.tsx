@@ -287,6 +287,7 @@ function normalizeUrl(raw: string) {
 /* ---------- 面板二：客户端安装脚本 ---------- */
 export function AddClientPanel() {
   const { serverSource } = useOnboarding()
+  const { developerPreview } = useServerData()
   const configuredUrl = serverSource?.mode === "local"
     ? serverSource.agentApi || serverSource.api
     : serverSource?.api || defaultServerBaseUrl()
@@ -302,6 +303,11 @@ export function AddClientPanel() {
       desc="通过当前控制服务端安装 Windows Agent"
     >
       <div className="flex h-full flex-col gap-5 overflow-auto pr-1">
+        {developerPreview && (
+          <p className="rounded-2xl border border-primary/30 bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
+            开发者预览模式：以下安装命令仅作界面展示，不会连接真实服务端。
+          </p>
+        )}
         {/* Linux Agent 尚未实现，首阶段仅展示可用的 Windows 安装入口。 */}
         <Field label="服务器地址（ServerUrl）" icon={<Server className="h-3.5 w-3.5" />}>
           <input
