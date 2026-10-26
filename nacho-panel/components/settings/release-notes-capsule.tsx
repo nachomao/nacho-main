@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import { ChevronDown, FileText } from "lucide-react"
-import { ProgressiveBlur } from "@/components/ui/progressive-blur"
+import { ProgressiveBlur, ProgressiveBlurHalo } from "@/components/ui/progressive-blur"
 import { holdForegroundMotion } from "@/lib/foreground-motion"
 import { cn } from "@/lib/utils"
 
@@ -73,9 +73,11 @@ export function ReleaseNotesCapsule({ title, notes }: { title?: string; notes?: 
       {/* 胶囊高度超出占位时，flex 居中会让溢出在上下两侧等分，从而实现以原位置为中心的双向展开 */}
       <div className="absolute inset-0 flex items-center">
         <div className="relative w-full">
-          {/* card-glow 实际呈现为近黑玻璃，色调取 --background 才不会在卡片上显出灰色矩形 */}
-          <ProgressiveBlur strongEdge="bottom" visible={open} tint="var(--background)" className="bottom-full h-8" />
-          <ProgressiveBlur strongEdge="top" visible={open} tint="var(--background)" className="top-full h-8" />
+          {/*
+            光晕必须覆盖胶囊圆角外的缺口，否则被遮挡文字会从四角清晰地漏出；
+            card-glow 实际呈现为近黑玻璃，色调取 --background 才不会在卡片上显出灰色色块。
+          */}
+          <ProgressiveBlurHalo visible={open} spreadX={16} spreadY={32} tint="var(--background)" />
 
           <div
             className={cn(
