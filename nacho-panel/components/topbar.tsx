@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
@@ -11,6 +11,7 @@ import {
   Database,
   SquareTerminal,
   Sparkles,
+  Dna,
   Search,
   DownloadCloud,
   FolderInput,
@@ -580,7 +581,7 @@ function TokenPill() {
         )}
       </div>
 
-      {/* 右侧内容区：以 grid 列宽 0fr→1fr 从头像右侧横向展开，形成圆→胶囊的拉伸 */}
+      {/* 右侧内容区：以 grid 列宽 0fr→1fr 从头像右侧横向展��，形成圆→胶囊的拉伸 */}
       <div
         className="grid"
         style={{
@@ -635,7 +636,7 @@ function TokenPill() {
   )
 }
 
-/** 入场揭示样式：从左到右逐个展开（模糊到清晰 + 轻微右移就位） */
+/** 入场揭示样式：从左到右逐个展开（模���到清晰 + 轻微右移就位） */
 function revealStyle(show: boolean, delay: number): React.CSSProperties {
   return {
     transform: show ? "translateX(0)" : "translateX(-14px)",
@@ -954,7 +955,7 @@ function AIModeButton({ onClick }: { onClick?: () => void }) {
     >
       {/* 悬浮像素星芒：LED 点阵随指针点亮 */}
       <PixelStardust active={hovered} />
-      <Sparkles className="relative h-4.5 w-4.5 text-primary transition-transform duration-300 group-hover:rotate-12" />
+      <Dna className="relative h-4.5 w-4.5 text-primary transition-transform duration-300 group-hover:rotate-12" />
       <span className="relative whitespace-nowrap text-sm font-medium">AI Mode</span>
     </button>
   )
