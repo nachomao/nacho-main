@@ -581,7 +581,7 @@ function TokenPill() {
         )}
       </div>
 
-      {/* 右侧内容区：以 grid 列宽 0fr→1fr 从头像右侧横向展��，形成圆→胶囊的拉伸 */}
+      {/* 右侧内容区：以 grid 列宽 0fr→1fr 从头像右侧横向展开，形成圆→胶囊的拉伸 */}
       <div
         className="grid"
         style={{
@@ -636,7 +636,7 @@ function TokenPill() {
   )
 }
 
-/** 入场揭示样式：从左到右逐个展开（模���到清晰 + 轻微右移就位） */
+/** 入场揭示样式：从左到右逐个展开（模糊到清晰 + 轻微右移就位） */
 function revealStyle(show: boolean, delay: number): React.CSSProperties {
   return {
     transform: show ? "translateX(0)" : "translateX(-14px)",

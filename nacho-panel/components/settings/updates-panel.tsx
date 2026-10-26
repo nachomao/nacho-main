@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
 import {
-  AlertTriangle, ArrowRight, ArrowUpCircle, CheckCircle2, ChevronDown, CircleSlash, Download,
-  FileText, HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
+  AlertTriangle, ArrowRight, ArrowUpCircle, CheckCircle2, CircleSlash, Download,
+  HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
 } from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
+import { ReleaseNotesCapsule } from "@/components/settings/release-notes-capsule"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
 import { updateLocalControl } from "@/lib/local-control-server-client"
@@ -519,23 +520,7 @@ function ComponentCard({
 
       <p className={cn("text-xs leading-relaxed text-pretty", noteTone ? TONE_TEXT[noteTone] : "text-muted-foreground")}>{note}</p>
 
-      {(release?.title || release?.notes) && (
-        <details className="group/notes overflow-hidden rounded-2xl border border-border bg-surface/30 text-xs">
-          <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 transition-colors hover:bg-surface/70 [&::-webkit-details-marker]:hidden">
-            <FileText aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">
-              <span className="font-medium text-foreground">更新说明</span>
-              {release.title && <span className="text-muted-foreground"> · {release.title}</span>}
-            </span>
-            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open/notes:rotate-180 motion-reduce:transition-none" />
-          </summary>
-          {release.notes && (
-            <p className="max-h-36 overflow-y-auto whitespace-pre-wrap border-t border-border px-3.5 py-3 leading-relaxed text-muted-foreground">
-              {release.notes}
-            </p>
-          )}
-        </details>
-      )}
+      {(release?.title || release?.notes) && <ReleaseNotesCapsule title={release.title} notes={release.notes} />}
 
       {progress}
 
