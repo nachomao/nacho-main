@@ -1,8 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import Link from "next/link"
-import { Download, RefreshCw, Server, Monitor, HardDriveDownload, Loader2 } from "lucide-react"
+import {
+  AlertTriangle, ArrowRight, ArrowUpCircle, CheckCircle2, ChevronDown, CircleSlash, Download,
+  HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
+} from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
@@ -14,6 +17,7 @@ import {
   newerPanelInstallState, panelDownloadPercent, panelInstallActive, PANEL_INSTALL_LABELS,
   type PanelInstallState,
 } from "@/lib/panel-install-progress"
+import { cn } from "@/lib/utils"
 
 type Entry = {
   version: string
@@ -48,12 +52,34 @@ type UpdateBridge = { version?: string; check(force?: boolean): Promise<Check>; 
 
 declare global { interface Window { nachoUpdates?: UpdateBridge } }
 
+type Tone = "primary" | "positive" | "warning" | "danger" | "muted"
+type Status = { label: string; tone: Tone }
+
 const size = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+const formatTime = (value: string | Date) =>
+  new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+const releaseLabel = (entry?: Entry) => entry ? formatReleaseVersion(entry.version, entry.releaseType || "stable") : undefined
+
 function compare(a: string | null, b: string) {
   if (!a || !/^\d+\.\d+\.\d+$/.test(a) || !/^\d+\.\d+\.\d+$/.test(b)) return null
   const x = a.split(".").map(Number), y = b.split(".").map(Number)
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1
   return 0
+}
+
+const TONE_TEXT: Record<Tone, string> = {
+  primary: "text-primary",
+  positive: "text-positive",
+  warning: "text-warning",
+  danger: "text-destructive",
+  muted: "text-muted-foreground",
+}
+const TONE_BADGE: Record<Tone, string> = {
+  primary: "bg-primary/12 text-primary ring-primary/25",
+  positive: "bg-positive/12 text-positive ring-positive/25",
+  warning: "bg-warning/12 text-warning ring-warning/25",
+  danger: "bg-destructive/12 text-destructive ring-destructive/25",
+  muted: "bg-surface text-muted-foreground ring-border",
 }
 
 export function UpdatesPanel() {
@@ -67,6 +93,8 @@ export function UpdatesPanel() {
   const [busy, setBusy] = useState<string | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
   const [panelInstall, setPanelInstall] = useState<PanelInstallState | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const panelBusy = busy === "panel" || panelInstallActive(panelInstall)
   const anyBusy = Boolean(busy) || panelInstallActive(panelInstall)
   const refresh = useCallback(async (force = false) => {
@@ -90,6 +118,7 @@ export function UpdatesPanel() {
         setSourceError(error instanceof Error ? error.message : "检查更新失败")
       }
     }
+    setCheckedAt(new Date())
     try {
       const nextRuntime = await apiRequest<Runtime>("/runtime-info")
       setRuntime(nextRuntime)
@@ -136,6 +165,12 @@ export function UpdatesPanel() {
     void bridge?.getPanelInstallState?.().then(accept).catch(() => {})
     return () => { active = false; stop?.() }
   }, [])
+
+  async function manualRefresh() {
+    if (checking) return
+    setChecking(true)
+    try { await refresh(true) } finally { setChecking(false) }
+  }
 
   async function installPanel() {
     if (!check || anyBusy || !window.nachoUpdates) return
@@ -236,9 +271,11 @@ export function UpdatesPanel() {
   }
 
   const releases = check?.index.releases
-  const serverIssue = runtime ? serverUpdateIssue(runtime, serverSource?.mode === "local") : null
-  const agentIssue = runtime ? serverUpdateIssue(runtime, serverSource?.mode === "local", "agent") : null
-  const panelNew = releases ? compare(check.currentVersion, releases.panel.version) === -1 : false
+  const localMode = serverSource?.mode === "local"
+  const serverIssue = runtime ? serverUpdateIssue(runtime, localMode) : null
+  const agentIssue = runtime ? serverUpdateIssue(runtime, localMode, "agent") : null
+  const panelCompare = releases ? compare(check.currentVersion, releases.panel.version) : null
+  const panelNew = panelCompare === -1
   const serverNew = releases && runtime ? compare(runtime.version, releases.server.version) === -1 : false
   const agentNew = Boolean(releases && runtime &&
     (!runtime.agentArtifactVersion || compare(runtime.agentArtifactVersion, releases.agent.version) === -1))
@@ -247,53 +284,301 @@ export function UpdatesPanel() {
   const connectedPanelIncompatible = runtime && check
     ? compare(check.currentVersion, runtime.minPanelVersion) === -1 : false
   const desktop = typeof window !== "undefined" && Boolean(window.nachoUpdates)
+  const stale = Boolean(check?.stale)
+  const transferring = progress !== null && (busy === "server" || busy === "agent")
+
+  const panelStatus: Status = !releases ? { label: "未取得", tone: "muted" }
+    : panelNew ? { label: "可更新", tone: "primary" }
+    : panelCompare === 1 ? { label: "高于推荐", tone: "warning" }
+    : { label: "已是最新", tone: "positive" }
+  const serverStatus: Status = !runtime ? { label: "未连接", tone: "muted" }
+    : runtime.updateStatus?.phase === "failed" || runtime.updateStatus?.phase === "rolled-back" ? { label: "升级异常", tone: "danger" }
+    : !releases ? { label: "未取得", tone: "muted" }
+    : serverNew ? { label: "可更新", tone: "primary" }
+    : { label: "已是最新", tone: "positive" }
+  const agentStatus: Status = !runtime ? { label: "未连接", tone: "muted" }
+    : !releases ? { label: "未取得", tone: "muted" }
+    : agentNew ? { label: "待准备", tone: "primary" }
+    : { label: "已就绪", tone: "positive" }
+
+  const updateCount = [panelNew, serverNew, agentNew].filter(Boolean).length
 
   return (
     <div className="flex flex-col gap-4 pb-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">产品更新</h2>
-          <p className="text-xs text-muted-foreground">自动获取更新服务器推荐的版本与发布类型。</p>
+      <OverviewCard
+        releasesAvailable={Boolean(releases)}
+        updateCount={updateCount}
+        sequence={check?.index.sequence}
+        publishedAt={check?.index.publishedAt}
+        checkedAt={checkedAt}
+        stale={stale}
+        developerPreview={developerPreview}
+        checking={checking}
+        onCheck={() => void manualRefresh()}
+      />
+
+      {(developerPreview || (sourceError && !developerPreview) || connectedPanelIncompatible || serverError) && (
+        <div className="flex flex-col gap-2">
+          {developerPreview && (
+            <Notice tone="info">开发者预览模式：使用内置演示数据，不访问更新服务器，更新检查与安装已禁用。</Notice>
+          )}
+          {sourceError && !developerPreview && <Notice tone="warning">{sourceError}</Notice>}
+          {connectedPanelIncompatible && (
+            <Notice tone="warning" alert>
+              当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
+            </Notice>
+          )}
+          {serverError && <Notice tone="danger">{serverError}</Notice>}
         </div>
-        <button type="button" onClick={() => void refresh(true)} className="rounded-xl border border-border px-4 py-2 text-sm hover:bg-surface">
-          <RefreshCw className="mr-2 inline size-4" />检查更新
-        </button>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ComponentCard
+          icon={<Monitor className="size-5" />}
+          title="Windows 面板"
+          subtitle="桌面控制面板"
+          status={panelStatus}
+          current={PANEL_VERSION_LABEL}
+          latest={releaseLabel(releases?.panel)}
+          hasUpdate={panelNew}
+          release={releases?.panel}
+          note={!desktop ? "安装新版需使用 Windows 桌面面板。" : !releases ? "尚未取得发布信息。" :
+            panelNew ? "新版本已就绪，安装时面板会自动重启。" : panelCompare === 1 ? "已安装版本高于推荐版本。" : "当前已是推荐版本。"}
+          progress={panelInstall && panelInstall.phase !== "idle" ? <PanelInstallProgress state={panelInstall} /> : undefined}
+          action={panelBusy ? PANEL_INSTALL_LABELS[panelInstall?.phase || "preparing"] : panelInstall?.phase === "failed" ? "重试下载并安装" : "下载并安装"}
+          loading={panelBusy}
+          disabled={!panelNew || !desktop || stale || anyBusy}
+          onClick={() => void installPanel()}
+        />
+        <ComponentCard
+          icon={<Server className="size-5" />}
+          title="控制服务端"
+          subtitle={localMode ? "本机部署" : "云端部署"}
+          status={serverStatus}
+          current={runtime?.version || "未连接"}
+          latest={releaseLabel(releases?.server)}
+          hasUpdate={serverNew}
+          release={releases?.server}
+          note={serverIssue || (panelRequired ? "需先升级面板后才能升级服务端。" : runtime?.updateStatus
+            ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}`
+            : "服务端独立升级，失败时自动回滚到旧版本。")}
+          noteTone={serverIssue || panelRequired ? "warning" : undefined}
+          progress={transferring && busy === "server" ? <TransferProgress percent={progress} label="服务端源码传输" /> : undefined}
+          action={busy === "server" ? "正在升级…" : localMode ? "升级本机服务" : "升级云端服务"}
+          loading={busy === "server"}
+          icon2={<ArrowUpCircle aria-hidden="true" className="size-4" />}
+          disabled={!serverNew || stale || panelRequired || Boolean(serverIssue) || !desktop ||
+            (!localMode && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || anyBusy}
+          onClick={() => void installServer()}
+        />
+        <ComponentCard
+          icon={<HardDriveDownload className="size-5" />}
+          title="Agent 制品"
+          subtitle="与服务端同批发布"
+          status={agentStatus}
+          current={runtime?.agentArtifactVersion || "无"}
+          currentLabel="已准备"
+          latest={releaseLabel(releases?.agent)}
+          hasUpdate={agentNew}
+          release={releases?.agent}
+          note={agentIssue && agentIssue !== serverIssue ? agentIssue : "制品准备完成后，仍需逐台或批量手动下发到客户端。"}
+          noteTone={agentIssue && agentIssue !== serverIssue ? "warning" : undefined}
+          progress={transferring && busy === "agent" ? <TransferProgress percent={progress} label="Agent 制品传输" /> : undefined}
+          action={busy === "agent" ? "正在准备…" : "准备新版制品"}
+          loading={busy === "agent"}
+          icon2={<HardDriveDownload aria-hidden="true" className="size-4" />}
+          disabled={!agentNew || stale || Boolean(agentIssue) || !runtime || anyBusy}
+          onClick={() => void syncAgent()}
+          footer={
+            <Link href="/clients" className="group inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+              前往「客户端 → 客户端更新」下发
+              <ArrowRight aria-hidden="true" className="size-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
+            </Link>
+          }
+        />
       </div>
-      {developerPreview && (
-        <p role="status" className="rounded-xl border border-primary/30 bg-primary/10 p-3 text-sm text-primary">
-          开发者预览模式：使用内置演示数据，不访问更新服务器，更新检查与安装已禁用。
+    </div>
+  )
+}
+
+function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck }: {
+  releasesAvailable: boolean; updateCount: number; sequence?: number; publishedAt?: string; checkedAt: Date | null
+  stale: boolean; developerPreview: boolean; checking: boolean; onCheck: () => void
+}) {
+  const state: { title: string; desc: string; tone: Tone; icon: ReactNode } = developerPreview
+    ? { title: "预览模式", desc: "更新检查已禁用，仅展示服务端版本信息。", tone: "muted", icon: <CircleSlash className="size-6" /> }
+    : !releasesAvailable
+      ? { title: "无法取得发布信息", desc: "请检查网络连接后重新检查更新。", tone: "warning", icon: <AlertTriangle className="size-6" /> }
+      : updateCount > 0
+        ? { title: `${updateCount} 项组件可更新`, desc: "建议先升级面板，再升级服务端并准备 Agent 制品。", tone: "primary", icon: <ArrowUpCircle className="size-6" /> }
+        : { title: "所有组件均为推荐版本", desc: "更新服务器每分钟自动检查一次新发布。", tone: "positive", icon: <CheckCircle2 className="size-6" /> }
+
+  return (
+    <section aria-labelledby="updates-overview-title" className="card-glow flex flex-col gap-5 rounded-3xl bg-card p-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-4">
+        <span className={cn("flex size-12 shrink-0 items-center justify-center rounded-2xl ring-1", TONE_BADGE[state.tone])} aria-hidden="true">
+          {state.icon}
+        </span>
+        <div className="min-w-0 leading-tight">
+          <p className="text-xs font-medium text-muted-foreground">产品更新</p>
+          <h2 id="updates-overview-title" className="mt-1 text-lg font-semibold text-balance">{state.title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground text-pretty">{state.desc}</p>
+          <dl className="mt-3 flex flex-wrap gap-2 text-xs">
+            {sequence !== undefined && <Meta label="发布序列" value={`#${sequence}`} />}
+            {publishedAt && <Meta label="发布于" value={formatTime(publishedAt)} />}
+            {checkedAt && <Meta label="上次检查" value={formatTime(checkedAt)} />}
+            {stale && <Meta label="数据" value="缓存" tone="warning" />}
+          </dl>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onCheck}
+        disabled={checking}
+        aria-busy={checking}
+        className="inline-flex h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl border border-border bg-surface/60 px-4 text-sm font-medium transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 sm:self-center"
+      >
+        <RefreshCw aria-hidden="true" className={cn("size-4", checking && "animate-spin motion-reduce:animate-none")} />
+        {checking ? "检查中…" : "检查更新"}
+      </button>
+    </section>
+  )
+}
+
+function Meta({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
+  return (
+    <div className={cn("flex items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 ring-1 ring-border", tone && TONE_BADGE[tone])}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-mono tabular-nums text-foreground">{value}</dd>
+    </div>
+  )
+}
+
+function Notice({ tone, alert = false, children }: { tone: "info" | "warning" | "danger"; alert?: boolean; children: ReactNode }) {
+  const styles = {
+    info: { box: "border-primary/25 bg-primary/8", icon: <Info className="size-4 text-primary" /> },
+    warning: { box: "border-warning/25 bg-warning/8", icon: <AlertTriangle className="size-4 text-warning" /> },
+    danger: { box: "border-destructive/25 bg-destructive/8", icon: <XCircle className="size-4 text-destructive" /> },
+  }[tone]
+  return (
+    <p role={alert ? "alert" : "status"} className={cn("flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm leading-relaxed text-foreground/90", styles.box)}>
+      <span aria-hidden="true" className="mt-0.5 shrink-0">{styles.icon}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </p>
+  )
+}
+
+function ComponentCard({
+  icon, icon2, title, subtitle, status, current, currentLabel = "当前版本", latest, hasUpdate, release, note, noteTone,
+  progress, action, loading = false, disabled, onClick, footer,
+}: {
+  icon: ReactNode; icon2?: ReactNode; title: string; subtitle: string; status: Status; current: string; currentLabel?: string
+  latest?: string; hasUpdate: boolean; release?: Entry; note: string; noteTone?: "warning"; progress?: ReactNode
+  action: string; loading?: boolean; disabled: boolean; onClick: () => void; footer?: ReactNode
+}) {
+  const ready = !disabled && !loading
+  return (
+    <section aria-label={title} className="card-glow flex flex-col gap-4 rounded-3xl bg-card p-5">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-surface/60 text-foreground" aria-hidden="true">
+            {icon}
+          </span>
+          <div className="min-w-0 leading-tight">
+            <h3 className="truncate text-sm font-semibold">{title}</h3>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
+          </div>
+        </div>
+        <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1", TONE_BADGE[status.tone])}>
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+          {status.label}
+        </span>
+      </header>
+
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface/40 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] text-muted-foreground">{currentLabel}</p>
+          <p className="mt-1 truncate font-mono text-sm font-semibold tabular-nums" title={current}>{current}</p>
+        </div>
+        <ArrowRight aria-hidden="true" className={cn("size-4 shrink-0", hasUpdate ? "text-primary" : "text-muted-foreground/50")} />
+        <div className="min-w-0 flex-1 text-right">
+          <p className="text-[11px] text-muted-foreground">最新发布</p>
+          <p className={cn("mt-1 truncate font-mono text-sm font-semibold tabular-nums", hasUpdate ? "text-primary" : latest ? "text-foreground" : "text-muted-foreground")} title={latest}>
+            {latest ?? "未取得"}
+          </p>
+        </div>
+      </div>
+
+      {release && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span className="tabular-nums">{size(release.sizeBytes)}</span>
+          <span aria-hidden="true" className="size-1 rounded-full bg-muted-foreground/40" />
+          <span className="tabular-nums">发布于 {formatTime(release.publishedAt)}</span>
         </p>
       )}
-      {sourceError && <p role="status" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">{sourceError}</p>}
-      {connectedPanelIncompatible && <p role="alert" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-        当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
-      </p>}
-      {serverError && <p role="status" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{serverError}</p>}
-      {progress !== null && (busy === "server" || busy === "agent") && <p role="status" className="text-xs text-muted-foreground">制品传输 {progress}%</p>}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <UpdateCard icon={<Monitor className="size-5" />} title="Windows 面板" current={PANEL_VERSION_LABEL}
-          release={releases?.panel} releaseLabel={releases ? formatReleaseVersion(releases.panel.version, releases.panel.releaseType || "stable") : undefined}
-          note={!desktop ? "安装新版需使用 Windows 桌面面板。" : !releases ? "尚未取得发布信息" :
-            panelNew ? "可安装新版" : compare(check?.currentVersion || null, releases.panel.version) === 1 ? "已安装版本高于推荐版本" : "已是推荐版本"}
-          action={panelBusy ? PANEL_INSTALL_LABELS[panelInstall?.phase || "preparing"] : panelInstall?.phase === "failed" ? "重试下载并安装" : "下载并安装"}
-          loading={panelBusy} extra={panelInstall && panelInstall.phase !== "idle" ? <PanelInstallProgress state={panelInstall} /> : undefined}
-          disabled={!panelNew || !desktop || Boolean(check?.stale) || anyBusy} onClick={() => void installPanel()} />
-        <UpdateCard icon={<Server className="size-5" />} title="控制服务端" current={runtime?.version || "未连接"}
-          release={releases?.server} releaseLabel={releases ? formatReleaseVersion(releases.server.version, releases.server.releaseType || "stable") : undefined}
-          note={serverIssue || (panelRequired ? "需先升级面板" : runtime?.updateStatus ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}` : "服务端独立升级")}
-          action={serverSource?.mode === "local" ? "升级本机服务" : "升级云端服务"}
-          disabled={!serverNew || Boolean(check?.stale) || panelRequired || Boolean(serverIssue) || !desktop ||
-            (serverSource?.mode !== "local" && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || anyBusy}
-          onClick={() => void installServer()}
-          extra={<div className="border-t border-border pt-3 text-xs">
-            <p className="flex items-center gap-2 font-semibold"><HardDriveDownload className="size-4" />同批 Agent 制品</p>
-            <p className="mt-2 text-muted-foreground">已准备 {runtime?.agentArtifactVersion || "无"} · 发布 {releases ? formatReleaseVersion(releases.agent.version, releases.agent.releaseType || "stable") : "未取得"}。仍需逐台或批量手动下发。</p>
-            {agentIssue && agentIssue !== serverIssue && <p className="mt-2 text-warning">{agentIssue}</p>}
-            <button type="button" disabled={!agentNew || Boolean(check?.stale) || Boolean(agentIssue) || !runtime || anyBusy}
-              onClick={() => void syncAgent()} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-40">准备新版制品</button>
-          </div>} />
+
+      <p className={cn("text-xs leading-relaxed text-pretty", noteTone ? TONE_TEXT[noteTone] : "text-muted-foreground")}>{note}</p>
+
+      {(release?.title || release?.notes) && (
+        <details className="group rounded-2xl border border-border bg-surface/30 text-xs">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3.5 py-2.5 font-medium text-foreground [&::-webkit-details-marker]:hidden">
+            <span className="truncate">{release.title || "更新说明"}</span>
+            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+          </summary>
+          {release.notes && (
+            <p className="max-h-40 overflow-auto whitespace-pre-wrap border-t border-border px-3.5 py-3 leading-relaxed text-muted-foreground">{release.notes}</p>
+          )}
+        </details>
+      )}
+
+      {progress}
+
+      <div className="mt-auto flex flex-col gap-3 pt-1">
+        <button
+          type="button"
+          disabled={disabled}
+          aria-busy={loading}
+          onClick={onClick}
+          className={cn(
+            "inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed",
+            ready ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : loading ? "bg-primary/80 text-primary-foreground"
+              : "border border-border bg-surface/50 text-muted-foreground",
+          )}
+        >
+          {loading
+            ? <Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
+            : icon2 ?? <Download aria-hidden="true" className="size-4" />}
+          {action}
+        </button>
+        {footer && <div className="flex justify-center">{footer}</div>}
       </div>
-      <Link href="/clients" className="self-start text-sm text-primary hover:underline">前往「客户端 → 客户端更新」手动下发 Agent 更新 →</Link>
+    </section>
+  )
+}
+
+function ProgressTrack({ percent, label, valueText }: { percent: number | null; label: string; valueText: string }) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={label}
+      aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={valueText}>
+      <div
+        className={cn("h-full rounded-full bg-primary", percent === null
+          ? "w-1/3 animate-pulse motion-reduce:animate-none"
+          : "transition-[width] duration-200 motion-reduce:transition-none")}
+        style={percent === null ? undefined : { width: `${percent}%` }}
+      />
+    </div>
+  )
+}
+
+function TransferProgress({ percent, label }: { percent: number | null; label: string }) {
+  return (
+    <div role="status" className="flex flex-col gap-2 rounded-2xl border border-border bg-surface/40 p-3 text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-foreground">{label}</span>
+        {percent !== null && <span className="font-mono tabular-nums text-muted-foreground">{percent}%</span>}
+      </div>
+      <ProgressTrack percent={percent} label={`${label}进度`} valueText={percent === null ? label : `${percent}%`} />
     </div>
   )
 }
@@ -301,36 +586,21 @@ export function UpdatesPanel() {
 function PanelInstallProgress({ state }: { state: PanelInstallState }) {
   const percent = panelDownloadPercent(state)
   const failed = state.phase === "failed"
-  return <div className={`rounded-xl border p-3 text-xs ${failed ? "border-destructive/30 bg-destructive/5" : "border-border bg-surface"}`}>
-    <p role={failed ? "alert" : "status"} className={failed ? "break-words text-destructive" : "text-foreground"}>
-      {failed ? state.error || PANEL_INSTALL_LABELS.failed : PANEL_INSTALL_LABELS[state.phase]}
-    </p>
-    {!failed && <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"
-      role="progressbar" aria-label="面板安装包下载进度" aria-valuemin={0} aria-valuemax={100}
-      aria-valuenow={percent ?? undefined} aria-valuetext={percent === null ? PANEL_INSTALL_LABELS[state.phase] : `${percent}% · ${PANEL_INSTALL_LABELS[state.phase]}`}>
-      <div className={`h-full rounded-full bg-primary ${percent === null ? "w-1/3 animate-pulse motion-reduce:animate-none" : "transition-[width] duration-200 motion-reduce:transition-none"}`}
-        style={percent === null ? undefined : { width: `${percent}%` }} />
-    </div>}
-    {state.totalBytes !== null && <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-muted-foreground">
-      <span>已下载 {size(state.downloadedBytes)} / {size(state.totalBytes)}</span>
-      {percent !== null && <span className="font-mono tabular-nums">{percent}%</span>}
-    </div>}
-  </div>
-}
-
-function UpdateCard({ icon, title, current, release, releaseLabel, note, action, disabled, onClick, extra, loading = false }: {
-  icon: React.ReactNode; title: string; current: string; release?: Entry; releaseLabel?: string; note: string; action: string; disabled: boolean; onClick: () => void; extra?: React.ReactNode; loading?: boolean
-}) {
-  return <section className="flex min-h-52 flex-col gap-3 rounded-2xl border border-border bg-card p-5">
-    <div className="flex items-center gap-2 text-sm font-semibold">{icon}{title}</div>
-    <p className="text-sm">当前 <span className="font-mono">{current}</span> → 发布 <span className="font-mono">{releaseLabel ?? release?.version ?? "未取得"}</span></p>
-    {release && <p className="text-xs text-muted-foreground">{size(release.sizeBytes)} · {new Date(release.publishedAt).toLocaleString()}</p>}
-    <p className="min-h-9 text-xs text-muted-foreground">{note}</p>
-    {release?.title && <p className="text-xs font-medium">{release.title}</p>}
-    {release?.notes && <p className="max-h-24 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{release.notes}</p>}
-    {extra}
-    <button type="button" disabled={disabled} aria-busy={loading} onClick={onClick} className="mt-auto rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40">
-      {loading ? <Loader2 aria-hidden="true" className="mr-2 inline size-4 animate-spin motion-reduce:animate-none" /> : <Download aria-hidden="true" className="mr-2 inline size-4" />}{action}
-    </button>
-  </section>
+  return (
+    <div className={cn("flex flex-col gap-2 rounded-2xl border p-3 text-xs", failed ? "border-destructive/30 bg-destructive/8" : "border-border bg-surface/40")}>
+      <div className="flex items-center justify-between gap-3">
+        <p role={failed ? "alert" : "status"} className={failed ? "break-words text-destructive" : "text-foreground"}>
+          {failed ? state.error || PANEL_INSTALL_LABELS.failed : PANEL_INSTALL_LABELS[state.phase]}
+        </p>
+        {!failed && percent !== null && <span className="font-mono tabular-nums text-muted-foreground">{percent}%</span>}
+      </div>
+      {!failed && (
+        <ProgressTrack percent={percent} label="面板安装包下载进度"
+          valueText={percent === null ? PANEL_INSTALL_LABELS[state.phase] : `${percent}% · ${PANEL_INSTALL_LABELS[state.phase]}`} />
+      )}
+      {state.totalBytes !== null && (
+        <p className="tabular-nums text-muted-foreground">已下载 {size(state.downloadedBytes)} / {size(state.totalBytes)}</p>
+      )}
+    </div>
+  )
 }
