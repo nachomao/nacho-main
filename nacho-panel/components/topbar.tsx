@@ -636,7 +636,7 @@ function TokenPill() {
   )
 }
 
-/** 入场揭示样式：从左到右逐个展开（模���到清晰 + 轻微右移就位） */
+/** 入场揭示样式：从左到右逐个��开（模���到清晰 + 轻微右移就位） */
 function revealStyle(show: boolean, delay: number): React.CSSProperties {
   return {
     transform: show ? "translateX(0)" : "translateX(-14px)",
@@ -939,23 +939,52 @@ function ClientsActions() {
 
 /**
  * AI Mode 入口按钮：悬浮时按钮内浮现 LED 像素星芒（PixelStardust）。
- * 星光围绕指针聚集、随指针游走，偶有像素爆闪成白色星光——
- * 配合原有的图标旋转，营造「星尘被唤醒」的入口氛围。
+ * 星光围绕指针聚集、随指针游走，偶有像素爆闪成白色星光；
+ * 螺旋 DNA 图标悬浮时绕自身竖轴匀速旋转，离开后平滑回正——
+ * 两者各自独立运作，营造「星尘被唤醒」的入口氛围。
  */
 function AIModeButton({ onClick }: { onClick?: () => void }) {
   const [hovered, setHovered] = useState(false)
+  const iconRef = useRef<SVGSVGElement>(null)
+
+  // 进入时清掉上次离开时写入的内联定格样式，交回 CSS 的 animate-dna-spin 匀速旋转
+  const handleEnter = () => {
+    setHovered(true)
+    const el = iconRef.current
+    if (el) {
+      el.style.transition = ""
+      el.style.transform = ""
+    }
+  }
+
+  // 离开时把当前转到一半的 3D 姿态定格为内联样式，再过渡回正——
+  // 否则直接摘掉 animation 会让图标瞬间跳回原位，而非「平滑回正」。
+  const handleLeave = () => {
+    setHovered(false)
+    const el = iconRef.current
+    if (el) {
+      const current = getComputedStyle(el).transform
+      el.style.transition = "none"
+      el.style.transform = current === "none" ? "rotateY(0deg)" : current
+      void el.offsetWidth
+      el.style.transition = "transform 500ms cubic-bezier(0.22, 1, 0.36, 1)"
+      el.style.transform = "rotateY(0deg)"
+    }
+  }
 
   return (
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
       className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-colors hover:border-primary/40"
     >
       {/* 悬浮像素星芒：LED 点阵随指针点亮 */}
       <PixelStardust active={hovered} />
-      <Dna className="relative h-4.5 w-4.5 text-primary transition-transform duration-300 group-hover:rotate-12" />
+      <span className="relative flex size-4.5 shrink-0 items-center justify-center [perspective:260px]">
+        <Dna ref={iconRef} className={cn("h-4.5 w-4.5 text-primary", hovered && "animate-dna-spin")} />
+      </span>
       <span className="relative whitespace-nowrap text-sm font-medium">AI Mode</span>
     </button>
   )
@@ -1014,7 +1043,7 @@ export function Topbar() {
           <Search className="h-5 w-5" />
         </IconButton>
 
-        {/* AI Mode 入口：自然语言操作所有客户端 */}
+        {/* AI Mode 入口：自然语言操���所有客户端 */}
         <AIModeButton onClick={actions?.openAI} />
 
         {/* 窗口控制：缩小 / 最大化 / 关闭（桌面壳调用原生接口，浏览器降级为全屏切换） */}
