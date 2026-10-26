@@ -7,6 +7,7 @@ import {
   HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
 } from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
+import { PanelInstallProgress, TransferProgress } from "@/components/settings/install-progress"
 import { ReleaseNotesCapsule } from "@/components/settings/release-notes-capsule"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
@@ -15,8 +16,7 @@ import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
 import { PANEL_VERSION_LABEL, formatReleaseVersion } from "@/lib/panel-version"
 import { serverUpdateIssue } from "@/lib/product-update-status"
 import {
-  newerPanelInstallState, panelDownloadPercent, panelInstallActive, PANEL_INSTALL_LABELS,
-  type PanelInstallState,
+  newerPanelInstallState, panelInstallActive, PANEL_INSTALL_LABELS, type PanelInstallState,
 } from "@/lib/panel-install-progress"
 import { cn } from "@/lib/utils"
 
@@ -545,53 +545,5 @@ function ComponentCard({
         {footer && <div className="flex justify-center">{footer}</div>}
       </div>
     </section>
-  )
-}
-
-function ProgressTrack({ percent, label, valueText }: { percent: number | null; label: string; valueText: string }) {
-  return (
-    <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={label}
-      aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={valueText}>
-      <div
-        className={cn("h-full rounded-full bg-primary", percent === null
-          ? "w-1/3 animate-pulse motion-reduce:animate-none"
-          : "transition-[width] duration-200 motion-reduce:transition-none")}
-        style={percent === null ? undefined : { width: `${percent}%` }}
-      />
-    </div>
-  )
-}
-
-function TransferProgress({ percent, label }: { percent: number | null; label: string }) {
-  return (
-    <div role="status" className="flex flex-col gap-2 rounded-2xl border border-border bg-surface/40 p-3 text-xs">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-foreground">{label}</span>
-        {percent !== null && <span className="font-mono tabular-nums text-muted-foreground">{percent}%</span>}
-      </div>
-      <ProgressTrack percent={percent} label={`${label}进度`} valueText={percent === null ? label : `${percent}%`} />
-    </div>
-  )
-}
-
-function PanelInstallProgress({ state }: { state: PanelInstallState }) {
-  const percent = panelDownloadPercent(state)
-  const failed = state.phase === "failed"
-  return (
-    <div className={cn("flex flex-col gap-2 rounded-2xl border p-3 text-xs", failed ? "border-destructive/30 bg-destructive/8" : "border-border bg-surface/40")}>
-      <div className="flex items-center justify-between gap-3">
-        <p role={failed ? "alert" : "status"} className={failed ? "break-words text-destructive" : "text-foreground"}>
-          {failed ? state.error || PANEL_INSTALL_LABELS.failed : PANEL_INSTALL_LABELS[state.phase]}
-        </p>
-        {!failed && percent !== null && <span className="font-mono tabular-nums text-muted-foreground">{percent}%</span>}
-      </div>
-      {!failed && (
-        <ProgressTrack percent={percent} label="面板安装包下载进度"
-          valueText={percent === null ? PANEL_INSTALL_LABELS[state.phase] : `${percent}% · ${PANEL_INSTALL_LABELS[state.phase]}`} />
-      )}
-      {state.totalBytes !== null && (
-        <p className="tabular-nums text-muted-foreground">已下载 {size(state.downloadedBytes)} / {size(state.totalBytes)}</p>
-      )}
-    </div>
   )
 }

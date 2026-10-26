@@ -32,3 +32,26 @@ export function panelDownloadPercent(state: PanelInstallState) {
 export function newerPanelInstallState(current: PanelInstallState | null, next: PanelInstallState) {
   return !current || next.revision > current.revision ? next : current
 }
+
+/** 速率采样做指数平滑，避免约 200ms 一次的进度推送让速度与剩余时间来回跳动。 */
+export function smoothTransferRate(previous: number | null, sample: number) {
+  if (!Number.isFinite(sample) || sample < 0) return previous
+  return previous === null ? sample : previous * 0.7 + sample * 0.3
+}
+
+export function estimateRemainingSeconds(downloadedBytes: number, totalBytes: number | null, bytesPerSecond: number | null) {
+  if (!totalBytes || !bytesPerSecond || bytesPerSecond <= 0 || downloadedBytes >= totalBytes) return null
+  return Math.ceil((totalBytes - downloadedBytes) / bytesPerSecond)
+}
+
+export function formatTransferRate(bytesPerSecond: number) {
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MiB/s`
+  if (bytesPerSecond >= 1024) return `${Math.round(bytesPerSecond / 1024)} KiB/s`
+  return `${Math.round(bytesPerSecond)} B/s`
+}
+
+export function formatRemaining(seconds: number) {
+  if (seconds < 60) return `剩余 ${seconds} 秒`
+  if (seconds < 3600) return `剩余约 ${Math.ceil(seconds / 60)} 分钟`
+  return "剩余超过 1 小时"
+}
