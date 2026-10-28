@@ -1,262 +1,308 @@
 "use client"
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
+import type { AIModeOrigin } from "./ai-mode-context"
+import { easeOutCubic, veilCoverRadius } from "./veil"
 
-const EASE = "cubic-bezier(0.22, 1, 0.36, 1)"
-/** 带回弹的弹性缓动：字形落位和伴星弹出用它制造过冲 */
-const BOUNCE = "cubic-bezier(0.34, 1.56, 0.64, 1)"
+/** 点阵格距（CSS px）：与 AI Mode 按钮里的像素星芒同规格——点击后，按钮里的像素涌出铺满全屏 */
+const PITCH = 6
+/** 窄屏格距：保证字标在小视口里仍有足够的点阵分辨率 */
+const PITCH_COMPACT = 4
+/** 像素边长占格距的比例（按钮星芒为 3 / 6） */
+const DOT_RATIO = 0.5
+/** 单帧逐格计算的上限：超大屏自动放宽格距，保持每帧计算在几毫秒内 */
+const MAX_CELLS = 120_000
 
-/** "I Mode" 逐字组排（A 与星辉由 SVG 单独绘制，字形 0 = 星辉+A 组合） */
-const LETTERS = "I Mode".split("")
+/* 时间轴（ms，自点击起算） */
+/** 波前从发源点扩散到最远的视口角 */
+const WAVE_MS = 1250
+/** 字标开始燃尽，同时通知工作台浮现 */
+const REVEAL_AT = 1150
+/** 燃尽错峰范围与单个像素的燃尽时长 */
+const BURN_SPREAD = 380
+const BURN_MS = 260
+const END_AT = Math.max(WAVE_MS, REVEAL_AT + BURN_SPREAD + BURN_MS) + 80
 
-/** 星辉最终布局尺寸与开场展示尺寸（星辉始终按大尺寸栅格化，只缩小不放大，保证全程锐利） */
-const MARK_SIZE = 88
-const INTRO_SIZE = 200
+/* 波前光带形态（px） */
+/** 前沿预亮宽度 */
+const LEAD = 18
+/** 白热区宽度：幕布的羽化边缘就藏在这一段之下 */
+const HOT_BAND = 22
+/** 余辉衰减长度 */
+const TAIL = 120
+/** 波前抖动：打散完美圆环的机械感，像素一颗颗被点亮 */
+const JITTER = 16
+
+const WORD = "AI Mode"
+
+const smooth = (x: number) => x * x * (3 - 2 * x)
+
+/** 把任意 CSS 颜色（含 oklch / color-mix）解析为 sRGB 字节，供逐像素着色 */
+function resolveRGB(color: string): [number, number, number] {
+  const canvas = document.createElement("canvas")
+  canvas.width = canvas.height = 1
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })
+  if (!ctx) return [110, 168, 255]
+  ctx.fillStyle = "#6ea8ff"
+  if (color) ctx.fillStyle = color
+  ctx.fillRect(0, 0, 1, 1)
+  const d = ctx.getImageData(0, 0, 1, 1).data
+  return [d[0], d[1], d[2]]
+}
 
 /**
- * AI Mode 载入开场（与首次进入项目的 N 字开场同一动画语言）。
- * 1. 短暂空场后，居中的大号四芒星辉以 SVG 原生变换旋转入场，
- *    光瓣同时从中心向外展开，完成后右上角小伴星带过冲弹出。
- * 2. 星辉缩小并左移让位，"AI Mode" 逐字以 3D 翻转 + 回弹落位，
- *    落位瞬间带主色辉光，随后褪为正常字色，最后一道高光扫过全词。
- * 3. 完整展示约 1.4s 后，从最后一个字到星辉逐个上抛翻转渐隐（从右往左）。
- *
- * 丝滑要点：组固定最终布局，开场态只用 translateX 把星辉推到屏幕中心
- * （组不做 scale——放大会让浏览器按小尺寸栅格化图层导致发糊）；
- * 星辉本体始终按 200px 大尺寸渲染，settle 时缩小到 88px 布局盒。
- * 全程只跑 transform / opacity / filter，不动布局属性。
+ * 把 "AI Mode" 以界面字体栅格化到点阵：4×4 超采样求每格覆盖率，
+ * 笔画内部满亮、边缘按覆盖率柔化，得到带抗锯齿的点阵字标。
  */
-export function AIIntro({ onDone }: { onDone: () => void }) {
-  // idle: 空场等待 → draw: 星辉生长 → settle: 归位 + 文字组排 → exit: 逐字离场
-  const [stage, setStage] = useState<"idle" | "draw" | "settle" | "exit">("idle")
-  const groupRef = useRef<HTMLDivElement>(null)
-  const markRef = useRef<HTMLSpanElement>(null)
-  const [introTf, setIntroTf] = useState("")
-  const [ready, setReady] = useState(false)
-  const uid = useId().replace(/:/g, "")
-  const petalG = `${uid}-petalG`
-  const glowG = `${uid}-glowG`
+function rasterizeWordmark(cols: number, rows: number, cell: number, width: number, height: number) {
+  const SS = 4
+  const out = new Float32Array(cols * rows)
+  const canvas = document.createElement("canvas")
+  canvas.width = cols * SS
+  canvas.height = rows * SS
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })
+  if (!ctx) return out
 
-  // 挂载后测量：算出让星辉水平居中的纯平移组变换（此刻尚未画出、不可见，无闪烁）
-  useLayoutEffect(() => {
-    const g = groupRef.current
-    const n = markRef.current
-    if (!g || !n) return
-    const gb = g.getBoundingClientRect()
-    const nb = n.getBoundingClientRect()
-    const markCenterX = nb.left - gb.left + nb.width / 2
-    const dx = gb.width / 2 - markCenterX
-    setIntroTf(`translateX(${dx}px)`)
-    setReady(true)
-  }, [])
+  const family = getComputedStyle(document.body).fontFamily || "sans-serif"
+  const unit = SS / cell
+  ctx.font = `600 100px ${family}`
+  const widthAt100 = ctx.measureText(WORD).width || 360
+  const fontCss = (Math.min(width * 0.62, 780) / widthAt100) * 100
+  ctx.font = `600 ${fontCss * unit}px ${family}`
+  ctx.textAlign = "center"
+  ctx.textBaseline = "alphabetic"
+  const m = ctx.measureText(WORD)
+  ctx.fillStyle = "#fff"
+  // 视觉中心略高于几何中心
+  ctx.fillText(WORD, (width / 2) * unit, height * 0.46 * unit + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2)
 
-  useEffect(() => {
-    // 组件在暗幕铺垫（dimming，约 900ms）开始时即挂载：
-    // 星辉在暗幕收尾段（约 700ms）淡入登场，与变暗的尾巴轻微重叠——
-    // 既不会在亮背景上抢跑，也不留"黑屏空场"，衔接更丝滑
-    const START = 700
-    const timers: number[] = []
-    timers.push(window.setTimeout(() => setStage("draw"), START))
-    // 旋转（1.2s）收尾段极缓，组排在尾段就启动，星辉不再单独干等
-    const DRAW_MS = 1100
-    timers.push(window.setTimeout(() => setStage("settle"), START + DRAW_MS))
-    // 组排 + 高光扫过后停留片刻再离场
-    timers.push(window.setTimeout(() => setStage("exit"), START + DRAW_MS + 1650))
-    // 离场：7 个字形（含星辉）反向错峰 × 60ms + 单字 600ms
-    timers.push(window.setTimeout(onDone, START + DRAW_MS + 1650 + (LETTERS.length + 1) * 60 + 650))
-    return () => timers.forEach(clearTimeout)
-  }, [onDone])
-
-  const drawn = stage === "draw" || stage === "settle" || stage === "exit"
-  const settled = stage === "settle" || stage === "exit"
-  const exiting = stage === "exit"
-
-  /** 单个字形的入场/离场样式（0 = 星辉，离场从右往左反向错峰） */
-  const glyphStyle = (glyphIndex: number): React.CSSProperties => {
-    const total = LETTERS.length + 1
-    if (exiting) {
-      // 离场：上抛 + 反向翻转 + 模糊，右往左错峰
-      return {
-        opacity: 0,
-        transform: "translateY(-26px) rotateX(-70deg) scale(0.7)",
-        filter: "blur(12px)",
-        transition: `opacity 600ms ease-in, transform 600ms ${EASE}, filter 600ms ease-in`,
-        transitionDelay: `${(total - 1 - glyphIndex) * 60}ms`,
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+  const stride = canvas.width
+  const norm = 1 / (SS * SS * 255)
+  for (let gy = 0; gy < rows; gy++) {
+    for (let gx = 0; gx < cols; gx++) {
+      let sum = 0
+      for (let sy = 0; sy < SS; sy++) {
+        let idx = ((gy * SS + sy) * stride + gx * SS) * 4 + 3
+        for (let sx = 0; sx < SS; sx++, idx += 4) sum += data[idx]
       }
-    }
-    // 入场：从下方带 3D 翻转 + 缩小状态弹性落位，落位瞬间带主色辉光再褪色
-    return {
-      opacity: settled ? 1 : 0,
-      transform: settled ? "translateY(0) rotateX(0deg) scale(1)" : "translateY(30px) rotateX(78deg) scale(0.55)",
-      filter: settled ? "blur(0px)" : "blur(14px)",
-      color: settled ? undefined : "var(--primary)",
-      textShadow: settled ? "0 0 0 transparent" : "0 0 24px color-mix(in oklab, var(--primary) 80%, transparent)",
-      transition: `opacity 520ms ease-out, transform 720ms ${BOUNCE}, filter 520ms ease-out, color 900ms ease-out, text-shadow 900ms ease-out`,
-      transitionDelay: settled ? `${180 + glyphIndex * 72}ms` : "0ms",
+      const c = sum * norm
+      out[gy * cols + gx] = c <= 0.16 ? 0 : c >= 0.6 ? 1 : smooth((c - 0.16) / 0.44)
     }
   }
+  return out
+}
+
+/**
+ * AI Mode 切入动画「像素涌潮」。
+ * 1. 点击处迸发一圈 LED 像素波前（与按钮悬浮时的像素星芒同一点阵），
+ *    向全屏扩散；波前后方的 AI 幕布随之羽化展开，余辉在身后冷却成一片残影点阵。
+ * 2. 波前扫过屏幕中央时，"AI Mode" 字标的像素被逐颗点亮锁存：
+ *    落位瞬间白热，随后稳定为主题色微闪——像被浪潮「显影」出来。
+ * 3. 停留片刻后字标像素随机错峰白闪燃尽，工作台各栏同时从中心向两侧展开浮现。
+ *
+ * 渲染要点：逐格亮度写入「一格一像素」的低分辨率画布（亦作为模糊辉光层直接显示），
+ * 再以最近邻放大到全分辨率画布并用像素图案做 destination-in 遮罩得到锐利点阵；
+ * 每帧只有一次 putImageData 与两次整屏 GPU 绘制，与亮起的像素数量无关。
+ */
+export function AIIntro({
+  origin,
+  onVeil,
+  onReveal,
+}: {
+  origin: AIModeOrigin
+  /** 每帧回报幕布半径（px），Infinity 表示已完全覆盖 */
+  onVeil: (radius: number) => void
+  /** 字标开始燃尽：工作台在此刻开始浮现 */
+  onReveal: () => void
+}) {
+  const dotsRef = useRef<HTMLCanvasElement>(null)
+  const glowRef = useRef<HTMLCanvasElement>(null)
+  const latest = useRef({ origin, onVeil, onReveal })
+  useEffect(() => {
+    latest.current = { origin, onVeil, onReveal }
+  })
+
+  useEffect(() => {
+    const veil = (radius: number) => latest.current.onVeil(radius)
+    const reveal = () => latest.current.onReveal()
+    const skip = () => {
+      veil(Infinity)
+      reveal()
+    }
+
+    const dots = dotsRef.current
+    const glow = glowRef.current
+    const dctx = dots?.getContext("2d")
+    const gctx = glow?.getContext("2d")
+    // 减少动态效果或窗口不可见时跳过涌潮，直接铺满幕布并浮现工作台
+    if (!dots || !glow || !dctx || !gctx || document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      skip()
+      return
+    }
+
+    const o = latest.current.origin
+    const W = window.innerWidth
+    const H = window.innerHeight
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const pitchCss = Math.max(W < 640 ? PITCH_COMPACT : PITCH, Math.sqrt((W * H) / MAX_CELLS))
+    // 设备像素格距取整，保证低分辨率格与像素图案严格对齐
+    const pitch = Math.max(2, Math.round(pitchCss * dpr))
+    const cell = pitch / dpr
+    const dot = Math.max(1, Math.round(pitch * DOT_RATIO))
+
+    dots.width = Math.round(W * dpr)
+    dots.height = Math.round(H * dpr)
+    dots.style.width = `${W}px`
+    dots.style.height = `${H}px`
+    const cols = Math.ceil(dots.width / pitch)
+    const rows = Math.ceil(dots.height / pitch)
+    glow.width = cols
+    glow.height = rows
+    glow.style.width = `${cols * cell}px`
+    glow.style.height = `${rows * cell}px`
+
+    const tile = document.createElement("canvas")
+    tile.width = tile.height = pitch
+    const tctx = tile.getContext("2d")
+    const pattern = tctx && dctx.createPattern(tile, "repeat")
+    if (!tctx || !pattern) {
+      skip()
+      return
+    }
+    const inset = Math.floor((pitch - dot) / 2)
+    tctx.fillStyle = "#fff"
+    tctx.fillRect(inset, inset, dot, dot)
+
+    // 每格的波前到达距离（含抖动）、到达时刻、闪烁相位与燃尽次序
+    const n = cols * rows
+    const reach = veilCoverRadius(o, W, H) + TAIL
+    const dist = new Float32Array(n)
+    const hit = new Float32Array(n)
+    const seed = new Float32Array(n)
+    const burn = new Float32Array(n)
+    for (let gy = 0, i = 0; gy < rows; gy++) {
+      const y = (gy + 0.5) * cell - o.y
+      for (let gx = 0; gx < cols; gx++, i++) {
+        const x = (gx + 0.5) * cell - o.x
+        const d = Math.max(0, Math.hypot(x, y) + (Math.random() * 2 - 1) * JITTER)
+        dist[i] = d
+        // easeOutCubic 的反函数：由半径比反推波前到达的时间比
+        hit[i] = d >= reach ? Infinity : (1 - Math.cbrt(1 - d / reach)) * WAVE_MS
+        seed[i] = Math.random() * Math.PI * 2
+        burn[i] = Math.random()
+      }
+    }
+    const mark = rasterizeWordmark(cols, rows, cell, W, H)
+    const [pr, pg, pb] = resolveRGB(getComputedStyle(document.documentElement).getPropertyValue("--primary").trim())
+
+    const image = gctx.createImageData(cols, rows)
+    const px = image.data
+    const fullW = cols * pitch
+    const fullH = rows * pitch
+    let start = -1
+    let raf = 0
+    let covered = false
+    let revealed = false
+
+    const frame = (now: number) => {
+      if (start < 0) start = now
+      const t = now - start
+      const p = Math.min(1, t / WAVE_MS)
+      const r = easeOutCubic(p) * reach
+      // 能量随扩散衰减：越往外光带越淡
+      const amp = 1 - 0.55 * p
+
+      if (!covered) {
+        if (p >= 1) {
+          covered = true
+          veil(Infinity)
+        } else {
+          veil(r - HOT_BAND / 2)
+        }
+      }
+      if (!revealed && t >= REVEAL_AT) {
+        revealed = true
+        reveal()
+      }
+
+      for (let i = 0; i < n; i++) {
+        const s = r - dist[i]
+        let a = 0
+        let hot = 0
+        if (s >= 0) {
+          a = amp * Math.exp(-s / TAIL)
+          if (s < HOT_BAND) hot = 1 - s / HOT_BAND
+          // 波前过后残留的淡淡点阵，缓慢冷却
+          const residue = 0.1 * Math.exp(-(t - hit[i]) / 650)
+          if (residue > a) a = residue
+        } else if (s > -LEAD) {
+          a = amp * 0.35 * (1 + s / LEAD)
+        }
+        if (a > 0.004) a *= 0.7 + 0.3 * Math.sin(t * 0.012 + seed[i])
+
+        const m = mark[i]
+        if (m > 0 && s >= 0) {
+          const since = t - hit[i]
+          let lv = m * Math.min(1, since / 80) * (0.88 + 0.12 * Math.sin(t * 0.006 + seed[i] * 1.7))
+          // 锁存瞬间白热，随后稳定在略提亮的主题色
+          let h = 0.2 + 0.8 * Math.exp(-since / 260)
+          if (t > REVEAL_AT) {
+            const k = (t - REVEAL_AT - burn[i] * BURN_SPREAD) / BURN_MS
+            if (k >= 1) {
+              lv = 0
+            } else if (k > 0) {
+              // 燃尽：先白闪再熄灭
+              h = Math.max(h, 1 - k)
+              lv *= 1 - k * k
+            }
+          }
+          if (lv >= a) {
+            a = lv
+            if (h > hot) hot = h
+          }
+        }
+
+        const q = i * 4
+        if (a <= 0.004) {
+          px[q + 3] = 0
+          continue
+        }
+        const w = hot * 0.85
+        px[q] = pr + (255 - pr) * w
+        px[q + 1] = pg + (255 - pg) * w
+        px[q + 2] = pb + (255 - pb) * w
+        px[q + 3] = a >= 1 ? 255 : a * 255
+      }
+
+      gctx.putImageData(image, 0, 0)
+      dctx.clearRect(0, 0, dots.width, dots.height)
+      dctx.imageSmoothingEnabled = false
+      dctx.drawImage(glow, 0, 0, fullW, fullH)
+      dctx.globalCompositeOperation = "destination-in"
+      dctx.fillStyle = pattern
+      dctx.fillRect(0, 0, dots.width, dots.height)
+      dctx.globalCompositeOperation = "source-over"
+
+      if (t < END_AT) {
+        raf = requestAnimationFrame(frame)
+      } else {
+        dctx.clearRect(0, 0, dots.width, dots.height)
+        gctx.clearRect(0, 0, cols, rows)
+      }
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   return (
-    <div className="flex h-full w-full items-center justify-center" aria-label="AI Mode 正在载入">
-      <div
-        ref={groupRef}
-        className="flex items-center will-change-transform"
-        style={{
-          transform: settled ? "none" : introTf,
-          transition: settled ? `transform 980ms ${EASE}` : "none",
-          visibility: ready ? "visible" : "hidden",
-        }}
-      >
-        {/* 星辉 + A：主星以 SVG 原生变换旋转，光瓣从中心向外展开，伴星随后弹出。
-            抗糊关键：SVG 始终以 200px 原生尺寸栅格化，开场原尺寸展示（scale 1），
-            settle 时缩小到 88px 布局盒（scale 0.44）——只缩小不放大，全程锐利 */}
-        <span
-          ref={markRef}
-          style={{
-            width: MARK_SIZE,
-            height: MARK_SIZE,
-            ...(exiting
-              ? glyphStyle(0)
-              : { opacity: stage === "idle" ? 0 : 1, transition: "opacity 350ms ease-out" }),
-          }}
-          className="relative inline-flex"
-        >
-          {/* 200px 渲染层：以 88px 布局盒中心为锚点，开场满尺寸、settle 缩回 */}
-          <span
-            aria-hidden
-            className="absolute left-1/2 top-1/2 inline-flex shrink-0"
-            style={{
-              width: INTRO_SIZE,
-              height: INTRO_SIZE,
-              marginLeft: -INTRO_SIZE / 2,
-              marginTop: -INTRO_SIZE / 2,
-              transform: settled ? `scale(${MARK_SIZE / INTRO_SIZE})` : "scale(1)",
-              transition: settled ? `transform 980ms ${EASE}` : "none",
-            }}
-          >
-          {/* SVG 和主星路径均不做 CSS transform，避免 Chromium 在动画首帧
-              把矢量层栅格化。旋转使用 SVG animateTransform，光瓣通过
-              clip-path 展开，全程保持矢量边缘。 */}
-          <svg
-            viewBox="0 0 44 44"
-            fill="none"
-            aria-hidden
-            shapeRendering="geometricPrecision"
-            style={{ width: INTRO_SIZE, height: INTRO_SIZE, display: "block" }}
-          >
-            <defs>
-              <linearGradient id={petalG} x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="var(--primary)" />
-                <stop offset="100%" stopColor="color-mix(in oklab, var(--primary) 55%, oklch(0.85 0 0))" />
-              </linearGradient>
-              <radialGradient id={glowG}>
-                <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.35" />
-                <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-
-            {/* 背后柔光：生长时缓缓浮现 */}
-            <circle
-              cx="21"
-              cy="22"
-              r="20"
-              fill={`url(#${glowG})`}
-              style={{
-                opacity: drawn ? 1 : 0,
-                transition: "opacity 1100ms ease-out",
-                transitionDelay: drawn ? "300ms" : "0ms",
-              }}
-            />
-
-            {/* drawn 切换时重建分组，使 SVG 原生旋转从第一帧重新开始。 */}
-            <g key={drawn ? "drawn" : "idle"}>
-            {drawn && (
-              /* 旋转量 1.5 圈、1.2s 收尾：光瓣展开完成（约 700ms）时
-                 仍有明显旋转余量，避免"转完了才看见星"的观感 */
-              <animateTransform
-                attributeName="transform"
-                type="rotate"
-                from="-540 21 22"
-                to="0 21 22"
-                dur="1.2s"
-                calcMode="spline"
-                keyTimes="0;1"
-                keySplines="0.3 0.55 0.35 1"
-                fill="freeze"
-              />
-            )}
-            {/* 竖向光瓣：用裁剪区域自中心向上下展开。 */}
-            <path
-              d="M21 3 C22.2 13.5 23.5 17.5 26 22 C23.5 26.5 22.2 30.5 21 41 C19.8 30.5 18.5 26.5 16 22 C18.5 17.5 19.8 13.5 21 3 Z"
-              fill={`url(#${petalG})`}
-              style={{
-                clipPath: drawn ? "inset(0% 0% 0% 0%)" : "inset(50% 0% 50% 0%)",
-                transition: `clip-path 700ms ${EASE}`,
-              }}
-            />
-            {/* 横向光瓣：稍晚自中心向左右展开。 */}
-            <path
-              d="M2 22 C12.5 20.8 16.5 19.5 21 17 C25.5 19.5 29.5 20.8 40 22 C29.5 23.2 25.5 24.5 21 27 C16.5 24.5 12.5 23.2 2 22 Z"
-              fill={`url(#${petalG})`}
-              style={{
-                clipPath: drawn ? "inset(0% 0% 0% 0%)" : "inset(0% 50% 0% 50%)",
-                transition: `clip-path 700ms ${EASE}`,
-                transitionDelay: drawn ? "120ms" : "0ms",
-              }}
-            />
-            </g>
-            {/* 小伴星：星辉转定后带过冲弹出（scale 0→1.45→1 + 自旋半圈），不随主星旋转 */}
-            <path
-              d="M36 5 C36.5 8 37.5 9 40 9.5 C37.5 10 36.5 11 36 14 C35.5 11 34.5 10 32 9.5 C34.5 9 35.5 8 36 5 Z"
-              fill="oklch(0.92 0 0)"
-              style={{
-                transformBox: "fill-box",
-                transformOrigin: "center",
-                transform: drawn ? "scale(1) rotate(0deg)" : "scale(0) rotate(-180deg)",
-                transition: `transform 280ms ${BOUNCE}`,
-                transitionDelay: drawn ? "980ms" : "0ms",
-              }}
-            />
-          </svg>
-          </span>
-        </span>
-
-        {/* "A" 紧贴星辉（视觉上星辉即 AI 的图形化 A 之后的第一个字母组）：
-            这里文字部分为 "I Mode"，前面补一个 A 与星辉同组渐显。
-            perspective 让字形的 rotateX 翻转带纵深感 */}
-        <span
-          className="relative -ml-2 inline-flex whitespace-pre text-5xl font-semibold tracking-tight text-foreground sm:text-6xl"
-          style={{ perspective: "600px" }}
-        >
-          <span className="inline-block" style={glyphStyle(0)}>
-            {"AI"[0]}
-          </span>
-          {LETTERS.map((ch, i) => (
-            <span key={i} className="inline-block" style={glyphStyle(i + 1)}>
-              {ch === " " ? "\u00A0" : ch}
-            </span>
-          ))}
-
-          {/* 所有字落位后，一道斜向高光从左到右扫过全词 */}
-          {settled && !exiting && (
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-0 overflow-hidden"
-              style={{ borderRadius: 8 }}
-            >
-              <span
-                className="absolute inset-y-0 w-1/3"
-                style={{
-                  background:
-                    "linear-gradient(105deg, transparent, color-mix(in oklab, var(--primary) 30%, oklch(1 0 0 / 0.5)), transparent)",
-                  animation: `${uid}-sweep 800ms ${EASE} 720ms 1 both`,
-                }}
-              />
-            </span>
-          )}
-          <style>{`@keyframes ${uid}-sweep { from { transform: translateX(-160%); } to { transform: translateX(420%); } }`}</style>
-        </span>
-      </div>
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* 辉光层：一格一像素的低分辨率画布被拉伸 + 模糊，充当点阵的光晕并填补像素间隙 */}
+      <canvas ref={glowRef} aria-hidden className="absolute left-0 top-0" style={{ filter: "blur(10px)", opacity: 0.7 }} />
+      <canvas ref={dotsRef} aria-hidden className="absolute left-0 top-0" />
+      <span role="status" className="sr-only">
+        AI Mode 正在载入
+      </span>
     </div>
   )
 }

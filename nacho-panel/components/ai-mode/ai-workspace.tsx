@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { useReducedMotion } from "motion/react"
 import {
   Sparkles,
   Send,
@@ -35,8 +36,9 @@ import { assessInputRisk } from "./danger-lexicon"
 import { BorderBeam } from "./border-beam"
 import { useServerData } from "@/components/server-data-context"
 import { modelOptions, useAIConfig, aiConfigStore } from "@/components/settings/ai-data"
-import { useAIMode } from "./ai-mode-context"
+import { EXIT_MS, useAIMode } from "./ai-mode-context"
 import { AIIntro } from "./ai-intro"
+import { VEIL_MASK, easeInCubic, paintVeil, veilCoverRadius } from "./veil"
 
 /* ---------- 类型 ---------- */
 
@@ -167,31 +169,52 @@ const timeLabel = (ts: number) => {
   return new Date(ts).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
 }
 
-/* ---------- 入场编排：各区块按 delay 依次浮现 ---------- */
+/* ---------- 入场编排：字标燃尽处（中央）先浮现，两侧栏随后向外展开 ---------- */
+
+/** 落位曲线：前段迅速、尾段极缓，面板像被轻轻放到桌面上 */
+const SETTLE = "cubic-bezier(0.16, 1, 0.3, 1)"
+/** 幕布收拢回发源点的时长（略短于退出总时长，收拢完成后再卸载） */
+const VEIL_COLLAPSE_MS = EXIT_MS - 60
 
 function Rise({
   shown,
   exiting,
   delay,
+  from = "center",
+  reduced,
   className,
   children,
 }: {
   shown: boolean
   exiting: boolean
   delay: number
+  /** 起势方向：中栏自下方浮起，两侧栏从靠近中央的位置向外展开 */
+  from?: "center" | "left" | "right"
+  reduced: boolean
   className?: string
   children: React.ReactNode
 }) {
+  const hidden = reduced
+    ? "none"
+    : exiting
+      ? "translateY(8px) scale(0.985)"
+      : from === "left"
+        ? "translateX(20px) scale(0.97)"
+        : from === "right"
+          ? "translateX(-20px) scale(0.97)"
+          : "translateY(18px) scale(0.965)"
   return (
     <div
       className={className}
       style={{
         opacity: shown ? 1 : 0,
-        transform: shown ? "translateY(0)" : exiting ? "translateY(10px)" : "translateY(26px)",
-        filter: shown ? "blur(0px)" : "blur(10px)",
+        // 落位后回到 none：不保留 transform / filter，面板毛玻璃才能透出背后的氛围层
+        transform: shown ? "none" : hidden,
+        filter: shown || reduced ? "none" : "blur(12px)",
+        transformOrigin: from === "left" ? "100% 50%" : from === "right" ? "0% 50%" : "50% 60%",
         transition: exiting
-          ? "opacity 320ms ease-in, transform 320ms ease-in, filter 320ms ease-in"
-          : `opacity 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms, transform 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms, filter 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms`,
+          ? "opacity 300ms ease-in, transform 300ms ease-in, filter 300ms ease-in"
+          : `opacity 560ms ease-out ${delay}ms, transform 900ms ${SETTLE} ${delay}ms, filter 700ms ease-out ${delay}ms`,
       }}
     >
       {children}
@@ -203,7 +226,8 @@ function Rise({
 
 export function AIWorkspace() {
   const { clients } = useServerData()
-  const { phase, mounted, exit, introDone } = useAIMode()
+  const { phase, mounted, exit, introDone, origin } = useAIMode()
+  const reducedMotion = useReducedMotion() ?? false
   const cfg = useAIConfig()
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? "")
@@ -212,7 +236,7 @@ export function AIWorkspace() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   // 弹窗定位：菜单通过 Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
   const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
-  // 关闭时先播放退场动画，动画结束后再卸载
+  // 关闭时先播放退���动画，动画结束后再卸载
   const [menuClosing, setMenuClosing] = useState(false)
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const inputModelBtnRef = useRef<HTMLButtonElement>(null)
@@ -267,23 +291,51 @@ export function AIWorkspace() {
   // 起始帧标记：挂载后下一帧才置 shown，保证入场过渡能播放
   const [shown, setShown] = useState(false)
   useEffect(() => {
-    if (phase === "entering" || phase === "active") {
-      const raf = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
-      return () => cancelAnimationFrame(raf)
+    if (phase !== "entering" && phase !== "active") {
+      setShown(false)
+      return
     }
-    setShown(false)
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setShown(true))
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
   }, [phase])
 
-  // 暗幕起始帧：覆盖层在 dimming 阶段才挂载，首帧必须先渲染成透明，
-  // 下一帧再切到暗色目标值，background/backdrop-filter 过渡才能真正播放（否则直接黑屏）
-  const [dimReady, setDimReady] = useState(false)
+  // 每次入场重挂空态，让逐词渐显与中栏浮现同步播放（而不是在载入期间被提前播完）
+  const [revealSeq, setRevealSeq] = useState(0)
   useEffect(() => {
-    if (mounted) {
-      const raf = requestAnimationFrame(() => requestAnimationFrame(() => setDimReady(true)))
-      return () => cancelAnimationFrame(raf)
+    if (phase === "entering") setRevealSeq((n) => n + 1)
+  }, [phase])
+
+  // 幕布：AI 空间底色。入场时半径由像素涌潮逐帧写入（随波前羽化展开），退出时收拢回发源点
+  const veilRef = useRef<HTMLDivElement>(null)
+  const veilRadius = useRef(0)
+  const handleVeil = useCallback(
+    (radius: number) => {
+      veilRadius.current = radius
+      paintVeil(veilRef.current, origin, radius)
+    },
+    [origin],
+  )
+  useEffect(() => {
+    if (phase !== "exiting" || reducedMotion) return
+    const el = veilRef.current
+    if (!el) return
+    const from = Number.isFinite(veilRadius.current) ? veilRadius.current : veilCoverRadius(origin)
+    const start = performance.now()
+    let raf = 0
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / VEIL_COLLAPSE_MS)
+      handleVeil(from * (1 - easeInCubic(p)))
+      if (p < 1) raf = requestAnimationFrame(tick)
     }
-    setDimReady(false)
-  }, [mounted])
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [phase, reducedMotion, origin, handleVeil])
 
   const exiting = phase === "exiting"
 
@@ -407,7 +459,7 @@ export function AIWorkspace() {
     setInput("")
     setBusy(true)
 
-    // 逐步展示工具调用；遇到危险步骤停下等待确认
+    // 逐步���示工具调用；遇到危险步骤停下等待确认
     let delay = 700
     let blocked = false
     for (const step of steps) {
@@ -491,99 +543,81 @@ export function AIWorkspace() {
 
   const onlineCount = clients.filter((c) => c.status === "online").length
   const inIntro = phase === "intro"
-  const dimming = phase === "dimming"
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="AI Mode"
-      className="fixed inset-0 z-50"
-      style={{
-        // 铺垫阶段：暗幕先压下来（偏暗、半透明），开场阶段再提亮到接近实底——同一属性连续过渡，无跳变。
-        // dimReady 未置位时（挂载首帧）保持全透明，确保暗幕是从透明"渐"过去的
-        backgroundColor: !dimReady
-          ? "transparent"
-          : dimming
-            ? "color-mix(in oklab, oklch(0.1 0.015 150) 62%, transparent)"
-            : inIntro
-              ? "color-mix(in oklab, var(--background) 96%, transparent)"
-              : shown
-                ? "color-mix(in oklab, var(--background) 88%, transparent)"
-                : "transparent",
-        backdropFilter: !dimReady ? "blur(0px)" : dimming ? "blur(14px)" : inIntro || shown ? "blur(24px)" : "blur(0px)",
-        transition: exiting
-          ? "background-color 420ms ease-in, backdrop-filter 420ms ease-in"
-          : dimming
-            ? "background-color 850ms cubic-bezier(0.22, 1, 0.36, 1), backdrop-filter 850ms cubic-bezier(0.22, 1, 0.36, 1)"
-            : "background-color 700ms ease-out, backdrop-filter 700ms ease-out",
-      }}
-    >
-      {/* 氛围层：深空底 + 极光色斑（参考 border beam 展示页的多彩微光） */}
+    <div role="dialog" aria-modal="true" aria-label="AI Mode" className="fixed inset-0 z-50">
+      {/* 幕布：AI 空间底色，以发源点为圆心羽化展开 / 收拢（遮罩半径逐帧写入，不经 React 渲染）。
+          氛围层都放在幕布内，退出时随幕布一起收回按钮，不会在卸载瞬间跳变 */}
       <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          opacity: shown && !inIntro ? 1 : 0,
-          transition: "opacity 1000ms ease",
-          background: "color-mix(in oklab, oklch(0.09 0.012 260) 55%, transparent)",
-        }}
-      />
-      <div
+        ref={veilRef}
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"
-        style={{ opacity: shown && !inIntro ? 1 : 0, transition: "opacity 1400ms ease" }}
+        style={{
+          backgroundColor: "color-mix(in oklab, var(--background) 92%, transparent)",
+          WebkitMaskImage: VEIL_MASK,
+          maskImage: VEIL_MASK,
+          // 减少动态效果时不做圆形收拢，退出改为整体淡出
+          opacity: reducedMotion && exiting ? 0 : 1,
+          transition: reducedMotion ? "opacity 300ms ease" : undefined,
+        }}
       >
-        {/* 三团极光：蓝 / 紫 / 粉，缓慢漂移，被面板毛玻璃透出 */}
-        <span
-          className="animate-aurora absolute -top-24 left-[12%] h-80 w-[34rem] rounded-full"
+        {/* 氛围层：深空底 + 极光色斑（参考 border beam 展示页的多彩微光） */}
+        <div
+          className="absolute inset-0"
           style={{
-            background: "radial-gradient(ellipse at center, rgba(59,130,246,0.16), transparent 70%)",
-            filter: "blur(40px)",
+            opacity: shown && !inIntro ? 1 : 0,
+            transition: "opacity 1000ms ease",
+            background: "color-mix(in oklab, oklch(0.09 0.012 260) 55%, transparent)",
           }}
         />
+        <div className="absolute inset-0" style={{ opacity: shown && !inIntro ? 1 : 0, transition: "opacity 1400ms ease" }}>
+          {/* 三团极光：蓝 / 紫 / 粉，缓慢漂移，被面板毛玻璃透出 */}
+          <span
+            className="animate-aurora absolute -top-24 left-[12%] h-80 w-[34rem] rounded-full"
+            style={{
+              background: "radial-gradient(ellipse at center, rgba(59,130,246,0.16), transparent 70%)",
+              filter: "blur(40px)",
+            }}
+          />
+          <span
+            className="animate-aurora absolute -bottom-32 left-[38%] h-72 w-[40rem] rounded-full"
+            style={{
+              background: "radial-gradient(ellipse at center, rgba(168,85,247,0.13), transparent 70%)",
+              filter: "blur(48px)",
+              animationDelay: "-5s",
+            }}
+          />
+          <span
+            className="animate-aurora absolute -right-20 top-[30%] h-72 w-96 rounded-full"
+            style={{
+              background: "radial-gradient(ellipse at center, rgba(244,114,182,0.10), transparent 70%)",
+              filter: "blur(44px)",
+              animationDelay: "-9s",
+            }}
+          />
+        </div>
+
+        {/* 顶部极细能量线：极光三色 */}
         <span
-          className="animate-aurora absolute -bottom-32 left-[38%] h-72 w-[40rem] rounded-full"
+          className="absolute inset-x-0 top-0 mx-auto h-px"
           style={{
-            background: "radial-gradient(ellipse at center, rgba(168,85,247,0.13), transparent 70%)",
-            filter: "blur(48px)",
-            animationDelay: "-5s",
-          }}
-        />
-        <span
-          className="animate-aurora absolute -right-20 top-[30%] h-72 w-96 rounded-full"
-          style={{
-            background: "radial-gradient(ellipse at center, rgba(244,114,182,0.10), transparent 70%)",
-            filter: "blur(44px)",
-            animationDelay: "-9s",
+            width: shown ? "100%" : "0%",
+            opacity: shown ? 1 : 0,
+            background:
+              "linear-gradient(to right, transparent, rgba(96,165,250,0.7) 30%, rgba(167,139,250,0.7) 55%, rgba(244,114,182,0.6) 75%, transparent)",
+            transition: "width 900ms cubic-bezier(0.22,1,0.36,1) 150ms, opacity 400ms ease 150ms",
           }}
         />
       </div>
 
-      {/* 开场载入动画：铺垫（dimming）阶段就挂载，星辉的生长与画面模糊变暗重叠衔接，消除空场死区 */}
-      {(inIntro || dimming) && (
-        <div className="absolute inset-0 z-10">
-          <AIIntro onDone={introDone} />
-        </div>
-      )}
-
-      {/* 顶部极细能量线：极光三色 */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 mx-auto h-px"
-        style={{
-          width: shown ? "100%" : "0%",
-          opacity: shown ? 1 : 0,
-          background:
-            "linear-gradient(to right, transparent, rgba(96,165,250,0.7) 30%, rgba(167,139,250,0.7) 55%, rgba(244,114,182,0.6) 75%, transparent)",
-          transition: "width 900ms cubic-bezier(0.22,1,0.36,1) 150ms, opacity 400ms ease 150ms",
-        }}
-      />
+      {/* 像素涌潮：从点击处扩散铺满全屏、显影字标后燃尽；绘制在面板之下，
+          燃尽的余烬透过正在浮现的毛玻璃面板隐约可见 */}
+      {(inIntro || phase === "entering") && <AIIntro origin={origin} onVeil={handleVeil} onReveal={introDone} />}
 
       {/* 三栏布局：会话侧栏 / 对话流 / 遥测面板 */}
       <div className="relative flex h-full w-full gap-4 p-4 sm:p-5">
         {/* ===== 左栏：会话管理 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={60} className="hidden w-64 shrink-0 md:block">
+        <Rise shown={shown} exiting={exiting} delay={110} from="left" reduced={reducedMotion} className="hidden w-64 shrink-0 md:block">
           <aside className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/55 backdrop-blur-xl">
             <div className="flex items-center justify-between px-4 pb-3 pt-4">
               <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -752,7 +786,7 @@ export function AIWorkspace() {
         </Rise>
 
         {/* ===== 中栏：对话流 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={160} className="min-w-0 flex-1">
+        <Rise shown={shown} exiting={exiting} delay={0} reduced={reducedMotion} className="min-w-0 flex-1">
           <section className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/45 backdrop-blur-xl">
             {/* 面板顶栏 */}
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
@@ -795,7 +829,7 @@ export function AIWorkspace() {
             {/* 消息区 */}
             <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {messages.length === 0 ? (
-                <EmptyState onPick={run} disabled={!cfg.enabled} />
+                <EmptyState key={revealSeq} onPick={run} disabled={!cfg.enabled} />
               ) : (
                 <div className="mx-auto flex max-w-3xl flex-col gap-5 pb-2">
                   {messages.map((m) =>
@@ -1018,7 +1052,7 @@ export function AIWorkspace() {
         </Rise>
 
         {/* ===== 右栏：执行遥测 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={260} className="hidden w-64 shrink-0 xl:block">
+        <Rise shown={shown} exiting={exiting} delay={110} from="right" reduced={reducedMotion} className="hidden w-64 shrink-0 xl:block">
           <aside className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/55 backdrop-blur-xl">
             <div className="flex items-center gap-2 px-4 pb-3 pt-4">
               <Activity className="h-3.5 w-3.5 text-muted-foreground" />

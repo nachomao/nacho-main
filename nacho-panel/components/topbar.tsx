@@ -36,6 +36,7 @@ import { useLogs } from "./logs/logs-context"
 import { useOnboarding } from "./onboarding/onboarding-context"
 import { getAvatar } from "./onboarding/avatars"
 import { PixelStardust } from "./pixel-stardust"
+import type { AIModeOrigin } from "./ai-mode/ai-mode-context"
 import { useServerData } from "@/components/server-data-context"
 import Link from "next/link"
 import { WindowControls } from "./topbar/window-controls"
@@ -941,17 +942,25 @@ function ClientsActions() {
  * AI Mode 入口按钮：悬浮时按钮内浮现 LED 像素星芒（PixelStardust）。
  * 星光围绕指针聚集、随指针游走，偶有像素爆闪成白色星光——
  * 配合原有的图标旋转，营造「星尘被唤醒」的入口氛围。
+ * 点击时把指针位置作为切入动画的发源点：星芒从指针下涌出铺满全屏（键盘触发时取按钮中心）。
  */
-function AIModeButton({ onClick }: { onClick?: () => void }) {
+function AIModeButton({ onClick }: { onClick?: (origin: AIModeOrigin) => void }) {
   const [hovered, setHovered] = useState(false)
 
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect()
+        const pointer = e.detail > 0
+        onClick?.({
+          x: pointer ? e.clientX : rect.left + rect.width / 2,
+          y: pointer ? e.clientY : rect.top + rect.height / 2,
+        })
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-colors hover:border-primary/40"
+      className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-[border-color,transform] duration-200 hover:border-primary/40 active:scale-[0.97]"
     >
       {/* 悬浮像素星芒：LED 点阵随指针点亮 */}
       <PixelStardust active={hovered} />

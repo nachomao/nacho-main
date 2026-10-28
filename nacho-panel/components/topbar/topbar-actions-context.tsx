@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useServerData } from "@/components/server-data-context"
 import { AddClientDialog } from "./add-client-dialog"
 import { WebSSHDialog } from "./webssh-dialog"
-import { useAIMode } from "@/components/ai-mode/ai-mode-context"
+import { useAIMode, type AIModeOrigin } from "@/components/ai-mode/ai-mode-context"
 import { CommandPalette } from "./command-palette"
 import { NotificationsDrawer, type NoticePending } from "./notifications-drawer"
 import { FilterPopover, countActiveFilters, defaultFilters, type HomeFilters } from "./filter-popover"
@@ -28,8 +28,8 @@ type TopbarActionsContextValue = {
   /** 未读通知数 */
   unread: number
   criticalAttention: boolean
-  /** 打开 AI Mode 操作面板 */
-  openAI: () => void
+  /** 打开 AI Mode 操作面板；origin 为切入动画的发源点（视口坐标） */
+  openAI: (origin?: AIModeOrigin) => void
   onlineCount: number
   totalCount: number
 }
