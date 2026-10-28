@@ -560,9 +560,9 @@ export function AIWorkspace() {
         />
       </div>
 
-      {/* 开场载入动画：铺垫（dimming）阶段就挂载，点火扫描线与画面模糊变暗重叠衔接，消除空场死区 */}
-      {(inIntro || dimming) && (
-        <div className="absolute inset-0 z-10">
+      {/* 开场载入动画：铺垫（dimming）阶段就挂载，粒子场与画面模糊变暗重叠衔接；入场（entering）阶段继续保留，让爆发拖尾与工作台浮现重叠 */}
+      {(inIntro || dimming || phase === "entering") && (
+        <div className={`absolute inset-0 z-10${phase === "entering" ? " pointer-events-none" : ""}`}>
           <AIIntro onDone={introDone} />
         </div>
       )}
