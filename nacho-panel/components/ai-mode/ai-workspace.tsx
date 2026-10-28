@@ -407,7 +407,7 @@ export function AIWorkspace() {
     setInput("")
     setBusy(true)
 
-    // 逐步展示工具调用；遇到危险步骤停下等待确认
+    // 逐步���示工具调用；遇到危险步骤停下等待确认
     let delay = 700
     let blocked = false
     for (const step of steps) {
@@ -560,7 +560,7 @@ export function AIWorkspace() {
         />
       </div>
 
-      {/* 开场载入动画：铺垫（dimming）阶段就挂载，粒子场与画面模糊变暗重叠衔接；入场（entering）阶段继续保留，让爆发拖尾与工作台浮现重叠 */}
+      {/* 开场载入动画：铺垫（dimming）阶段就挂载，与画面模糊变暗重叠衔接；入场（entering）阶段继续保留，让标识淡出与工作台浮现重叠 */}
       {(inIntro || dimming || phase === "entering") && (
         <div className={`absolute inset-0 z-10${phase === "entering" ? " pointer-events-none" : ""}`}>
           <AIIntro onDone={introDone} />
@@ -1034,7 +1034,7 @@ export function AIWorkspace() {
               <TelemetryStat label="会话数" value={sessions.length} Icon={History} />
             </div>
 
-            {/* 最近调用流 */}
+            {/* 最近调用��� */}
             <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-border px-3 pt-3">
               <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">最近调用</p>
               {telemetry.recent.length === 0 ? (
@@ -1123,7 +1123,7 @@ function TelemetryStat({
   )
 }
 
-/* ---------- 空态：欢迎语 + 建议指令 ---------- */
+/* ---------- 空态：欢���语 + 建议指令 ---------- */
 
 function EmptyState({ onPick, disabled }: { onPick: (t: string) => void; disabled: boolean }) {
   return (
