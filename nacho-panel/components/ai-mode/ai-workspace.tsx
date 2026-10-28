@@ -236,7 +236,7 @@ export function AIWorkspace() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   // 弹窗定位：菜单通过 Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
   const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
-  // 关闭时先播放退���动画，动画结束后再卸载
+  // 关闭时先播放退场动画，动画结束后再卸载
   const [menuClosing, setMenuClosing] = useState(false)
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const inputModelBtnRef = useRef<HTMLButtonElement>(null)
@@ -459,7 +459,7 @@ export function AIWorkspace() {
     setInput("")
     setBusy(true)
 
-    // 逐步���示工具调用；遇到危险步骤停下等待确认
+    // 逐步展示工具调用；遇到危险步骤停下等待确认
     let delay = 700
     let blocked = false
     for (const step of steps) {
