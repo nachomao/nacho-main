@@ -162,17 +162,20 @@ export function AIIntro({
     glow.style.width = `${cols * cell}px`
     glow.style.height = `${rows * cell}px`
 
+    // 像素图案：必须先画好单元再 createPattern——图案在创建时就拷贝了画布内容
     const tile = document.createElement("canvas")
     tile.width = tile.height = pitch
     const tctx = tile.getContext("2d")
+    if (tctx) {
+      const inset = Math.floor((pitch - dot) / 2)
+      tctx.fillStyle = "#fff"
+      tctx.fillRect(inset, inset, dot, dot)
+    }
     const pattern = tctx && dctx.createPattern(tile, "repeat")
-    if (!tctx || !pattern) {
+    if (!pattern) {
       skip()
       return
     }
-    const inset = Math.floor((pitch - dot) / 2)
-    tctx.fillStyle = "#fff"
-    tctx.fillRect(inset, inset, dot, dot)
 
     // 每格的波前到达距离（含抖动）、到达时刻、闪烁相位与燃尽次序
     const n = cols * rows
