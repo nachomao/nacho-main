@@ -560,7 +560,7 @@ export function AIWorkspace() {
         />
       </div>
 
-      {/* 开场载入动画：铺垫（dimming）阶段就挂载，星辉的生长与画面模糊变暗重叠衔接，消除空场死区 */}
+      {/* 开场载入动画：铺垫（dimming）阶段就挂载，点火扫描线与画面模糊变暗重叠衔接，消除空场死区 */}
       {(inIntro || dimming) && (
         <div className="absolute inset-0 z-10">
           <AIIntro onDone={introDone} />
