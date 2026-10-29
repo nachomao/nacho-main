@@ -1,5 +1,8 @@
 "use client"
 
+import { isReducedMotion } from "@/lib/motion-preference"
+
+
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -55,7 +58,7 @@ function InstallationOutputLine({ chunk }: { chunk: InstallationOutputChunk }) {
     const element = lineRef.current
     if (!element) return
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const reducedMotion = isReducedMotion()
     const animation = element.animate(
       reducedMotion
         ? [{ opacity: 0.55 }, { opacity: 1 }]
@@ -97,12 +100,11 @@ export function InstallationConsole({
   const [reducedMotion, setReducedMotion] = useState(false)
 
   useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
-    const updateMotionPreference = () => setReducedMotion(media.matches)
-
+    const updateMotionPreference = () => setReducedMotion(isReducedMotion())
     updateMotionPreference()
-    media.addEventListener("change", updateMotionPreference)
-    return () => media.removeEventListener("change", updateMotionPreference)
+    const observer = new MutationObserver(updateMotionPreference)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-reduce-motion"] })
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {

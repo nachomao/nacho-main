@@ -21,10 +21,10 @@ import {
   type NotificationExportFormat,
 } from "./local-settings-schema"
 
-const TOP_LEVEL_PATCH_KEYS = new Set(["profile", "theme", "onboardingCompleted", "notificationCenter"])
+const TOP_LEVEL_PATCH_KEYS = new Set(["profile", "theme", "reduceMotion", "onboardingCompleted", "notificationCenter"])
 const PROFILE_PATCH_KEYS = new Set(["userName", "avatarId", "customAvatar"])
 const NOTIFICATION_CENTER_PATCH_KEYS = new Set(["maxItems", "retentionDays", "autoPurge", "defaultSnoozeMinutes", "autoExport", "exportFormat", "showCriticalAsToast"])
-const STORED_KEYS = new Set(["version", "legacyMigrationVersion", "profile", "theme", "onboardingCompleted", "notificationCenter"])
+const STORED_KEYS = new Set(["version", "legacyMigrationVersion", "profile", "theme", "reduceMotion", "onboardingCompleted", "notificationCenter"])
 const LEGACY_AVATAR_IDS = new Set(["cat", "ghost", "bird", "rabbit", "fish", "bot"])
 
 export class LocalSettingsValidationError extends Error {}
@@ -150,6 +150,7 @@ export function validateStoredSettings(value: unknown): LocalSettings {
     legacyMigrationVersion: Number(value.legacyMigrationVersion),
     profile: validateProfile(value.profile),
     theme: validateTheme(value.theme),
+    reduceMotion: typeof value.reduceMotion === "boolean" ? value.reduceMotion : false,
     onboardingCompleted: value.onboardingCompleted,
     notificationCenter: validateNotificationCenter({ ...defaultLocalSettings().notificationCenter, ...(isRecord(value.notificationCenter) ? value.notificationCenter : {}) }),
   }
@@ -172,6 +173,12 @@ export function validateSettingsPatch(value: unknown): LocalSettingsPatch {
     patch.profile = profile
   }
   if (Object.hasOwn(value, "theme")) patch.theme = validateTheme(value.theme)
+  if (Object.hasOwn(value, "reduceMotion")) {
+    if (typeof value.reduceMotion !== "boolean") {
+      throw new LocalSettingsValidationError("reduceMotion 必须是布尔值")
+    }
+    patch.reduceMotion = value.reduceMotion
+  }
   if (Object.hasOwn(value, "onboardingCompleted")) {
     if (typeof value.onboardingCompleted !== "boolean") {
       throw new LocalSettingsValidationError("onboardingCompleted 必须是布尔值")
@@ -223,6 +230,7 @@ function mergeSettings(current: LocalSettings, patch: LocalSettingsPatch): Local
     ...current,
     legacyMigrationVersion: hasUserPatch ? 1 : current.legacyMigrationVersion,
     ...(patch.theme ? { theme: patch.theme } : {}),
+    ...(typeof patch.reduceMotion === "boolean" ? { reduceMotion: patch.reduceMotion } : {}),
     ...(typeof patch.onboardingCompleted === "boolean"
       ? { onboardingCompleted: patch.onboardingCompleted }
       : {}),

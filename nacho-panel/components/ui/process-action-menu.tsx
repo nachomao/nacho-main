@@ -1,5 +1,8 @@
 "use client"
 
+import { isReducedMotion } from "@/lib/motion-preference"
+
+
 import { useEffect, useState, type ReactElement } from "react"
 import { ContextMenu } from "@base-ui/react/context-menu"
 import { Menu } from "@base-ui/react/menu"
@@ -39,11 +42,11 @@ function useTerminateMorph(onConfirm: () => void) {
   const [reducedMotion, setReducedMotion] = useState(false)
 
   useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
-    const update = () => setReducedMotion(media.matches)
+    const update = () => setReducedMotion(isReducedMotion())
     update()
-    media.addEventListener("change", update)
-    return () => media.removeEventListener("change", update)
+    const observer = new MutationObserver(update)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-reduce-motion"] })
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {

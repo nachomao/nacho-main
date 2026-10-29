@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { isReducedMotion } from "@/lib/motion-preference"
 import {
   AI_MODE_TIMING,
   OPTICAL_CARD_INITIAL_SIZE,
@@ -105,6 +106,10 @@ export function AIIntro({
 
   useEffect(() => {
     mountedAtRef.current = Date.now()
+    if (isReducedMotion()) {
+      const tDirect = window.setTimeout(() => triggerHandoff(), 50)
+      return () => window.clearTimeout(tDirect)
+    }
     const start = performance.now()
     stageBirthRef.current = start
     let rafId = 0

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { Mesh, Program, Renderer, Triangle, Vec3 } from 'ogl'
 
 import { isForegroundMotionActive } from '@/lib/foreground-motion'
+import { isReducedMotion } from '@/lib/motion-preference'
 import './orb.css'
 
 type OrbProps = {
@@ -90,6 +91,7 @@ export function Orb({
       // 前台过渡（卡片展开、抽屉滑入）播放期间不出帧：全幅画布每帧改写会迫使合成器重绘
       // 所有覆盖图层与 backdrop-filter，与过渡争抢帧预算。时钟一并暂停，恢复时画面不跳变。
       if (isForegroundMotionActive()) return
+      if (isReducedMotion()) return
       elapsed += dt
       uniforms.iTime.value = elapsed
       const activeHover = forceHoverState ? 1 : targetHover

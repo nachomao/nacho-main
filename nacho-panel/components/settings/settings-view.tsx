@@ -42,10 +42,14 @@ export function SettingsView() {
 
   const switchTab = (next: TabId) => {
     if (next === tab) return
-    const from = tabs.findIndex((t) => t.id === tab)
-    const to = tabs.findIndex((t) => t.id === next)
-    // 药丸右移 → 新内容从右侧滑入；左移 → 从左侧滑入，与滑块同向
-    setEnterAnim(to > from ? "animate-slide-in-right" : "animate-slide-in-left")
+    if (local.settings.reduceMotion) {
+      setEnterAnim("")
+    } else {
+      const from = tabs.findIndex((t) => t.id === tab)
+      const to = tabs.findIndex((t) => t.id === next)
+      // 药丸右移 → 新内容从右侧滑入；左移 → 从左侧滑入，与滑块同向
+      setEnterAnim(to > from ? "animate-slide-in-right" : "animate-slide-in-left")
+    }
     setTab(next)
   }
   const [saved, setSaved] = useState<SettingsState>(defaultSettings)

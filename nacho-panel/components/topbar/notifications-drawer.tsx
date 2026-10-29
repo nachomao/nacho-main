@@ -6,6 +6,7 @@ import { DrawerShell, OverlayHeader } from "./overlay"
 import { cn } from "@/lib/utils"
 import { nextNotificationDayNine, notificationCopyText } from "@/lib/notification-state"
 import { playNotificationAnimation } from "@/lib/notification-animation"
+import { isReducedMotion } from "@/lib/motion-preference"
 
 type NoticeItem = {
   id: string
@@ -190,7 +191,7 @@ function NotificationCard({
     const from = previousHeight.current
     previousHeight.current = null
     if (!card || from === null) return
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const reducedMotion = isReducedMotion()
     const to = card.getBoundingClientRect().height
     const cleanups = [
       playNotificationAnimation(
@@ -354,7 +355,7 @@ function NotificationStack({
     // 父级切换目标时先采集旧布局，下一次提交才播放新布局，轮询不能清理正在播放的动画。
     if (!snapshot || !container || expanded !== requestedExpanded) return
     layoutSnapshot.current = null
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    const reducedMotion = isReducedMotion()
     const nextHeight = container.getBoundingClientRect().height
     const destinations = items.flatMap((item, index) => {
       const card = cardRefs.current.get(item.id)

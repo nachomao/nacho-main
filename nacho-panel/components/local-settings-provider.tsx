@@ -49,6 +49,7 @@ function mergeClientSettings(current: LocalSettings, patch: LocalSettingsPatch):
   return {
     ...current,
     ...(patch.theme ? { theme: patch.theme } : {}),
+    ...(typeof patch.reduceMotion === "boolean" ? { reduceMotion: patch.reduceMotion } : {}),
     ...(typeof patch.onboardingCompleted === "boolean"
       ? { onboardingCompleted: patch.onboardingCompleted }
       : {}),
@@ -103,6 +104,16 @@ export function LocalSettingsProvider({
   const [hydrated, setHydrated] = useState(false)
   const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const mutationRevision = useRef(0)
+
+  // 同步削弱动效属性到 <html> 元素上，实现无刷新的实时全局生效
+  useEffect(() => {
+    const root = document.documentElement
+    if (settings.reduceMotion) {
+      root.setAttribute("data-reduce-motion", "true")
+    } else {
+      root.removeAttribute("data-reduce-motion")
+    }
+  }, [settings.reduceMotion])
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/local-settings", { cache: "no-store" })

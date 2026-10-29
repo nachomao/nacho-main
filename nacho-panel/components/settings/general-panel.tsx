@@ -1,8 +1,9 @@
 "use client"
 
-import { Gauge, Timer, TerminalSquare, Archive, Database } from "lucide-react"
+import { Gauge, Timer, Archive, Database } from "lucide-react"
 import { SettingCard, SettingRow, NumberStepper, Toggle } from "./primitives"
 import { AppearanceCard } from "./appearance-card"
+import { MotionCard } from "./motion-card"
 import type { GeneralSettings } from "./settings-data"
 
 export function GeneralPanel({
@@ -16,6 +17,9 @@ export function GeneralPanel({
     <div className="flex flex-col gap-4">
       {/* 外观主题 */}
       <AppearanceCard />
+
+      {/* 削弱动画效果 */}
+      <MotionCard />
 
       {/* 并发与超时 */}
       <SettingCard

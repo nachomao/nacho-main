@@ -41,11 +41,13 @@ export default async function RootLayout({
 }>) {
   const localSettings = await readLocalSettings()
   const theme = localSettings.settings.theme
+  const reduceMotion = localSettings.settings.reduceMotion
 
   return (
     <html
       lang="zh-CN"
       data-theme={theme === 'blue' ? undefined : theme}
+      data-reduce-motion={reduceMotion ? 'true' : undefined}
       className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} bg-background`}
       style={{ height: '100%', overflow: 'hidden' }}
       suppressHydrationWarning

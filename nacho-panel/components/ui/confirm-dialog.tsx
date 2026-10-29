@@ -1,5 +1,8 @@
 "use client"
 
+import { isReducedMotion } from "@/lib/motion-preference"
+
+
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { AlertTriangle, Info, ShieldAlert, X } from "lucide-react"
@@ -139,7 +142,7 @@ const toneStyles: Record<ConfirmTone, { icon: typeof Info; text: string; ring: s
 }
 
 function prefersReducedMotion() {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  return isReducedMotion()
 }
 
 /* ==================== 几何测量 ====================

@@ -34,6 +34,7 @@ export type LocalSettings = {
   legacyMigrationVersion: number
   profile: LocalProfileSettings
   theme: LocalThemeId
+  reduceMotion: boolean
   onboardingCompleted: boolean
   notificationCenter: NotificationCenterSettings
 }
@@ -41,6 +42,7 @@ export type LocalSettings = {
 export type LocalSettingsPatch = {
   profile?: Partial<LocalProfileSettings>
   theme?: LocalThemeId
+  reduceMotion?: boolean
   onboardingCompleted?: boolean
   notificationCenter?: Partial<NotificationCenterSettings>
 }
@@ -61,6 +63,7 @@ export function defaultLocalSettings(): LocalSettings {
       customAvatar: null,
     },
     theme: "blue",
+    reduceMotion: false,
     onboardingCompleted: false,
     notificationCenter: {
       maxItems: 500,

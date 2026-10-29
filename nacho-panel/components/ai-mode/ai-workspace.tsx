@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils"
 import { assessInputRisk } from "./danger-lexicon"
 import { BorderBeam } from "./border-beam"
+import { isReducedMotion } from "@/lib/motion-preference"
 import { useServerData } from "@/components/server-data-context"
 import { modelOptions, useAIConfig, aiConfigStore } from "@/components/settings/ai-data"
 import { useAIMode } from "./ai-mode-context"
@@ -192,12 +193,22 @@ function Rise({
   className?: string
   children: React.ReactNode
 }) {
+  const reduced = isReducedMotion()
   const motionStyle = computeWorkspaceColumnMotion(vector, shown, exiting, centerMorph)
+  const effectiveStyle = reduced
+    ? {
+        opacity: shown && !exiting ? 1 : 0,
+        transform: "none",
+        filter: "none",
+        clipPath: "none",
+        transition: "opacity 160ms ease-out",
+      }
+    : motionStyle
   return (
     <div
       data-testid={`ai-workspace-col-${vector}`}
       className={cn("will-change-transform", className)}
-      style={motionStyle}
+      style={effectiveStyle}
     >
       {children}
     </div>

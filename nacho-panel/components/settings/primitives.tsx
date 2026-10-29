@@ -18,7 +18,7 @@ export function SettingCard({
   desc?: string
   icon?: ReactNode
   action?: ReactNode
-  children: ReactNode
+  children?: ReactNode
   className?: string
 }) {
   return (
@@ -37,7 +37,7 @@ export function SettingCard({
         </div>
         {action}
       </div>
-      <div className="mt-5 flex flex-col">{children}</div>
+      {children ? <div className="mt-5 flex flex-col">{children}</div> : null}
     </section>
   )
 }

@@ -2,10 +2,10 @@
 
 import { usePathname } from "next/navigation"
 import { useLayoutEffect, useRef, type ReactNode } from "react"
+import { isReducedMotion } from "@/lib/motion-preference"
 
 const EXIT_MS = 820
 const ENTER_MS = 820
-const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
 
 /**
  * 路由级页面过渡：交叉淡入淡出（crossfade）。
@@ -19,6 +19,10 @@ const REDUCED_MOTION = "(prefers-reduced-motion: reduce)"
  * 让这个覆盖层（= 切换前的卡片）做「模糊 + 渐隐」离场；
  * 同时让容器内的真实新内容（= 切换后的卡片）做纯粹的「渐显」进场。
  * 离场结束后移除覆盖层。这样渐隐只作用于旧页面、渐显只作用于新页面。
+ *
+ * 动效偏好：
+ * 默认始终开启完整流畅的交叉淡入淡出过渡，不再受 Windows 系统开关的被动干扰；
+ * 仅当用户在面板的「系统设置」→「常规」中主动开启「削弱动画效果」时，跳过过渡即时切换。
  */
 export function PageTransition({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -37,7 +41,8 @@ export function PageTransition({ children }: { children: ReactNode }) {
     // 首次挂载或同一路由（内容更新）：不做过渡
     if (!prev || prev.path === pathname) return
 
-    const reduce = typeof window !== "undefined" && window.matchMedia(REDUCED_MOTION).matches
+    // 仅在面板主动开启削弱动画时禁用过渡，不受 Windows 系统开关被动干扰
+    const reduce = isReducedMotion()
     if (reduce) return
 
     // 用上一帧的旧内容快照构建覆盖层，叠在容器之上做离场
