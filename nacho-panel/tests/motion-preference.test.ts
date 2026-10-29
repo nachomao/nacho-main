@@ -60,9 +60,12 @@ test("全局样式包含针对 Windows 系统开关被动干扰的覆盖规则�
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?html:not\(\[data-reduce-motion='true'\]\) \.cloud-mode-panel/)
   assert.match(styles, /html:not\(\[data-reduce-motion='true'\]\) \.cloud-deploy-step/)
   assert.match(styles, /html:not\(\[data-reduce-motion='true'\]\) \.meter-fill/)
-  assert.match(styles, /html:not\(\[data-reduce-motion='true'\]\) \.motion-reduce\\:transition-none/)
+  assert.match(styles, /html:not\(\[data-reduce-motion='true'\]\) \.motion-reduce\\:transition-none \{\s*transition-property: revert !important;\s*\}/)
+  assert.match(styles, /html:not\(\[data-reduce-motion='true'\]\) \.motion-reduce\\:animate-none \{\s*animation: revert !important;\s*\}/)
 
   // 2. 主动开启削弱动画效果时全局削弱大面积运动与背景光效
+  assert.match(styles, /html\[data-reduce-motion='true'\] \.motion-reduce\\:transition-none \{\s*transition: none !important;\s*\}/)
+  assert.match(styles, /html\[data-reduce-motion='true'\] \.motion-reduce\\:animate-none \{\s*animation: none !important;\s*\}/)
   assert.match(styles, /html\[data-reduce-motion='true'\] \.cloud-mode-panel/)
   assert.match(styles, /html\[data-reduce-motion='true'\] \.orb-container \{\s*display: none !important;\s*\}/)
   assert.match(styles, /html\[data-reduce-motion='true'\] \.card-glow/)

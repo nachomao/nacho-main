@@ -915,11 +915,15 @@
   }
 
   html:not([data-reduce-motion='true']) .motion-reduce\:transition-none {
-    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, backdrop-filter !important;
+    transition-property: revert !important;
   }
 
   html:not([data-reduce-motion='true']) .motion-reduce\:animate-none {
     animation: revert !important;
+  }
+
+  html:not([data-reduce-motion='true']) .animate-spin.motion-reduce\:animate-none {
+    animation: var(--animate-spin) !important;
   }
 }
 
@@ -927,6 +931,13 @@
  * 2. 主动开启削弱动画效果（html[data-reduce-motion='true']）：
  * 全局削弱大面积运动与复杂动效，降低视觉干扰与性能消耗。
  */
+html[data-reduce-motion='true'] .motion-reduce\:transition-none {
+  transition: none !important;
+}
+
+html[data-reduce-motion='true'] .motion-reduce\:animate-none {
+  animation: none !important;
+}
 html[data-reduce-motion='true'] .cloud-mode-panel,
 html[data-reduce-motion='true'] .cloud-mode-content,
 html[data-reduce-motion='true'] .cloud-mode-transition,
