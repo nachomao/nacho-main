@@ -45,6 +45,11 @@ copyRequired(path.join(desktopDir, "src", "update-handoff.cjs"), path.join(appDi
 copyRequired(path.join(desktopDir, "src", "github-download.cjs"), path.join(appDir, "github-download.cjs"))
 copyRequired(path.join(desktopDir, "src", "panel-runner.cjs"), path.join(stagedPanelDir, "panel-runner.cjs"))
 
+if (fs.existsSync(path.join(desktopDir, "installer.nsh"))) {
+  fs.mkdirSync(path.join(desktopDir, "build"), { recursive: true })
+  fs.copyFileSync(path.join(desktopDir, "installer.nsh"), path.join(desktopDir, "build", "installer.nsh"))
+}
+
 const updateOrigin = process.env.NACHO_UPDATE_ORIGIN
 if (updateOrigin) {
   if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(updateOrigin)) throw new Error("更新服务器必须为无尾斜杠的 HTTPS 根地址")
