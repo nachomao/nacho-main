@@ -144,3 +144,56 @@ test("notificationCenter rejects invalid ranges", async () => {
     LocalSettingsValidationError,
   )
 })
+
+test("persisted settings tolerate unknown fields for forward compatibility without corrupting or resetting onboarding", async () => {
+  const futureSettings = {
+    ...defaultLocalSettings(),
+    onboardingCompleted: true,
+    futureFeatureFlag: true,
+    futureNestedConfig: { autoOptimize: true },
+    profile: {
+      ...defaultLocalSettings().profile,
+      userName: "ForwardCompatibleUser",
+      futureBio: "Hello from future",
+    },
+    notificationCenter: {
+      ...defaultLocalSettings().notificationCenter,
+      futureChannel: "webhook",
+    },
+  }
+  const corruptCountBefore = (await readdir(temporaryDirectory)).filter((name) => name.startsWith("panel-settings.json.corrupt-")).length
+  await writeFile(getLocalSettingsPath(), JSON.stringify(futureSettings, null, 2), "utf8")
+
+  const snapshot = await readLocalSettings()
+  const corruptCountAfter = (await readdir(temporaryDirectory)).filter((name) => name.startsWith("panel-settings.json.corrupt-")).length
+  assert.equal(corruptCountAfter, corruptCountBefore)
+  assert.equal(snapshot.recovered, false)
+  assert.equal(snapshot.exists, true)
+  assert.equal(snapshot.settings.onboardingCompleted, true)
+  assert.equal(snapshot.settings.profile.userName, "ForwardCompatibleUser")
+
+  const namesBefore = await readdir(temporaryDirectory)
+  assert.equal(snapshot.recovered, false)
+})
+
+test("getLocalSettingsPath isolates development environment to NachoPanel-dev", () => {
+  const env = process.env as Record<string, string | undefined>
+  const savedPath = env.NACHO_PANEL_SETTINGS_PATH
+  const savedNodeEnv = env.NODE_ENV
+  try {
+    delete env.NACHO_PANEL_SETTINGS_PATH
+
+    env.NODE_ENV = "development"
+    const devPath = getLocalSettingsPath()
+    assert.ok(devPath.includes("NachoPanel-dev"))
+
+    env.NODE_ENV = "production"
+    const prodPath = getLocalSettingsPath()
+    assert.ok(prodPath.includes("NachoPanel"))
+    assert.ok(!prodPath.includes("NachoPanel-dev"))
+  } finally {
+    if (savedPath !== undefined) env.NACHO_PANEL_SETTINGS_PATH = savedPath
+    if (savedNodeEnv !== undefined) env.NODE_ENV = savedNodeEnv
+    else delete env.NODE_ENV
+  }
+})

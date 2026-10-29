@@ -133,26 +133,80 @@ function validateProfile(value: unknown): LocalProfileSettings {
   return profile
 }
 
+function validateStoredProfile(value: unknown): LocalProfileSettings {
+  const defaults = defaultLocalSettings().profile
+  if (!isRecord(value)) return defaults
+  let userName = defaults.userName
+  try {
+    if (typeof value.userName === "string" && value.userName.trim()) {
+      userName = validateUserName(value.userName)
+    }
+  } catch {}
+  let avatarId = defaults.avatarId
+  try {
+    avatarId = validateStoredAvatarId(value.avatarId)
+  } catch {}
+  let customAvatar: string | null = null
+  try {
+    customAvatar = validateCustomAvatar(value.customAvatar)
+  } catch {}
+  if (avatarId === "custom" && !customAvatar) {
+    avatarId = "heart"
+  }
+  return { userName, avatarId, customAvatar }
+}
+
+function validateStoredNotificationCenter(value: unknown): NotificationCenterSettings {
+  const defaults = defaultLocalSettings().notificationCenter
+  if (!isRecord(value)) return defaults
+  const maxItems = typeof value.maxItems === "number" && Number.isInteger(value.maxItems) && value.maxItems >= 100 && value.maxItems <= 1000
+    ? value.maxItems : defaults.maxItems
+  const retentionDays = typeof value.retentionDays === "number" && Number.isInteger(value.retentionDays) && value.retentionDays >= 1 && value.retentionDays <= 90
+    ? value.retentionDays : defaults.retentionDays
+  const autoPurge = typeof value.autoPurge === "boolean" ? value.autoPurge : defaults.autoPurge
+  const defaultSnoozeMinutes = typeof value.defaultSnoozeMinutes === "number" && Number.isInteger(value.defaultSnoozeMinutes) && value.defaultSnoozeMinutes >= 1 && value.defaultSnoozeMinutes <= 1440
+    ? value.defaultSnoozeMinutes : defaults.defaultSnoozeMinutes
+  const autoExport = typeof value.autoExport === "boolean" ? value.autoExport : defaults.autoExport
+  const showCriticalAsToast = typeof value.showCriticalAsToast === "boolean" ? value.showCriticalAsToast : defaults.showCriticalAsToast
+  const exportFormat = typeof value.exportFormat === "string" && NOTIFICATION_EXPORT_FORMATS.includes(value.exportFormat as NotificationExportFormat)
+    ? value.exportFormat as NotificationExportFormat : defaults.exportFormat
+
+  return {
+    maxItems,
+    retentionDays,
+    autoPurge,
+    defaultSnoozeMinutes,
+    autoExport,
+    exportFormat,
+    showCriticalAsToast,
+  }
+}
+
 export function validateStoredSettings(value: unknown): LocalSettings {
   if (!isRecord(value)) throw new LocalSettingsValidationError("本地设置必须是对象")
-  assertOnlyKeys(value, STORED_KEYS, "本地设置")
+  // 保持前向兼容性：磁盘存储不强制白名单断言，容忍未来版本新增字段，避免版本回退或升级时误判为损坏
   if (value.version !== LOCAL_SETTINGS_VERSION) {
     throw new LocalSettingsValidationError("本地设置版本不受支持")
   }
-  if (!Number.isInteger(value.legacyMigrationVersion) || Number(value.legacyMigrationVersion) < 0) {
-    throw new LocalSettingsValidationError("legacyMigrationVersion 必须是非负整数")
-  }
-  if (typeof value.onboardingCompleted !== "boolean") {
-    throw new LocalSettingsValidationError("onboardingCompleted 必须是布尔值")
-  }
+  const legacyMigrationVersion = Number.isInteger(value.legacyMigrationVersion) && Number(value.legacyMigrationVersion) >= 0
+    ? Number(value.legacyMigrationVersion)
+    : 0
+  const onboardingCompleted = typeof value.onboardingCompleted === "boolean"
+    ? value.onboardingCompleted
+    : false
+  const theme = typeof value.theme === "string" && LOCAL_THEME_IDS.includes(value.theme as LocalThemeId)
+    ? value.theme as LocalThemeId
+    : "blue"
+  const reduceMotion = typeof value.reduceMotion === "boolean" ? value.reduceMotion : false
+
   return {
     version: LOCAL_SETTINGS_VERSION,
-    legacyMigrationVersion: Number(value.legacyMigrationVersion),
-    profile: validateProfile(value.profile),
-    theme: validateTheme(value.theme),
-    reduceMotion: typeof value.reduceMotion === "boolean" ? value.reduceMotion : false,
-    onboardingCompleted: value.onboardingCompleted,
-    notificationCenter: validateNotificationCenter({ ...defaultLocalSettings().notificationCenter, ...(isRecord(value.notificationCenter) ? value.notificationCenter : {}) }),
+    legacyMigrationVersion,
+    profile: validateStoredProfile(value.profile),
+    theme,
+    reduceMotion,
+    onboardingCompleted,
+    notificationCenter: validateStoredNotificationCenter(value.notificationCenter),
   }
 }
 
@@ -243,6 +297,9 @@ function mergeSettings(current: LocalSettings, patch: LocalSettingsPatch): Local
       ...patch.notificationCenter,
     },
   }
+  if (merged.profile.avatarId === "custom" && !merged.profile.customAvatar) {
+    throw new LocalSettingsValidationError("使用自定义头像时必须提供头像数据")
+  }
   return validateStoredSettings(merged)
 }
 
@@ -250,8 +307,9 @@ export function getLocalSettingsPath() {
   if (process.env.NACHO_PANEL_SETTINGS_PATH) {
     return path.resolve(/*turbopackIgnore: true*/ process.env.NACHO_PANEL_SETTINGS_PATH)
   }
+  const isDev = process.env.NODE_ENV !== "production"
   const localAppData = process.env.LOCALAPPDATA || path.join(/*turbopackIgnore: true*/ os.homedir(), "AppData", "Local")
-  return path.join(localAppData, "NachoPanel", "panel-settings.json")
+  return path.join(localAppData, isDev ? "NachoPanel-dev" : "NachoPanel", "panel-settings.json")
 }
 
 async function pathExists(filePath: string) {
