@@ -942,20 +942,20 @@ function ClientsActions() {
  * 星光围绕指针聚集、随指针游走，偶有像素爆闪成白色星光——
  * 配合原有的图标旋转，营造「星尘被唤醒」的入口氛围。
  */
-function AIModeButton({ onClick }: { onClick?: () => void }) {
+function AIModeButton({ onClick }: { onClick?: (trigger?: HTMLElement | React.MouseEvent<HTMLElement>) => void }) {
   const [hovered, setHovered] = useState(false)
 
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => onClick?.(e.currentTarget)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-colors hover:border-primary/40"
+      className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-all duration-300 hover:border-primary/45 hover:shadow-[0_0_24px_-8px_var(--primary)] active:scale-95"
     >
       {/* 悬浮像素星芒：LED 点阵随指针点亮 */}
       <PixelStardust active={hovered} />
-      <Dna className="relative h-4.5 w-4.5 text-primary transition-transform duration-300 group-hover:rotate-12" />
+      <Dna className="relative h-4.5 w-4.5 text-primary transition-transform duration-500 ease-out group-hover:rotate-90 group-active:rotate-180" />
       <span className="relative whitespace-nowrap text-sm font-medium">AI Mode</span>
     </button>
   )

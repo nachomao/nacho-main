@@ -37,6 +37,14 @@ import { useServerData } from "@/components/server-data-context"
 import { modelOptions, useAIConfig, aiConfigStore } from "@/components/settings/ai-data"
 import { useAIMode } from "./ai-mode-context"
 import { AIIntro } from "./ai-intro"
+import {
+  AI_MODE_TIMING,
+  computeCenterCardMorphTarget,
+  computeCenterContentBlurMotion,
+  computeCenterZoneBlurMotion,
+  computeWorkspaceColumnMotion,
+  type CenterCardMorphTarget,
+} from "@/lib/ai-mode-transition"
 
 /* ---------- 类型 ---------- */
 
@@ -167,32 +175,29 @@ const timeLabel = (ts: number) => {
   return new Date(ts).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })
 }
 
-/* ---------- 入场编排：各区块按 delay 依次浮现 ---------- */
+/* ---------- 空间入场编排：中栏自核心光门破茧浮现，左右双翼向外展开 ---------- */
 
 function Rise({
+  vector,
   shown,
   exiting,
-  delay,
+  centerMorph,
   className,
   children,
 }: {
+  vector: "left" | "center" | "right"
   shown: boolean
   exiting: boolean
-  delay: number
+  centerMorph?: Pick<CenterCardMorphTarget, "insetX" | "insetY">
   className?: string
   children: React.ReactNode
 }) {
+  const motionStyle = computeWorkspaceColumnMotion(vector, shown, exiting, centerMorph)
   return (
     <div
-      className={className}
-      style={{
-        opacity: shown ? 1 : 0,
-        transform: shown ? "translateY(0)" : exiting ? "translateY(10px)" : "translateY(26px)",
-        filter: shown ? "blur(0px)" : "blur(10px)",
-        transition: exiting
-          ? "opacity 320ms ease-in, transform 320ms ease-in, filter 320ms ease-in"
-          : `opacity 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms, transform 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms, filter 640ms cubic-bezier(0.22,1,0.36,1) ${delay}ms`,
-      }}
+      data-testid={`ai-workspace-col-${vector}`}
+      className={cn("will-change-transform", className)}
+      style={motionStyle}
     >
       {children}
     </div>
@@ -203,7 +208,7 @@ function Rise({
 
 export function AIWorkspace() {
   const { clients } = useServerData()
-  const { phase, mounted, exit, introDone } = useAIMode()
+  const { phase, mounted, origin, exit, introDone } = useAIMode()
   const cfg = useAIConfig()
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? "")
@@ -241,7 +246,29 @@ export function AIWorkspace() {
   }
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const centerSectionRef = useRef<HTMLElement>(null)
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const [centerMorph, setCenterMorph] = useState<CenterCardMorphTarget>(() =>
+    computeCenterCardMorphTarget(
+      typeof window !== "undefined" ? { width: window.innerWidth, height: window.innerHeight } : null,
+    ),
+  )
+
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return
+    const updateMorph = () => {
+      const rect = centerSectionRef.current?.getBoundingClientRect() ?? null
+      setCenterMorph(
+        computeCenterCardMorphTarget(
+          { width: window.innerWidth, height: window.innerHeight },
+          rect && rect.width > 0 && rect.height > 0 ? rect : null,
+        ),
+      )
+    }
+    updateMorph()
+    window.addEventListener("resize", updateMorph)
+    return () => window.removeEventListener("resize", updateMorph)
+  }, [mounted])
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
   const messages = active?.messages ?? []
@@ -264,26 +291,80 @@ export function AIWorkspace() {
   const glowRisk: "safe" | "warn" | "danger" =
     inputRisk === "danger" || execRisk === "danger" ? "danger" : inputRisk === "warn" || execRisk === "warn" ? "warn" : "safe"
 
-  // 起始帧标记：挂载后下一帧才置 shown，保证入场过渡能播放
-  const [shown, setShown] = useState(false)
-  useEffect(() => {
-    if (phase === "entering" || phase === "active") {
-      const raf = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
-      return () => cancelAnimationFrame(raf)
-    }
-    setShown(false)
-  }, [phase])
+  const workspaceEntered = phase === "entering" || phase === "active"
 
-  // 暗幕起始帧：覆盖层在 dimming 阶段才挂载，首帧必须先渲染成透明，
-  // 下一帧再切到暗色目标值，background/backdrop-filter 过渡才能真正播放（否则直接黑屏）
+  // 暗幕与初始几何帧就绪标记：挂载后 16ms 置为 true；因为 intro 阶段已提前挂载 1120ms，
+  // 当 intro -> entering 切换时无需再次延迟 16ms，直接与 AIIntro.portalActive 同帧零延迟启动扩展！
   const [dimReady, setDimReady] = useState(false)
   useEffect(() => {
     if (mounted) {
-      const raf = requestAnimationFrame(() => requestAnimationFrame(() => setDimReady(true)))
-      return () => cancelAnimationFrame(raf)
+      const t = window.setTimeout(() => setDimReady(true), 16)
+      return () => window.clearTimeout(t)
     }
     setDimReady(false)
   }, [mounted])
+
+  const shown = workspaceEntered && dimReady
+
+  // 空间门重叠交接：entering 开始后的前 PORTAL_OVERLAP_MS 毫秒继续保留 AIIntro，
+  // 使其扩张的卡片外框与中间主卡片无缝对齐并在完全展开后平滑隐退
+  const [portalOverlap, setPortalOverlap] = useState(false)
+  const workspaceRootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (phase === "intro" || phase === "dimming") {
+      setPortalOverlap(true)
+      return
+    }
+    if (phase === "entering") {
+      setPortalOverlap(true)
+      const t = window.setTimeout(() => setPortalOverlap(false), AI_MODE_TIMING.PORTAL_OVERLAP_MS)
+      return () => window.clearTimeout(t)
+    }
+    setPortalOverlap(false)
+  }, [phase])
+
+  // 仅在无头自动化环境（navigator.webdriver）下补偿软件光栅化时间轴，真机浏览器完全交由原生 GPU 合成器以 60/120fps 运行
+  useEffect(() => {
+    if (phase !== "entering" && phase !== "exiting") return
+    const isWebDriver = typeof navigator !== "undefined" && navigator.webdriver === true
+    if (!isWebDriver) return
+    let rafId = 0
+    const animBirthMap = new WeakMap<Animation, number>()
+    const sync = (now: number) => {
+      const root = workspaceRootRef.current
+      if (root && typeof root.getAnimations === "function") {
+        for (const anim of root.getAnimations({ subtree: true })) {
+          const timing = anim.effect?.getTiming()
+          if (timing?.iterations === Infinity) continue
+          let birth = animBirthMap.get(anim)
+          if (birth === undefined) {
+            const initialCur = typeof anim.currentTime === "number" ? anim.currentTime : 0
+            birth = now - Math.max(0, initialCur)
+            animBirthMap.set(anim, birth)
+          }
+          const elapsed = Math.max(0, now - birth)
+          const cur = anim.currentTime
+          if (cur === null || (typeof cur === "number" && cur < elapsed - 24)) {
+            try {
+              anim.currentTime = elapsed
+            } catch {
+              // 忽略只读时间轴异常
+            }
+          }
+        }
+      }
+    }
+    const loop = (now: number) => {
+      sync(now)
+      rafId = window.requestAnimationFrame(loop)
+    }
+    rafId = window.requestAnimationFrame(loop)
+    const intervalId = window.setInterval(() => sync(performance.now()), 16)
+    return () => {
+      window.cancelAnimationFrame(rafId)
+      window.clearInterval(intervalId)
+    }
+  }, [phase])
 
   const exiting = phase === "exiting"
 
@@ -495,38 +576,35 @@ export function AIWorkspace() {
 
   return (
     <div
+      ref={workspaceRootRef}
       role="dialog"
       aria-modal="true"
       aria-label="AI Mode"
       className="fixed inset-0 z-50"
       style={{
-        // 铺垫阶段：暗幕先压下来（偏暗、半透明），开场阶段再提亮到接近实底——同一属性连续过渡，无跳变。
-        // dimReady 未置位时（挂载首帧）保持全透明，确保暗幕是从透明"渐"过去的
-        backgroundColor: !dimReady
-          ? "transparent"
+        // 铺垫与开场阶段：暗幕从透明平滑压暗至深空底并保持到工作台阶段，仅在退出时还原透明
+        backgroundColor: !dimReady || exiting
+          ? "rgba(8, 10, 16, 0)"
           : dimming
-            ? "color-mix(in oklab, oklch(0.1 0.015 150) 62%, transparent)"
+            ? "rgba(8, 10, 16, 0.72)"
             : inIntro
-              ? "color-mix(in oklab, var(--background) 96%, transparent)"
-              : shown
-                ? "color-mix(in oklab, var(--background) 88%, transparent)"
-                : "transparent",
-        backdropFilter: !dimReady ? "blur(0px)" : dimming ? "blur(14px)" : inIntro || shown ? "blur(24px)" : "blur(0px)",
+              ? "rgba(8, 10, 16, 0.92)"
+              : workspaceEntered
+                ? "rgba(8, 10, 16, 0.88)"
+                : "rgba(8, 10, 16, 0)",
         transition: exiting
-          ? "background-color 420ms ease-in, backdrop-filter 420ms ease-in"
-          : dimming
-            ? "background-color 850ms cubic-bezier(0.22, 1, 0.36, 1), backdrop-filter 850ms cubic-bezier(0.22, 1, 0.36, 1)"
-            : "background-color 700ms ease-out, backdrop-filter 700ms ease-out",
+          ? "background-color 380ms ease-in"
+          : "background-color 420ms cubic-bezier(0.16, 1, 0.3, 1)",
       }}
     >
-      {/* 氛围层：深空底 + 极光色斑（参考 border beam 展示页的多彩微光） */}
+      {/* 氛围层：暗房曜石黑底 + 克制冷钛银/冰蓝环境漫反射 */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
         style={{
           opacity: shown && !inIntro ? 1 : 0,
           transition: "opacity 1000ms ease",
-          background: "color-mix(in oklab, oklch(0.09 0.012 260) 55%, transparent)",
+          background: "color-mix(in oklab, oklch(0.09 0.01 255) 62%, transparent)",
         }}
       />
       <div
@@ -534,18 +612,18 @@ export function AIWorkspace() {
         className="pointer-events-none absolute inset-0 overflow-hidden"
         style={{ opacity: shown && !inIntro ? 1 : 0, transition: "opacity 1400ms ease" }}
       >
-        {/* 三团极光：蓝 / 紫 / 粉，缓慢漂移，被面板毛玻璃透出 */}
+        {/* 克制的三处暗房环境冷光：冰蓝 / 钛银 / 冷灰蓝，避免霓虹感 */}
         <span
-          className="animate-aurora absolute -top-24 left-[12%] h-80 w-[34rem] rounded-full"
+          className="animate-aurora absolute -top-24 left-[14%] h-80 w-[34rem] rounded-full"
           style={{
-            background: "radial-gradient(ellipse at center, rgba(59,130,246,0.16), transparent 70%)",
-            filter: "blur(40px)",
+            background: "radial-gradient(ellipse at center, rgba(147, 197, 253, 0.09), transparent 72%)",
+            filter: "blur(42px)",
           }}
         />
         <span
           className="animate-aurora absolute -bottom-32 left-[38%] h-72 w-[40rem] rounded-full"
           style={{
-            background: "radial-gradient(ellipse at center, rgba(168,85,247,0.13), transparent 70%)",
+            background: "radial-gradient(ellipse at center, rgba(226, 232, 240, 0.07), transparent 72%)",
             filter: "blur(48px)",
             animationDelay: "-5s",
           }}
@@ -553,37 +631,59 @@ export function AIWorkspace() {
         <span
           className="animate-aurora absolute -right-20 top-[30%] h-72 w-96 rounded-full"
           style={{
-            background: "radial-gradient(ellipse at center, rgba(244,114,182,0.10), transparent 70%)",
+            background: "radial-gradient(ellipse at center, rgba(148, 163, 184, 0.07), transparent 72%)",
             filter: "blur(44px)",
             animationDelay: "-9s",
           }}
         />
       </div>
 
-      {/* 开场载入动画：铺垫（dimming）阶段就挂载，星辉的生长与画面模糊变暗重叠衔接，消除空场死区 */}
-      {(inIntro || dimming) && (
-        <div className="absolute inset-0 z-10">
-          <AIIntro onDone={introDone} />
+      {/* 开场精密光学加载卡片与四向扩展动画：在 intro 及 entering 重叠期内挂载，实现卡片扩展与内容模糊交叉溶解 */}
+      {(inIntro || dimming || portalOverlap) && (
+        <div
+          className="absolute inset-0 z-20"
+          style={{ pointerEvents: inIntro || dimming ? "auto" : "none" }}
+        >
+          <AIIntro onDone={introDone} origin={origin} targetCard={centerMorph} />
         </div>
       )}
 
-      {/* 顶部极细能量线：极光三色 */}
+      {/* 顶部与底部铂金-冰蓝光学地平线：从中心向两侧延展 */}
       <span
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 mx-auto h-px"
         style={{
-          width: shown ? "100%" : "0%",
-          opacity: shown ? 1 : 0,
+          width: shown ? "100%" : inIntro ? "46%" : "0%",
+          opacity: shown || inIntro ? 0.85 : 0,
           background:
-            "linear-gradient(to right, transparent, rgba(96,165,250,0.7) 30%, rgba(167,139,250,0.7) 55%, rgba(244,114,182,0.6) 75%, transparent)",
-          transition: "width 900ms cubic-bezier(0.22,1,0.36,1) 150ms, opacity 400ms ease 150ms",
+            "linear-gradient(to right, transparent, rgba(147, 197, 253, 0.35) 26%, rgba(248, 250, 252, 0.78) 50%, rgba(147, 197, 253, 0.35) 74%, transparent)",
+          transition: "width 760ms cubic-bezier(0.16, 1, 0.3, 1), opacity 360ms ease",
+        }}
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 mx-auto h-px"
+        style={{
+          width: shown ? "86%" : "0%",
+          opacity: shown ? 0.45 : 0,
+          background:
+            "linear-gradient(to right, transparent, rgba(148, 163, 184, 0.25) 30%, rgba(226, 232, 240, 0.55) 50%, rgba(148, 163, 184, 0.25) 70%, transparent)",
+          transition: "width 860ms cubic-bezier(0.16, 1, 0.3, 1) 80ms, opacity 420ms ease 80ms",
         }}
       />
 
-      {/* 三栏布局：会话侧栏 / 对话流 / 遥测面板 */}
-      <div className="relative flex h-full w-full gap-4 p-4 sm:p-5">
+      {/* 三栏布局：会话侧栏 / 对话流（由中央加载卡片四向扩展而成） / 遥测面板
+          在 intro 期间保持容器可见（此时左右卡片 opacity=0、中间卡片被 clip-path 裁剪为 368x256 且内部新内容 opacity=0），
+          从而使中间卡片毛玻璃底面从一开始就作为统一卡片基底存在，进入 entering 时零跳变直接向四周扩展 */}
+      <div
+        className="relative flex h-full w-full gap-4 p-4 sm:p-5"
+        style={{
+          opacity: dimReady || workspaceEntered || exiting ? 1 : 0,
+          pointerEvents: workspaceEntered ? "auto" : "none",
+        }}
+      >
         {/* ===== 左栏：会话管理 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={60} className="hidden w-64 shrink-0 md:block">
+        <Rise vector="left" shown={shown} exiting={exiting} className="hidden w-64 shrink-0 md:block">
           <aside className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/55 backdrop-blur-xl">
             <div className="flex items-center justify-between px-4 pb-3 pt-4">
               <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -751,11 +851,33 @@ export function AIWorkspace() {
           </aside>
         </Rise>
 
-        {/* ===== 中栏：对话流 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={160} className="min-w-0 flex-1">
-          <section className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/45 backdrop-blur-xl">
-            {/* 面板顶栏 */}
-            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
+        {/* ===== 中栏：对话流（由中央加载卡片向四周扩展生成，内部新内容模糊渐显） ===== */}
+        <Rise
+          vector="center"
+          shown={shown}
+          exiting={exiting}
+          centerMorph={centerMorph}
+          className="min-w-0 flex-1"
+        >
+          <section
+            ref={centerSectionRef}
+            className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60"
+          >
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 rounded-[inherit] bg-background/55 backdrop-blur-xl"
+            />
+            <div
+              data-testid="ai-workspace-center-content"
+              className="relative z-10 flex h-full w-full flex-col overflow-hidden"
+              style={computeCenterContentBlurMotion(shown, exiting, phase === "active")}
+            >
+              {/* 面板顶栏：随卡片向上扩展同步舒展并模糊渐显 */}
+              <header
+                data-testid="ai-workspace-center-header"
+                className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3"
+                style={computeCenterZoneBlurMotion("header", shown, exiting, phase === "active")}
+              >
               <div className="flex min-w-0 items-center gap-3">
                 <span className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-foreground/[0.04]">
                   <Sparkles className="h-4 w-4 text-foreground/80" />
@@ -792,10 +914,15 @@ export function AIWorkspace() {
               </div>
             </header>
 
-            {/* 消息区 */}
-            <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            {/* 消息区：在卡片中心原光学陀螺仪模糊消散的位置模糊渐显 */}
+            <div
+              ref={scrollRef}
+              data-testid="ai-workspace-center-body"
+              className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+              style={computeCenterZoneBlurMotion("body", shown, exiting, phase === "active")}
+            >
               {messages.length === 0 ? (
-                <EmptyState onPick={run} disabled={!cfg.enabled} />
+                <EmptyState onPick={run} disabled={!cfg.enabled} revealed={shown} />
               ) : (
                 <div className="mx-auto flex max-w-3xl flex-col gap-5 pb-2">
                   {messages.map((m) =>
@@ -813,8 +940,12 @@ export function AIWorkspace() {
               )}
             </div>
 
-            {/* 输入区 */}
-            <div className="relative shrink-0 px-5 pb-4">
+            {/* 输入区：随卡片向下扩展同步舒展并模糊渐显 */}
+            <div
+              data-testid="ai-workspace-center-footer"
+              className="relative shrink-0 px-5 pb-4"
+              style={computeCenterZoneBlurMotion("footer", shown, exiting, phase === "active")}
+            >
               <div
                 className={cn(
                   "group relative mx-auto flex max-w-3xl flex-col rounded-2xl border bg-background/70 px-3 pb-2.5 pt-3 backdrop-blur-xl",
@@ -1014,11 +1145,12 @@ export function AIWorkspace() {
                 演示环境：AI 规划与工具调用在本地模拟 · 危险操作默认需人工确认
               </p>
             </div>
+            </div>
           </section>
         </Rise>
 
         {/* ===== 右栏：执行遥测 ===== */}
-        <Rise shown={shown} exiting={exiting} delay={260} className="hidden w-64 shrink-0 xl:block">
+        <Rise vector="right" shown={shown} exiting={exiting} className="hidden w-64 shrink-0 lg:block">
           <aside className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/60 bg-background/55 backdrop-blur-xl">
             <div className="flex items-center gap-2 px-4 pb-3 pt-4">
               <Activity className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1125,7 +1257,15 @@ function TelemetryStat({
 
 /* ---------- 空态：欢迎语 + 建议指令 ---------- */
 
-function EmptyState({ onPick, disabled }: { onPick: (t: string) => void; disabled: boolean }) {
+function EmptyState({
+  onPick,
+  disabled,
+  revealed = true,
+}: {
+  onPick: (t: string) => void
+  disabled: boolean
+  revealed?: boolean
+}) {
   return (
     <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-6 text-center">
       <div className="relative">
@@ -1136,12 +1276,19 @@ function EmptyState({ onPick, disabled }: { onPick: (t: string) => void; disable
           <BorderBeam size={40} duration={6} delay={-3} colorFrom="#f472b6" colorTo="#60a5fa" opacity={0.8} />
         </span>
       </div>
-      <div className="leading-tight">
+      <div key={revealed ? "revealed" : "pending"} className="leading-tight">
         <h3 className="text-lg font-semibold">
-          <BlurWords text="想让我做点什么？" />
+          {revealed ? <BlurWords text="想让我做点什么？" baseDelayMs={160} /> : "想让我做点什么？"}
         </h3>
         <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted-foreground">
-          <BlurWords text="直接用一句话描述目标，我会拆解成步骤、调用合适的工具，并在关键操作前请你确认。" />
+          {revealed ? (
+            <BlurWords
+              text="直接用一句话描述目标，我会拆解成步骤、调用合适的工具，并在关键操作前请你确认。"
+              baseDelayMs={220}
+            />
+          ) : (
+            "直接用一句话描述目标，我会拆解成步骤、调用合适的工具，并在关键操作前请你确认。"
+          )}
         </p>
       </div>
       <div className="flex max-w-md flex-wrap justify-center gap-2">
@@ -1192,12 +1339,24 @@ function Expand({ show, children }: { show: boolean; children: React.ReactNode }
  * key 用文本本身，文本变化（如回复更新为最终结论）时自动重播。
  * 中文无空格，按字符分组切（每 2 字一组），英文按空格切分。
  */
-function BlurWords({ text, className }: { text: string; className?: string }) {
+function BlurWords({
+  text,
+  className,
+  baseDelayMs = 0,
+}: {
+  text: string
+  className?: string
+  baseDelayMs?: number
+}) {
   const parts = text.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]{1,2}|\S+\s*|\s+/g) ?? [text]
   return (
     <span key={text} className={className}>
       {parts.map((part, i) => (
-        <span key={i} className="animate-word-in" style={{ animationDelay: `${Math.min(i * 28, 900)}ms` }}>
+        <span
+          key={i}
+          className="animate-word-in"
+          style={{ animationDelay: `${baseDelayMs + Math.min(i * 32, 900)}ms` }}
+        >
           {part.endsWith(" ") ? (
             <>
               {part.trimEnd()}

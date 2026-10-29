@@ -34,13 +34,17 @@ function ShellContent({ children }: { children: ReactNode }) {
     <div
       className="electron-drag-region h-full w-full overflow-hidden bg-[oklch(0.14_0.02_150)] p-3 sm:p-5"
       style={{
-        // AI Mode 向后退（缩小），引导覆盖时向前贴（放大）——两种退场姿态方向相反
-        transform: covered ? "scale(1.08)" : shellRecessed ? "scale(0.94)" : "scale(1)",
-        filter: covered ? "blur(18px)" : shellRecessed ? "blur(14px)" : "blur(0px)",
-        opacity: covered ? 0.6 : shellRecessed ? 0.45 : 1,
-        // 进入与退出 AI Mode 使用同一条舒缓曲线，模糊变暗/还原的节奏保持一致
+        // AI Mode 向深景深退场（纯合成器 3D 缩退 + 压暗，避免全屏 DOM 逐帧高斯模糊重栅格化卡顿）
+        transform: covered
+          ? "scale(1.08)"
+          : shellRecessed
+            ? "perspective(1600px) scale(0.92) translateY(10px) rotateX(1.8deg)"
+            : "perspective(1600px) scale(1) translateY(0px) rotateX(0deg)",
+        filter: covered ? "blur(18px)" : "blur(0px)",
+        opacity: covered ? 0.6 : shellRecessed ? 0.22 : 1,
+        // 进入与退出 AI Mode 使用高响应空间阻尼曲线，退场与还原节奏紧致丝滑
         transition:
-          "transform 1200ms cubic-bezier(0.32, 0.72, 0.24, 1), filter 1200ms cubic-bezier(0.32, 0.72, 0.24, 1), opacity 950ms ease",
+          "transform 760ms cubic-bezier(0.16, 1, 0.3, 1), filter 760ms cubic-bezier(0.16, 1, 0.3, 1), opacity 540ms ease-out",
       }}
       aria-hidden={covered || shellRecessed}
       inert={covered || shellRecessed}

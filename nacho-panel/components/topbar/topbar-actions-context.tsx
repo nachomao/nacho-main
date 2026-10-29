@@ -28,8 +28,8 @@ type TopbarActionsContextValue = {
   /** 未读通知数 */
   unread: number
   criticalAttention: boolean
-  /** 打开 AI Mode 操作面板 */
-  openAI: () => void
+  /** 打开 AI Mode 操作面板（支持传入触发按钮元素或点击事件以定位起点脉冲） */
+  openAI: (trigger?: HTMLElement | React.MouseEvent<HTMLElement> | null) => void
   onlineCount: number
   totalCount: number
 }
