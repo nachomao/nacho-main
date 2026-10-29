@@ -28,6 +28,23 @@ function installBuildDownloader() {
     if (!isGitHubFile(url)) return originalDownload(url, output, checksum)
     return downloadFile(url, output, { sha256: checksum, timeoutMs: 20 * 60_000, onLog: console.info })
   }
+  const WineVmModule = builderRequire("app-builder-lib/out/vm/WineVm")
+  const originalExecWine = WineVmModule.WineVmManager.prototype.execWine
+  WineVmModule.WineVmManager.prototype.execWine = async function (options) {
+    try {
+      return await originalExecWine.call(this, options)
+    } catch (error) {
+      if (process.platform === "win32" && (error.code === "3221225794" || error.exitCode === 3221225794 || String(error.message).includes("3221225794"))) {
+        const target = options.file
+        const { UninstallerReader } = builderRequire("app-builder-lib/out/targets/nsis/nsisUtil")
+        const outDir = path.dirname(target)
+        const uninstallerPath = path.join(outDir, `${path.basename(target, "exe")}__uninstaller.exe`)
+        await UninstallerReader.exec(target, uninstallerPath)
+        return ""
+      }
+      throw error
+    }
+  }
   return { builderRequire, electronGet }
 }
 
