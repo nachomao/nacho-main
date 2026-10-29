@@ -44,12 +44,19 @@ type Runtime = {
   updateSourceConfigured?: boolean
   updateExecutorProtocol?: number | null
 }
-type UpdateBridge = { version?: string; check(force?: boolean): Promise<Check>; installPanel(sequence: number, version: string): Promise<{ phase: string; version: string }>;
-  transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string, sequence: number, version: string): Promise<unknown>;
-  onAvailable?(callback: (check: Check) => void): (() => void) | undefined;
-  getPanelInstallState?(): Promise<PanelInstallState>;
-  onPanelInstallProgress?(callback: (state: PanelInstallState) => void): (() => void) | undefined;
-  onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined }
+type UpdateBridge = {
+  version?: string
+  check(force?: boolean): Promise<Check>
+  installPanel(sequence: number, version: string): Promise<{ phase: string; version: string }>
+  transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string, sequence: number, version: string): Promise<unknown>
+  onAvailable?(callback: (check: Check) => void): (() => void) | undefined
+  getPanelInstallState?(): Promise<PanelInstallState>
+  onPanelInstallProgress?(callback: (state: PanelInstallState) => void): (() => void) | undefined
+  onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined
+  getOrigin?(): Promise<string>
+  setOrigin?(origin: string): Promise<string>
+  resetOrigin?(): Promise<string>
+}
 
 declare global { interface Window { nachoUpdates?: UpdateBridge } }
 
@@ -92,6 +99,35 @@ export function UpdatesPanel() {
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [showServerModal, setShowServerModal] = useState(false)
+  const [serverOrigin, setServerOrigin] = useState<string>("https://maojiu.cc")
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.nachoUpdates?.getOrigin) {
+      window.nachoUpdates.getOrigin().then(setServerOrigin).catch(() => {})
+    } else {
+      try {
+        const stored = localStorage.getItem("nacho_update_origin")
+        if (stored) setServerOrigin(stored)
+      } catch {}
+    }
+  }, [])
+
+  async function handleSaveOrigin(newOrigin: string) {
+    const trimmed = newOrigin.trim().replace(/\/+$/, "")
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(trimmed)) {
+      throw new Error("更新服务器必须为有效的 HTTPS 地址 (如 https://maojiu.cc)")
+    }
+    if (typeof window !== "undefined" && window.nachoUpdates?.setOrigin) {
+      await window.nachoUpdates.setOrigin(trimmed)
+    }
+    try {
+      localStorage.setItem("nacho_update_origin", trimmed)
+    } catch {}
+    setServerOrigin(trimmed)
+    setShowServerModal(false)
+    void manualRefresh()
+  }
   const [progress, setProgress] = useState<number | null>(null)
   const [panelInstall, setPanelInstall] = useState<PanelInstallState | null>(null)
   const [checking, setChecking] = useState(false)
@@ -316,6 +352,15 @@ export function UpdatesPanel() {
         developerPreview={developerPreview}
         checking={checking}
         onCheck={() => void manualRefresh()}
+        onConfigureServer={() => setShowServerModal(true)}
+        serverOrigin={serverOrigin}
+      />
+
+      <UpdateServerModal
+        open={showServerModal}
+        currentOrigin={serverOrigin}
+        onClose={() => setShowServerModal(false)}
+        onSave={handleSaveOrigin}
       />
 
       {(developerPreview || (sourceError && !developerPreview) || connectedPanelIncompatible || serverError) && (
@@ -402,9 +447,10 @@ export function UpdatesPanel() {
   )
 }
 
-function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck }: {
+function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck, onConfigureServer, serverOrigin }: {
   releasesAvailable: boolean; updateCount: number; sequence?: number; publishedAt?: string; checkedAt: Date | null
   stale: boolean; developerPreview: boolean; checking: boolean; onCheck: () => void
+  onConfigureServer?: () => void; serverOrigin?: string
 }) {
   const state: { title: string; desc: string; tone: Tone; icon: ReactNode } = developerPreview
     ? { title: "预览模式", desc: "更新检查已禁用，仅展示服务端版本信息。", tone: "muted", icon: <CircleSlash className="size-6" /> }
@@ -432,16 +478,29 @@ function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, c
           </dl>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onCheck}
-        disabled={checking}
-        aria-busy={checking}
-        className="inline-flex h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl border border-border bg-surface/60 px-4 text-sm font-medium transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 sm:self-center"
-      >
-        <RefreshCw aria-hidden="true" className={cn("size-4", checking && "animate-spin motion-reduce:animate-none")} />
-        {checking ? "检查中…" : "检查更新"}
-      </button>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-center">
+        {onConfigureServer && (
+          <button
+            type="button"
+            onClick={onConfigureServer}
+            title={serverOrigin ? `当前更新服务器：${serverOrigin}` : "设置更新服务器"}
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-surface/60 px-3.5 text-sm font-medium transition-colors hover:bg-surface"
+          >
+            <Server aria-hidden="true" className="size-4 text-muted-foreground" />
+            更新服务器
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onCheck}
+          disabled={checking}
+          aria-busy={checking}
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-surface/60 px-4 text-sm font-medium transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw aria-hidden="true" className={cn("size-4", checking && "animate-spin motion-reduce:animate-none")} />
+          {checking ? "检查中…" : "检查更新"}
+        </button>
+      </div>
     </section>
   )
 }
@@ -545,5 +604,131 @@ function ComponentCard({
         {footer && <div className="flex justify-center">{footer}</div>}
       </div>
     </section>
+  )
+}
+
+
+function UpdateServerModal({
+  open,
+  currentOrigin,
+  onClose,
+  onSave,
+}: {
+  open: boolean
+  currentOrigin: string
+  onClose: () => void
+  onSave: (origin: string) => Promise<void>
+}) {
+  const [value, setValue] = useState(currentOrigin)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setValue(currentOrigin)
+      setError(null)
+      setSaving(false)
+    }
+  }, [open, currentOrigin])
+
+  if (!open) return null
+
+  const isDefault = value.trim() === "https://maojiu.cc"
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setSaving(true)
+    try {
+      await onSave(value)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存更新服务器失败")
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="update-server-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in-0"
+    >
+      <div className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95">
+        <h3 id="update-server-modal-title" className="text-lg font-semibold text-foreground">
+          更新服务器设置
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          独立更新服务器用于获取双仓签名版本索引及实时发布通知。
+        </p>
+
+        <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-4">
+          <div>
+            <div className="flex items-center justify-between">
+              <label htmlFor="update-server-origin" className="text-xs font-medium text-foreground">
+                服务器地址 (HTTPS)
+              </label>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
+                  isDefault
+                    ? "bg-positive/10 text-positive ring-positive/25"
+                    : "bg-primary/10 text-primary ring-primary/25",
+                )}
+              >
+                {isDefault ? "官方默认" : "自定义"}
+              </span>
+            </div>
+            <input
+              id="update-server-origin"
+              type="url"
+              required
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setError(null)
+              }}
+              placeholder="https://maojiu.cc"
+              className="mt-1.5 w-full rounded-xl border border-border bg-surface px-3.5 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+
+          {error && <p className="text-xs text-destructive">{error}</p>}
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              disabled={isDefault || saving}
+              onClick={() => {
+                setValue("https://maojiu.cc")
+                setError(null)
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
+            >
+              恢复官方默认
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={saving}
+                className="h-9 rounded-xl border border-border bg-surface/60 px-4 text-xs font-medium transition-colors hover:bg-surface"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-60"
+              >
+                {saving && <Loader2 className="size-3 animate-spin" />}
+                保存并检查
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }

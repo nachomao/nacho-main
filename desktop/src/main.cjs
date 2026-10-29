@@ -213,6 +213,18 @@ function registerWindowBridge() {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("updates:transfer-progress", percent)
     })
   })
+  ipcMain.handle("updates:get-origin", (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
+    return updates.getOrigin()
+  })
+  ipcMain.handle("updates:set-origin", (event, origin) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
+    return updates.setOrigin(origin)
+  })
+  ipcMain.handle("updates:reset-origin", (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("窗口来源无效")
+    return updates.resetOrigin()
+  })
 }
 
 function createMainWindow() {

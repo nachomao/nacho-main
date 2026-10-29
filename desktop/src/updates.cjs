@@ -8,6 +8,9 @@ const { promisify } = require("node:util")
 const execFileAsync = promisify(execFile)
 
 const UPDATE_ORIGIN = process.env.NACHO_UPDATE_ORIGIN || "https://updates.example.invalid"
+const DEFAULT_ORIGIN = (process.env.NACHO_UPDATE_ORIGIN && process.env.NACHO_UPDATE_ORIGIN !== "https://updates.example.invalid")
+  ? process.env.NACHO_UPDATE_ORIGIN
+  : "https://maojiu.cc"
 const INDEX_URL = `${UPDATE_ORIGIN}/updates/index.json`
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEA2qjcjfU4N2/nMmD9XkemMqqq6P0K6OVfjAnwlBJDU1g=
@@ -122,6 +125,7 @@ async function readRemote(url, max) {
 
 function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } = {}) {
   const cachePath = () => path.join(app.getPath("userData"), "release-index-cache-recommended.json")
+  const originPath = () => path.join(app.getPath("userData"), "update-origin.txt")
   let lastCheck = 0
   let checking = null
   let installing = false
@@ -131,6 +135,34 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
   }
   let lastPanelProgressNotice = 0
   let panelProgressTimer = null
+
+  function getOrigin() {
+    try {
+      const custom = fs.readFileSync(originPath(), "utf8").trim()
+      if (/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(custom)) return custom
+    } catch {}
+    return DEFAULT_ORIGIN
+  }
+  function setOrigin(origin) {
+    const trimmed = (origin || "").trim().replace(/\/+$/, "")
+    if (!trimmed || trimmed === DEFAULT_ORIGIN) {
+      return resetOrigin()
+    }
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(trimmed)) {
+      throw new Error("更新服务器必须为有效的 HTTPS 地址 (如 https://maojiu.cc)")
+    }
+    fs.mkdirSync(path.dirname(originPath()), { recursive: true })
+    fs.writeFileSync(originPath(), trimmed, "utf8")
+    unsubscribe()
+    lastCheck = 0
+    return trimmed
+  }
+  function resetOrigin() {
+    try { fs.unlinkSync(originPath()) } catch {}
+    unsubscribe()
+    lastCheck = 0
+    return DEFAULT_ORIGIN
+  }
 
   function getPanelInstallState() { return { ...panelInstallState } }
   function sendPanelInstallProgress() {
@@ -160,7 +192,8 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
   }
 
   async function check(force = false) {
-    if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
+    const origin = getOrigin()
+    if (origin === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
     if (checking) return checking
     if (!force && Date.now() - lastCheck < 24 * 60 * 60 * 1000 && cached()) {
       return { index: cached(), stale: false, currentVersion: app.getVersion() }
@@ -168,8 +201,8 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
     checking = (async () => {
       const previous = cached()
       try {
-        if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN)) throw new Error("更新服务器 HTTPS 地址无效")
-        const { index, bytes, signature } = await readRecommended()
+        if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin)) throw new Error("更新服务器 HTTPS 地址无效")
+        const { index, bytes, signature } = await readRecommended(undefined, origin)
         const componentChanged = previous && ["panel", "server", "agent"].some((key) => {
           const next = index.releases[key], old = previous.releases[key]
           return compareVersions(next.version, old.version) < 0 ||
@@ -195,14 +228,15 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
     })().finally(() => { checking = null })
     return checking
   }
-  async function readRecommended(sequence) {
-    if (UPDATE_ORIGIN === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
-    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(UPDATE_ORIGIN) ||
+  async function readRecommended(sequence, originOverride) {
+    const origin = originOverride || getOrigin()
+    if (origin === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
+    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) ||
         (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1))) throw new Error("推荐索引请求无效")
-    const url = sequence === undefined ? INDEX_URL : `${UPDATE_ORIGIN}/updates/revisions/${sequence}/index.json`
+    const url = sequence === undefined ? `${origin}/updates/index.json` : `${origin}/updates/revisions/${sequence}/index.json`
     const remote = await readRemote(url, 32768)
     const match = /^\/updates\/revisions\/([1-9]\d*)\/index\.json$/.exec(new URL(remote.url).pathname)
-    if (new URL(remote.url).origin !== UPDATE_ORIGIN || !match ||
+    if (new URL(remote.url).origin !== origin || !match ||
         (sequence !== undefined && Number(match[1]) !== sequence)) throw new Error("推荐索引固定地址无效")
     const { bytes: signature } = await readRemote(`${remote.url}.sig`, 128)
     const index = verifyIndex(remote.bytes, signature, publicKey)
@@ -210,13 +244,14 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
     return { index, bytes: remote.bytes, signature }
   }
   function subscribe(onRelease) {
-    if (notificationController || UPDATE_ORIGIN === "https://updates.example.invalid") return
+    const origin = getOrigin()
+    if (notificationController || origin === "https://updates.example.invalid") return
     notificationController = new AbortController()
     const signal = notificationController.signal
     void (async () => {
       while (!signal.aborted) {
         try {
-          const response = await fetch(`${UPDATE_ORIGIN}/updates/events`, { signal })
+          const response = await fetch(`${origin}/updates/events`, { signal })
           if (!response.ok || !response.body) throw new Error("更新通知连接失败")
           let buffer = ""
           for await (const chunk of response.body) {
@@ -396,7 +431,18 @@ function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } =
     } finally { installing = false }
   }
 
-  return { check, cached, installPanel, getPanelInstallState, transferRelease, subscribe, unsubscribe }
+  return {
+    check,
+    cached,
+    installPanel,
+    getPanelInstallState,
+    transferRelease,
+    subscribe,
+    unsubscribe,
+    getOrigin,
+    setOrigin,
+    resetOrigin,
+  }
 }
 
 module.exports = { createUpdater, verifyIndex, compareVersions, INDEX_URL }

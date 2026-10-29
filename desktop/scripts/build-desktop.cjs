@@ -3,6 +3,8 @@ const path = require("node:path")
 const { createRequire } = require("node:module")
 const { downloadFile, isGitHubFile, hashFile } = require("../src/github-download.cjs")
 
+process.env.NACHO_UPDATE_ORIGIN = process.env.NACHO_UPDATE_ORIGIN || "https://maojiu.cc"
+
 /** 在工具自己的归档缓存中预取；原工具继续校验并解包，不修改 node_modules。 */
 function installBuildDownloader() {
   const builderRequire = createRequire(require.resolve("electron-builder/package.json"))

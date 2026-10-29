@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld("nachoUpdates", {
     ipcRenderer.on("updates:available", listener)
     return () => ipcRenderer.removeListener("updates:available", listener)
   },
+  getOrigin() { return ipcRenderer.invoke("updates:get-origin") },
+  setOrigin(origin) { return ipcRenderer.invoke("updates:set-origin", origin) },
+  resetOrigin() { return ipcRenderer.invoke("updates:reset-origin") },
 })
 
 contextBridge.exposeInMainWorld("nachoConnection", {
