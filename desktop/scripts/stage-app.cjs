@@ -38,12 +38,28 @@ copyRequired(path.join(desktopDir, "src", "preload.cjs"), path.join(appDir, "pre
 copyRequired(path.join(desktopDir, "src", "connection-store.cjs"), path.join(appDir, "connection-store.cjs"))
 copyRequired(path.join(desktopDir, "src", "connection-context.cjs"), path.join(appDir, "connection-context.cjs"))
 copyRequired(path.join(desktopDir, "src", "credential-protector.cjs"), path.join(appDir, "credential-protector.cjs"))
+copyRequired(path.join(desktopDir, "src", "ai-process.cjs"), path.join(appDir, "ai-process.cjs"))
 copyRequired(path.join(desktopDir, "build", "credential-protector", "nacho-credential-protector.exe"),
   path.join(appDir, "nacho-credential-protector.exe"))
 copyRequired(path.join(desktopDir, "src", "updates.cjs"), path.join(appDir, "updates.cjs"))
 copyRequired(path.join(desktopDir, "src", "update-handoff.cjs"), path.join(appDir, "update-handoff.cjs"))
 copyRequired(path.join(desktopDir, "src", "github-download.cjs"), path.join(appDir, "github-download.cjs"))
 copyRequired(path.join(desktopDir, "src", "panel-runner.cjs"), path.join(stagedPanelDir, "panel-runner.cjs"))
+
+const opencodeLock = JSON.parse(fs.readFileSync(path.join(desktopDir, "opencode.lock.json"), "utf8"))
+const opencodeCache = path.join(desktopDir, "build", "opencode", opencodeLock.version)
+const stagedOpencode = path.join(appDir, "opencode")
+fs.mkdirSync(stagedOpencode, { recursive: true })
+const opencodeBinary = path.join(opencodeCache, "opencode.exe")
+const opencodeLicense = path.join(opencodeCache, "LICENSE")
+if (!fs.existsSync(opencodeBinary)) {
+  throw new Error(`找不到 opencode 缓存：${opencodeBinary}。请先运行 pnpm run build:opencode`)
+}
+if (!fs.existsSync(opencodeLicense)) {
+  throw new Error(`找不到 opencode 许可证：${opencodeLicense}。请先运行 pnpm run build:opencode`)
+}
+fs.copyFileSync(opencodeBinary, path.join(stagedOpencode, "opencode.exe"))
+fs.copyFileSync(opencodeLicense, path.join(stagedOpencode, "LICENSE"))
 
 if (fs.existsSync(path.join(desktopDir, "installer.nsh"))) {
   fs.mkdirSync(path.join(desktopDir, "build"), { recursive: true })

@@ -14,6 +14,7 @@ import { Onboarding } from "@/components/onboarding/onboarding"
 import { AIModeProvider, useAIMode } from "@/components/ai-mode/ai-mode-context"
 import { AIWorkspace } from "@/components/ai-mode/ai-workspace"
 import { ServerDataProvider } from "@/components/server-data-context"
+import { AIConfigSync } from "@/components/settings/ai-config-sync"
 import { StartupSplash } from "@/components/startup-splash"
 import { StartupMotionProvider, useStartupMotion } from "@/components/startup-motion-context"
 import { ConnectionGuard } from "@/components/connection-guard"
@@ -89,6 +90,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <OnboardingProvider>
       <ServerDataProvider>
+        <AIConfigSync />
         <StartupMotionProvider>
           <AIModeProvider>
             <ShellContent>{children}</ShellContent>

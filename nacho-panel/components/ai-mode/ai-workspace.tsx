@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   Sparkles,
@@ -8,10 +8,8 @@ import {
   Blocks,
   Server,
   Puzzle,
-  TerminalSquare,
   Search,
   CircleCheck,
-  CircleAlert,
   LoaderCircle,
   ShieldAlert,
   Settings2,
@@ -26,6 +24,7 @@ import {
   Check,
   ChevronsUpDown,
   AtSign,
+  ImagePlus,
   ChevronDown,
   Bot,
   MessageCircle,
@@ -36,7 +35,31 @@ import { BorderBeam } from "./border-beam"
 import { isReducedMotion } from "@/lib/motion-preference"
 import { useServerData } from "@/components/server-data-context"
 import { modelOptions, useAIConfig, aiConfigStore } from "@/components/settings/ai-data"
+import { useAIRuntimeStatus } from "@/components/settings/ai-config-sync"
+import {
+  abortAIChat,
+  deleteAISession,
+  fetchAIChatHistory,
+  postAIApproval,
+  saveAIChatHistory,
+  streamAIChat,
+} from "@/lib/ai/client"
+import { createChatSessionId } from "@/lib/ai/chat-history"
+import { looksLikePlanningText } from "@/lib/ai/answer-separation"
+import { resolveAIModel } from "@/lib/ai/config-shared"
+import {
+  MAX_AI_ATTACHMENT_COUNT,
+  MAX_AI_ATTACHMENT_TOTAL_BYTES,
+  type AIChatAttachment,
+} from "@/lib/ai/chat-attachments"
+import { prepareImageAttachment, type AIChatAttachmentDraft } from "./ai-image-input"
+import { AIMarkdown } from "./ai-markdown"
 import { useAIMode } from "./ai-mode-context"
+import { applyAIEvent, finalizeAssistantMessage, restoreChatSessions } from "./ai-event-reducer"
+import type { Message, Session, StepStatus, ToolStep } from "./ai-types"
+import { ThoughtLine } from "./thought-line"
+import { ToolBranch } from "./tool-branch"
+import { sourceMeta } from "./tool-source-meta"
 import { AIIntro } from "./ai-intro"
 import {
   AI_MODE_TIMING,
@@ -47,46 +70,13 @@ import {
   type CenterCardMorphTarget,
 } from "@/lib/ai-mode-transition"
 
-/* ---------- 类型 ---------- */
-
-type StepStatus = "running" | "done" | "error" | "waiting-confirm"
-
-type ToolStep = {
-  id: string
-  /** 工具来源：skill / mcp / plugin / core */
-  source: "skill" | "mcp" | "plugin" | "core"
-  tool: string
-  detail: string
-  output?: string
-  status: StepStatus
-  danger?: boolean
-  /** 需确认操作的风险等级：warn 黄（默认）/ danger 红，泛光全程使用同一等级，不跨级渐变 */
-  risk?: "warn" | "danger"
-}
-
-type Message =
-  | { id: string; role: "user"; text: string }
-  | {
-      id: string
-      role: "assistant"
-      text: string
-      steps: ToolStep[]
-      done: boolean
-    }
-
-type Session = {
-  id: string
-  title: string
-  createdAt: number
-  messages: Message[]
-}
-
 /* ---------- 演示脚本：把常见自然语言请求映射到执行计划 ---------- */
 
 type Scenario = {
   match: RegExp
   reply: string
   final: string
+  reasoning?: string
   steps: Omit<ToolStep, "id" | "status">[]
 }
 
@@ -117,6 +107,7 @@ const scenarios: Scenario[] = [
     match: /日志|错误|log|error/i,
     reply: "我来分析前台终端最近一小时的错误日志，看看有什么异常模式。",
     final: "分析完成：发现 12 条 connection timeout，集中在 14:20-14:25，与网关升级窗口吻合，当前已恢复，无需处理。",
+    reasoning: "先确认时间窗口与日志来源，避免把历史告警混进来。\n接着按错误类型聚类，再用同时段网络指标做交叉验证。\n如果只是升级窗口内的瞬时超时，就不需要生成处置任务。",
     steps: [
       { source: "core", tool: "logs.fetch", detail: "拉取前台终端近 1h 日志（342 条）", output: "ERROR 12 · WARN 31 · INFO 299" },
       { source: "skill", tool: "diag.cluster", detail: "对错误做模式聚类", output: "1 个聚类：upstream connect timeout (12)" },
@@ -153,16 +144,8 @@ const suggestions = [
   "为核心服务器做一次数据库备份",
 ]
 
-const sourceMeta = {
-  skill: { label: "Skill", Icon: Blocks },
-  mcp: { label: "MCP", Icon: Server },
-  plugin: { label: "插件", Icon: Puzzle },
-  core: { label: "内核", Icon: TerminalSquare },
-} as const
-
-let sessionSeq = 0
 const newSession = (): Session => ({
-  id: `s-${Date.now()}-${sessionSeq++}`,
+  id: createChatSessionId(),
   title: "新会话",
   createdAt: Date.now(),
   messages: [],
@@ -218,13 +201,28 @@ function Rise({
 /* ---------- 主组件：全屏 AI 工作台 ---------- */
 
 export function AIWorkspace() {
-  const { clients } = useServerData()
+  const { clients, serverConnection, developerPreview } = useServerData()
+  const aiRuntime = useAIRuntimeStatus()
   const { phase, mounted, origin, exit, introDone } = useAIMode()
   const cfg = useAIConfig()
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? "")
+  const [historyReady, setHistoryReady] = useState(false)
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+  const persistenceRef = useRef<{ enabled: boolean; chain: Promise<unknown> }>({
+    enabled: false,
+    chain: Promise.resolve(),
+  })
+  const saveTimerRef = useRef<number | null>(null)
   const [input, setInput] = useState("")
+  const [attachments, setAttachments] = useState<AIChatAttachmentDraft[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const attachmentsRef = useRef<AIChatAttachmentDraft[]>([])
   const [busy, setBusy] = useState(false)
+  const streamRef = useRef<AbortController | null>(null)
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   // 弹窗定位：菜单通过 Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
   const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
@@ -257,6 +255,7 @@ export function AIWorkspace() {
   }
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const centerSectionRef = useRef<HTMLElement>(null)
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const [centerMorph, setCenterMorph] = useState<CenterCardMorphTarget>(() =>
@@ -283,6 +282,72 @@ export function AIWorkspace() {
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
   const messages = active?.messages ?? []
+
+  /** 串行落盘：始终使用最新的 sessions/activeId，避免并发 PUT 乱序覆盖。 */
+  const flushHistory = useCallback(() => {
+    const persistence = persistenceRef.current
+    if (!persistence.enabled) return Promise.resolve()
+    const next = persistence.chain.then(() => saveAIChatHistory(sessionsRef.current, activeIdRef.current))
+    persistence.chain = next.catch(() => undefined)
+    return persistence.chain
+  }, [])
+
+  // 启动时恢复历史快照；浏览器 developer preview 或读取失败时保持内存模式，绝不覆盖磁盘。
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const history = await fetchAIChatHistory()
+        if (cancelled) return
+        const restored = restoreChatSessions(history.sessions)
+        if (restored.length) {
+          setSessions(restored)
+          setActiveId(restored.find((session) => session.id === history.activeId)?.id ?? restored[0].id)
+        }
+        persistenceRef.current.enabled = true
+      } catch {
+        // 仅内存运行：不写历史文件
+      } finally {
+        if (!cancelled) setHistoryReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 空闲状态：700ms 防抖保存（切换/新建/删除会话等）。
+  useEffect(() => {
+    if (!historyReady || busy || !persistenceRef.current.enabled) return
+    const timer = window.setTimeout(() => {
+      saveTimerRef.current = null
+      void flushHistory()
+    }, 700)
+    saveTimerRef.current = timer
+    return () => {
+      window.clearTimeout(timer)
+      if (saveTimerRef.current === timer) saveTimerRef.current = null
+    }
+  }, [sessions, activeId, busy, historyReady, flushHistory])
+
+  // 执行状态：开始/结束立即落盘一次，流式期间每 2.5s 保存一次。
+  useEffect(() => {
+    if (!historyReady || !persistenceRef.current.enabled) return
+    void flushHistory()
+    if (!busy) return
+    const timer = window.setInterval(() => {
+      void flushHistory()
+    }, 2500)
+    return () => window.clearInterval(timer)
+  }, [busy, historyReady, flushHistory])
+
+  // 退出 AI Mode 与组件卸载时再补一次，避免最后一次防抖被取消。
+  useEffect(() => {
+    if (phase === "closed") void flushHistory()
+  }, [phase, flushHistory])
+  useEffect(() => () => {
+    void flushHistory()
+  }, [flushHistory])
 
   // 输入风险感知：safe / warn / danger，驱动输入框泛光颜色渐变
   const inputRisk = useMemo(() => assessInputRisk(input), [input])
@@ -420,8 +485,11 @@ export function AIWorkspace() {
       timersRef.current.forEach(clearTimeout)
       timersRef.current = []
       setBusy(false)
+      streamRef.current?.abort()
+      streamRef.current = null
+      if (!developerPreview && activeIdRef.current) void abortAIChat(activeIdRef.current)
     }
-  }, [phase])
+  }, [phase, developerPreview])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -445,6 +513,43 @@ export function AIWorkspace() {
       ),
     }))
 
+  const updateAttachments = (next: AIChatAttachmentDraft[]) => {
+    attachmentsRef.current = next
+    setAttachments(next)
+  }
+
+  const clearAttachments = () => {
+    attachmentsRef.current = []
+    setAttachments([])
+    setAttachmentError(null)
+  }
+
+  const addImageFiles = async (files: File[]) => {
+    setAttachmentError(null)
+    for (const file of files) {
+      if (attachmentsRef.current.length >= MAX_AI_ATTACHMENT_COUNT) {
+        setAttachmentError(`最多上传 ${MAX_AI_ATTACHMENT_COUNT} 张图片`)
+        break
+      }
+      try {
+        const prepared = await prepareImageAttachment(file)
+        const current = attachmentsRef.current
+        if (current.length >= MAX_AI_ATTACHMENT_COUNT) {
+          setAttachmentError(`最多上传 ${MAX_AI_ATTACHMENT_COUNT} 张图片`)
+          break
+        }
+        const total = current.reduce((sum, item) => sum + item.size, 0) + prepared.size
+        if (total > MAX_AI_ATTACHMENT_TOTAL_BYTES) {
+          setAttachmentError("图片总大小不能超过 10 MB")
+          continue
+        }
+        updateAttachments([...current, prepared])
+      } catch (error) {
+        setAttachmentError(error instanceof Error ? error.message : "读取图片失败")
+      }
+    }
+  }
+
   /* ---------- 会话管理 ---------- */
 
   const createSession = () => {
@@ -453,54 +558,90 @@ export function AIWorkspace() {
     setSessions((prev) => [s, ...prev])
     setActiveId(s.id)
     setInput("")
+    clearAttachments()
     inputRef.current?.focus()
   }
 
   const deleteSession = (sid: string) => {
     if (busy && sid === activeId) return
-    setSessions((prev) => {
-      const rest = prev.filter((s) => s.id !== sid)
-      if (rest.length === 0) {
-        const fresh = newSession()
-        setActiveId(fresh.id)
-        return [fresh]
+    void (async () => {
+      // 取消尚未触发的防抖保存，再让在途保存完成，避免旧快照在 DELETE 之后复活。
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
       }
-      if (sid === activeId) setActiveId(rest[0].id)
-      return rest
-    })
+      if (persistenceRef.current.enabled) await persistenceRef.current.chain.catch(() => undefined)
+      if (!developerPreview) await deleteAISession(sid)
+      setSessions((prev) => {
+        const rest = prev.filter((s) => s.id !== sid)
+        if (rest.length === 0) {
+          const fresh = newSession()
+          setActiveId(fresh.id)
+          return [fresh]
+        }
+        if (sid === activeId) setActiveId(rest[0].id)
+        return rest
+      })
+    })()
   }
 
   const switchSession = (sid: string) => {
     if (busy) return
     setActiveId(sid)
+    clearAttachments()
     inputRef.current?.focus()
   }
 
-  /* ---------- 执行 ---------- */
+  /* ---------- 执行：真实 AI 与 developer preview 演示 ---------- */
 
-  const run = (text: string) => {
-    if (!text.trim() || busy || !cfg.enabled || !active) return
+  const runDemo = (text: string, images: AIChatAttachment[]) => {
+    if ((!text.trim() && images.length === 0) || busy || !cfg.enabled || !active) return
     const sid = active.id
     const scenario = scenarios.find((s) => s.match.test(text)) ?? fallbackScenario
-    const userMsg: Message = { id: `u-${Date.now()}`, role: "user", text: text.trim() }
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: "user",
+      text: text.trim(),
+      ...(images.length ? { attachments: images } : {}),
+    }
+    const title = text.trim().slice(0, 18) || images[0]?.name.slice(0, 18) || "图片"
     const aid = `a-${Date.now()}`
     const steps: ToolStep[] = scenario.steps.map((s, i) => ({
       ...s,
       id: `${aid}-s${i}`,
       status: "running",
     }))
-    const aiMsg: Message = { id: aid, role: "assistant", text: scenario.reply, steps: [], done: false }
+    const aiMsg: Message = {
+      id: aid,
+      role: "assistant",
+      text: scenario.reply,
+      steps: [],
+      done: false,
+      ...(scenario.reasoning ? { reasoning: scenario.reasoning, reasoningActive: true } : {}),
+    }
 
     patchSession(sid, (s) => ({
       ...s,
-      title: s.messages.length === 0 ? text.trim().slice(0, 18) : s.title,
+      title: s.messages.length === 0 ? title : s.title,
       messages: [...s.messages, userMsg, aiMsg],
     }))
     setInput("")
     setBusy(true)
 
+    // 演示深度思考：先展示 reasoning trace，settle 后再开始工具调用
+    if (scenario.reasoning) {
+      schedule(() => {
+        patchSession(sid, (s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === aid && m.role === "assistant" ? { ...m, reasoningActive: false } : m,
+          ),
+        }))
+      }, 1600)
+    }
+
     // 逐步展示工具调用；遇到危险步骤停下等待确认
-    let delay = 700
+    let delay = scenario.reasoning ? 2200 : 700
     let blocked = false
     for (const step of steps) {
       if (blocked) break
@@ -538,12 +679,111 @@ export function AIWorkspace() {
     }
   }
 
-  /** 用户确认危险步骤后：完成该步并继续执行剩余步骤 */
+  const runReal = async (text: string, images: AIChatAttachment[]) => {
+    if (!active) return
+    const sid = active.id
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: "user",
+      text: text.trim(),
+      ...(images.length ? { attachments: images } : {}),
+    }
+    const title = text.trim().slice(0, 18) || images[0]?.name.slice(0, 18) || "图片"
+    const aid = `a-${Date.now()}`
+    const aiMsg: Message = { id: aid, role: "assistant", text: "", steps: [], done: false }
+    patchSession(sid, (s) => ({
+      ...s,
+      title: s.messages.length === 0 ? title : s.title,
+      messages: [...s.messages, userMsg, aiMsg],
+    }))
+    setInput("")
+    setBusy(true)
+    const controller = new AbortController()
+    streamRef.current = controller
+    let terminal = false
+    const fail = (reason: string) => {
+      patchSession(sid, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === aid && m.role === "assistant" && !m.done
+            ? finalizeAssistantMessage(m, `请求失败：${reason}`)
+            : m,
+        ),
+      }))
+    }
+    try {
+      if (!aiRuntime.desktop) throw new Error("AI Mode 仅支持 Windows 桌面版")
+      if (!aiRuntime.available) throw new Error("AI 引擎未安装，请重新安装桌面面板")
+      if (!serverConnection) throw new Error("尚未配置控制服务端连接")
+      await streamAIChat({
+        uiSessionId: sid,
+        text: text.trim(),
+        ...(images.length ? { attachments: images } : {}),
+        model: resolveAIModel(cfg),
+        mode: agentMode,
+        connection: serverConnection,
+      }, (event) => {
+        if (event.type === "done" || event.type === "error") terminal = true
+        patchSession(sid, (s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === aid && m.role === "assistant" ? applyAIEvent(m, event) : m,
+          ),
+        }))
+        if (event.type === "done" || event.type === "error") {
+          if (streamRef.current === controller) streamRef.current = null
+          setBusy(false)
+        }
+      }, controller.signal)
+    } catch (error) {
+      fail(error instanceof Error ? error.message : "AI 请求失败")
+    } finally {
+      if (!terminal) {
+        patchSession(sid, (s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === aid && m.role === "assistant" && !m.done
+              ? finalizeAssistantMessage(m, controller.signal.aborted ? "已中止" : "AI 连接已中断")
+              : m,
+          ),
+        }))
+      }
+      if (streamRef.current === controller) {
+        streamRef.current = null
+        setBusy(false)
+      }
+    }
+  }
+
+  const run = (text: string) => {
+    const images = attachmentsRef.current.map(({ name, mime, dataUrl }) => ({ name, mime, dataUrl }))
+    if ((!text.trim() && images.length === 0) || busy || !cfg.enabled || !active || !historyReady) return
+    clearAttachments()
+    if (developerPreview) {
+      runDemo(text, images)
+      return
+    }
+    void runReal(text, images)
+  }
+
+  /** 用户确认危险步骤后：真实审批走服务端；演示模式继续本地时间线 */
   const confirmStep = (msgId: string, stepId: string) => {
     if (!active) return
     const sid = active.id
     const msg = active.messages.find((m) => m.id === msgId)
     if (!msg || msg.role !== "assistant") return
+    const realStep = msg.steps.find((step) => step.id === stepId)
+    if (realStep?.approvalId) {
+      patchStep(sid, msgId, stepId, { status: "running" })
+      void postAIApproval({ uiSessionId: sid, approvalId: realStep.approvalId, decision: "once" })
+        .catch((error) => {
+          patchStep(sid, msgId, stepId, {
+            status: "error",
+            output: error instanceof Error ? error.message : "确认执行失败",
+          })
+        })
+      return
+    }
     const scenario = scenarios.find((s) => s.reply === msg.text) ?? fallbackScenario
     const allSteps: ToolStep[] = scenario.steps.map((s, i) => ({ ...s, id: `${msgId}-s${i}`, status: "done" as const }))
     const idx = allSteps.findIndex((s) => s.id === stepId)
@@ -577,6 +817,21 @@ export function AIWorkspace() {
       }))
       setBusy(false)
     }, delay + 400)
+  }
+
+  const denyStep = (msgId: string, stepId: string) => {
+    if (!active) return
+    const sid = active.id
+    const msg = active.messages.find((m) => m.id === msgId)
+    if (!msg || msg.role !== "assistant") return
+    const step = msg.steps.find((item) => item.id === stepId)
+    if (!step) return
+    patchStep(sid, msgId, stepId, { status: "error", output: "已拒绝执行" })
+    if (step.approvalId) {
+      void postAIApproval({ uiSessionId: sid, approvalId: step.approvalId, decision: "reject" }).catch(() => undefined)
+    } else {
+      setBusy(false)
+    }
   }
 
   if (!mounted) return null
@@ -933,18 +1188,59 @@ export function AIWorkspace() {
               style={computeCenterZoneBlurMotion("body", shown, exiting, phase === "active")}
             >
               {messages.length === 0 ? (
-                <EmptyState onPick={run} disabled={!cfg.enabled} revealed={shown} />
+                historyReady ? (
+                  <EmptyState onPick={run} disabled={!cfg.enabled} revealed={shown} />
+                ) : (
+                  <div className="flex h-full min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    正在加载会话…
+                  </div>
+                )
               ) : (
                 <div className="mx-auto flex max-w-3xl flex-col gap-5 pb-2">
                   {messages.map((m) =>
                     m.role === "user" ? (
-                      <div key={m.id} className="flex justify-end">
-                    <span className="max-w-[85%] rounded-2xl rounded-br-md border border-border/70 bg-foreground/[0.06] px-4 py-2.5 text-sm text-foreground backdrop-blur-sm">
-                      {m.text}
-                    </span>
+                      <div key={m.id} className="flex flex-col items-end gap-2">
+                        {m.attachments?.length ? (
+                          <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
+                            {m.attachments.map((attachment, index) => (
+                              attachment.dataUrl ? (
+                                <img
+                                  key={`${m.id}-${index}`}
+                                  src={attachment.dataUrl}
+                                  alt={attachment.name}
+                                  className="h-28 max-w-44 rounded-xl border border-border/70 object-cover"
+                                />
+                              ) : (
+                                <span
+                                  key={`${m.id}-${index}`}
+                                  className="flex h-20 max-w-56 items-center gap-2 rounded-xl border border-border/70 bg-foreground/[0.03] px-3 text-xs text-muted-foreground"
+                                >
+                                  <ImagePlus className="h-4 w-4 shrink-0" />
+                                  <span className="min-w-0 leading-tight">
+                                    <span className="block truncate">{attachment.name}</span>
+                                    <span className="block text-[10px] text-muted-foreground/60">历史图片未保存</span>
+                                  </span>
+                                </span>
+                              )
+                            ))}
+                          </div>
+                        ) : null}
+                        {m.text ? (
+                          <span className="max-w-[85%] rounded-2xl rounded-br-md border border-border/70 bg-foreground/[0.06] px-4 py-2.5 text-sm text-foreground backdrop-blur-sm">
+                            {m.text}
+                          </span>
+                        ) : null}
                       </div>
                     ) : (
-                      <AssistantBubble key={m.id} msg={m} onConfirm={(stepId) => confirmStep(m.id, stepId)} />
+                      <AssistantBubble
+                        key={m.id}
+                        msg={m}
+                        agentMode={agentMode}
+                        developerPreview={developerPreview}
+                        onConfirm={(stepId) => confirmStep(m.id, stepId)}
+                        onDeny={(stepId) => denyStep(m.id, stepId)}
+                      />
                     ),
                   )}
                 </div>
@@ -970,6 +1266,14 @@ export function AIWorkspace() {
                 style={{
                   transition:
                     "border-color 700ms cubic-bezier(0.22,1,0.36,1), box-shadow 700ms cubic-bezier(0.22,1,0.36,1)",
+                }}
+                onDragOver={(event) => {
+                  if (cfg.enabled && !busy && event.dataTransfer.types.includes("Files")) event.preventDefault()
+                }}
+                onDrop={(event) => {
+                  if (!cfg.enabled || busy || event.dataTransfer.files.length === 0) return
+                  event.preventDefault()
+                  void addImageFiles(Array.from(event.dataTransfer.files))
                 }}
               >
                 {/* AI 输出中：旋转弥散流光渐显，完成后渐隐；颜色跟随输入/执行风险平滑渐变
@@ -1011,30 +1315,91 @@ export function AIWorkspace() {
                     transition: "box-shadow 1200ms ease, opacity 500ms ease",
                   }}
                 />
-                {/* 顶部：@ 引用按钮 */}
-                <button
-                  type="button"
-                  aria-label="引用客户端或资源"
-                  disabled={!cfg.enabled}
-                  onClick={() => {
-                    setInput((v) => (v.endsWith("@") ? v : `${v}@`))
-                    inputRef.current?.focus()
+                {/* 顶部：@ 引用与图片附件 */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? [])
+                    event.target.value = ""
+                    if (files.length) void addImageFiles(files)
                   }}
-                  className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-foreground/[0.04] text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-40"
-                >
-                  <AtSign className="h-4 w-4" />
-                </button>
+                />
+                <div className="relative flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label="引用客户端或资源"
+                    disabled={!cfg.enabled}
+                    onClick={() => {
+                      setInput((v) => (v.endsWith("@") ? v : `${v}@`))
+                      inputRef.current?.focus()
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-foreground/[0.04] text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-40"
+                  >
+                    <AtSign className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="添加图片"
+                    title="添加图片（也可直接粘贴）"
+                    disabled={!cfg.enabled || busy}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-foreground/[0.04] text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-40"
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {attachments.length > 0 && (
+                  <div className="relative mt-2 flex flex-wrap gap-2">
+                    {attachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="group/image relative h-16 w-16 overflow-hidden rounded-lg border border-border/70 bg-background"
+                      >
+                        <img src={attachment.dataUrl} alt={attachment.name} className="h-full w-full object-cover" />
+                        <button
+                          type="button"
+                          aria-label={`移除 ${attachment.name}`}
+                          onClick={() => updateAttachments(attachmentsRef.current.filter((item) => item.id !== attachment.id))}
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-background/85 text-foreground opacity-90 backdrop-blur transition-opacity hover:opacity-100"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {attachmentError && <p className="relative mt-1 text-[10px] text-negative">{attachmentError}</p>}
 
                 {/* 中部：指令输入 */}
                 <input
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData?.items ?? [])
+                      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                      .map((item) => item.getAsFile())
+                      .filter((file): file is File => Boolean(file))
+                    if (files.length === 0) return
+                    event.preventDefault()
+                    void addImageFiles(files)
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) run(input)
                   }}
-                  placeholder={cfg.enabled ? "描述你想做的事，例如：重启核心服务器的 nginx" : "AI Mode 已停用，请先在设置中开启"}
-                  disabled={!cfg.enabled}
+                  placeholder={
+                    !historyReady
+                      ? "正在加载历史会话…"
+                      : cfg.enabled
+                        ? "描述你想做的事，也可以粘贴图片…"
+                        : "AI Mode 已停用，请先在设置中开启"
+                  }
+                  disabled={!cfg.enabled || !historyReady}
                   aria-label="AI 指令输入"
                   className="relative mt-2 h-10 w-full min-w-0 bg-transparent px-1 text-sm text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed"
                 />
@@ -1139,11 +1504,11 @@ export function AIWorkspace() {
                   <button
                     type="button"
                     onClick={() => run(input)}
-                    disabled={!input.trim() || busy || !cfg.enabled}
+                    disabled={(!input.trim() && attachments.length === 0) || busy || !cfg.enabled || !historyReady}
                     aria-label="发送"
                     className={cn(
                       "ml-auto flex h-8 w-8 items-center justify-center rounded-full transition-all",
-                      input.trim() && !busy
+                      (input.trim() || attachments.length > 0) && !busy
                         ? "bg-primary text-primary-foreground shadow-[0_0_20px_-6px] shadow-primary/60 hover:brightness-110"
                         : "border border-border/70 bg-foreground/[0.03] text-muted-foreground/50",
                     )}
@@ -1153,7 +1518,9 @@ export function AIWorkspace() {
                 </div>
               </div>
               <p className="mt-2 text-center text-[10px] text-muted-foreground/60">
-                演示环境：AI 规划与工具调用在本地模拟 · 危险操作默认需人工确认
+                {developerPreview
+                  ? "演示环境：AI 规划与工具调用在本地模拟 · 危险操作默认需人工确认"
+                  : "桌面本地 AI · 代码与危险操作需人工确认"}
               </p>
             </div>
             </div>
@@ -1268,6 +1635,45 @@ function TelemetryStat({
 
 /* ---------- 空态：欢迎语 + 建议指令 ---------- */
 
+/**
+ * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
+ * 仅用于空态欢迎语；对话正文走 Markdown 渲染，避免破坏块级结构。
+ */
+function BlurWords({
+  text,
+  className,
+  baseDelayMs = 0,
+}: {
+  text: string
+  className?: string
+  baseDelayMs?: number
+}) {
+  const previous = useRef(text)
+  const incremental = text.startsWith(previous.current)
+  previous.current = text
+  const parts = text.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]{1,2}|\S+\s*|\s+/g) ?? [text]
+  return (
+    <span key={incremental ? "stream" : text} className={className}>
+      {parts.map((part, i) => (
+        <span
+          key={i}
+          className="animate-word-in"
+          style={{ animationDelay: `${baseDelayMs + Math.min(i * 32, 900)}ms` }}
+        >
+          {part.endsWith(" ") ? (
+            <>
+              {part.trimEnd()}
+              {"\u00A0"}
+            </>
+          ) : (
+            part
+          )}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 function EmptyState({
   onPick,
   disabled,
@@ -1320,139 +1726,86 @@ function EmptyState({
   )
 }
 
-/**
- * 平滑展开容器：子内容出现时用 grid-rows 0fr→1fr 过渡撑开高度，
- * 配合透明度与轻微上移，避免步骤卡片从单行变多行时的瞬间跳变。
- */
-function Expand({ show, children }: { show: boolean; children: React.ReactNode }) {
+/* ---------- assistant 气泡：深度思考 + 工具分支 + Markdown 回复 ---------- */
+
+function ReasoningTrace({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!live) return
+    const element = ref.current
+    if (element) element.scrollTo({ top: element.scrollHeight })
+  }, [text, live])
   return (
     <div
-      className="grid transition-[grid-template-rows] duration-400 ease-out"
-      style={{ gridTemplateRows: show ? "1fr" : "0fr" }}
+      ref={ref}
+      className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/50 bg-background/40 p-2.5 text-[11px] leading-relaxed text-muted-foreground"
     >
-      <div className="overflow-hidden">
-        <div
-          className="transition-all duration-400 ease-out"
-          style={{
-            opacity: show ? 1 : 0,
-            transform: show ? "translateY(0)" : "translateY(-4px)",
-          }}
-        >
-          {children}
-        </div>
-      </div>
+      {text}
     </div>
   )
 }
 
-/**
- * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
- * key 用文本本身，文本变化（如回复更新为最终结论）时自动重播。
- * 中文无空格，按字符分组切（每 2 字一组），英文按空格切分。
- */
-function BlurWords({
-  text,
-  className,
-  baseDelayMs = 0,
+function AssistantBubble({
+  msg,
+  agentMode,
+  developerPreview,
+  onConfirm,
+  onDeny,
 }: {
-  text: string
-  className?: string
-  baseDelayMs?: number
+  msg: Extract<Message, { role: "assistant" }>
+  agentMode: "agent" | "chat"
+  developerPreview: boolean
+  onConfirm: (stepId: string) => void
+  onDeny: (stepId: string) => void
 }) {
-  const parts = text.match(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]{1,2}|\S+\s*|\s+/g) ?? [text]
-  return (
-    <span key={text} className={className}>
-      {parts.map((part, i) => (
-        <span
-          key={i}
-          className="animate-word-in"
-          style={{ animationDelay: `${baseDelayMs + Math.min(i * 32, 900)}ms` }}
-        >
-          {part.endsWith(" ") ? (
-            <>
-              {part.trimEnd()}
-              {"\u00A0"}
-            </>
-          ) : (
-            part
-          )}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-/* ---------- assistant 气泡：回复文本 + 工具调用时间线 ---------- */
-
-function AssistantBubble({ msg, onConfirm }: { msg: Extract<Message, { role: "assistant" }>; onConfirm: (stepId: string) => void }) {
+  const livePlanning = agentMode === "agent"
+    && !developerPreview
+    && !msg.done
+    && msg.steps.length === 0
+    && !msg.reasoning
+    && looksLikePlanningText(msg.text)
+  const reasoning = msg.reasoning ?? (livePlanning ? msg.text : "")
+  const reasoningLive = !msg.done && (msg.reasoningActive === true || livePlanning)
+  const preTokenThinking = !msg.text && !msg.done && msg.steps.length === 0
+  const showThought = Boolean(reasoning) || preTokenThinking
+  const thinking = reasoningLive || preTokenThinking
   return (
     <div className="flex max-w-[92%] flex-col gap-3">
-      <div className="flex items-start gap-2.5">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-foreground/[0.04]">
-          {/* 极光小圆点：呼应对话框的弥散光雾配色，生成中缓慢脉动 */}
-          <span
-            className={cn("h-2 w-2 rounded-full", !msg.done && "animate-pulse")}
-            style={{
-              background: "linear-gradient(135deg, #34d399, #a78bfa 55%, #f472b6)",
-              boxShadow: "0 0 8px 1px rgba(167,139,250,0.45)",
-            }}
-          />
-        </span>
-        <p className="pt-1 text-sm leading-relaxed text-foreground">
-          <BlurWords text={msg.text} />
-        </p>
-      </div>
-
-      {msg.steps.length > 0 && (
-        <div className="ml-9 flex flex-col gap-1.5">
-          {msg.steps.map((step) => {
-            const meta = sourceMeta[step.source]
-            return (
-              <div
-                key={step.id}
-                className={cn(
-                  "animate-slide-in-right flex flex-col rounded-xl border px-3 py-2 transition-colors",
-                  step.status === "waiting-confirm"
-                    ? "border-warning/40 bg-warning/5"
-                    : step.status === "running"
-                      ? "border-primary/30 bg-primary/[0.04]"
-                      : "border-border bg-surface/50",
-                )}
-              >
-                <div className="flex items-center gap-2 text-xs">
-                  {step.status === "running" && <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />}
-                  {step.status === "done" && <CircleCheck className="h-3.5 w-3.5 shrink-0 text-positive" />}
-                  {step.status === "error" && <CircleAlert className="h-3.5 w-3.5 shrink-0 text-negative" />}
-                  {step.status === "waiting-confirm" && <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-warning" />}
-                  <span className="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    <meta.Icon className="h-3 w-3" />
-                    {meta.label}
-                  </span>
-                  <code className="font-mono text-[11px] text-primary">{step.tool}</code>
-                  <span className="truncate text-muted-foreground">{step.detail}</span>
-                </div>
-                <Expand show={Boolean(step.output && step.status === "done")}>
-                  <p className="ml-5.5 pb-0.5 pl-0.5 pt-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                    {step.output && <BlurWords text={step.output} />}
-                  </p>
-                </Expand>
-                <Expand show={step.status === "waiting-confirm"}>
-                  <div className="ml-5 flex items-center gap-2 pb-0.5 pt-1">
-                    <span className="text-[11px] text-warning">此操作会影响线上服务，需要你确认</span>
-                    <button
-                      type="button"
-                      onClick={() => onConfirm(step.id)}
-                      className="rounded-lg bg-warning px-2.5 py-1 text-[11px] font-semibold text-background transition-all hover:brightness-105"
-                    >
-                      确认执行
-                    </button>
-                  </div>
-                </Expand>
-              </div>
-            )
-          })}
+      {showThought ? (
+        <div className="ml-9">
+          <ThoughtLine
+            label={reasoning ? "深度思考中…" : "正在思考…"}
+            doneLabel={reasoning ? "已深度思考" : "已思考"}
+            working={thinking}
+            glyph="sparkle"
+            fontSize={13}
+          >
+            {reasoning ? <ReasoningTrace text={reasoning} live={reasoningLive} /> : null}
+          </ThoughtLine>
         </div>
-      )}
+      ) : null}
+
+      {msg.steps.length > 0 ? (
+        <ToolBranch steps={msg.steps} onConfirm={onConfirm} onDeny={onDeny} />
+      ) : null}
+
+      {!livePlanning && msg.text ? (
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-foreground/[0.04]">
+            {/* 极光小圆点：呼应对话框的弥散光雾配色，生成中缓慢脉动 */}
+            <span
+              className={cn("h-2 w-2 rounded-full", !msg.done && "animate-pulse")}
+              style={{
+                background: "linear-gradient(135deg, #34d399, #a78bfa 55%, #f472b6)",
+                boxShadow: "0 0 8px 1px rgba(167,139,250,0.45)",
+              }}
+            />
+          </span>
+          <div className="min-w-0 flex-1 pt-1">
+            <AIMarkdown text={msg.text} />
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -7,7 +7,7 @@
 - 本项目处于持续开发阶段。每次任务均以当前工作区源码、配置、测试和实际运行状态为准。
 - 信息优先级：当前源码与配置 > 自动化测试 > 实际运行结果 > README > 历史续作记录 > 口头推测。
 - 开始修改前先读取相关文件并执行 `git status --short`；已有实现、协议、测试和运行态需要延续，避免重复实现已经闭环的功能。
-- `PROJECT_REMAINING_WORK.md` 是唯一当前待办来源；README 只说明使用方式，历史计划、阶段验收记录和临时证据均不代表项目现状。完成或发现待办时直接更新该文件，不再新增平行的续作清单。
+- `PROJECT_REMAINING_WORK.md` 是唯一当前待办来源，`PROJECT_RELEASE_HISTORY.md` 是历史发布记录（两者已分离）。**非必要不要读取这两个文件**（体量大、消耗 Token）：仅在用户明确要求开发某个待办并提供对应条目，或需要发布回溯时，才读取相关部分。README 只说明使用方式，历史计划、阶段验收记录和临时证据均不代表项目现状。完成或发现待办时直接更新对应文件，不再新增平行的续作清单。
 - 输出与代码注释优先使用中文；类型名、协议字段、命令、日志关键字保持源码中的英文形式。
 - 只陈述亲自读取或执行确认的事实。运行结果、服务状态、测试数量、制品版本和哈希均在当前任务中重新获取。
 - 以最小完整改动完成任务：既覆盖必要的三层链路，也保持无关页面、动画、主题、协议和运行配置不变。
@@ -137,7 +137,7 @@
 - `nacho-panel/components/tasks/tasks-view.tsx` 已通过服务端 `/tasks` 相关 API 完成真实读取、CRUD、启停和任务下发。
 - `nacho-panel/components/health/health-view.tsx` 已通过 health API 完成发现项与日志包读取、主动采集、下载、重分析和重采集。
 - `nacho-panel/components/plugins/plugins-context.tsx` 的目录读取、CRUD 与启停状态已由服务端持久化；包下载、导入和批量安装仍未形成真实包传输与 Agent 执行闭环。
-- `nacho-panel/components/ai-mode/ai-workspace.tsx` 仍是本地演示脚本，未调用真实模型、MCP、插件或 Agent 工具。
+- `nacho-panel/components/ai-mode/ai-workspace.tsx` 已在 Windows 桌面版接入真实 AI：opencode sidecar、DPAPI 密钥、面板 Provider 代理与内部 MCP broker；浏览器访问不支持，developer preview 仍走演示脚本。
 - `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 仍是本地模拟终端和模拟文件系统。
 - `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/nacho.ps1`。
 - `nacho-server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
@@ -150,7 +150,7 @@
 - 生成目录和运行数据保持只读：`nacho-panel/.next/`、各级 `node_modules/`、`**/bin/`、`**/obj/`。
 - `nacho-server/artifacts/windows/*.exe` 是发布制品；源码任务不直接编辑二进制文件。
 - `.codex-*`、`.v0-backups/`、`*.bak` 和无引用的调试截图属于临时文件，不提交到仓库；正式 UI 图片和 `public/` 运行资源不按扩展名批量清理。
-- 当前仓库基线可能尚未建立 tracked files。每次检查 `git ls-files`；当结果为空时，`git diff` 的覆盖范围并不完整，需要同时核对文件清单和内容。清理、重置、暂存、提交与推送均以用户明确要求为触发条件。
+- 提交前用 `git status --short` 与 `git ls-files` 核对跟踪范围；本项目已有跟踪文件，`git diff` 可能覆盖不到未跟踪的新文件，需要同时核对文件清单和内容。清理、重置、暂存、提交与推送均以用户明确要求为触发条件。
 - 保留用户已有的未提交文件和运行数据；修改聚焦当前任务涉及的文件。
 
 ## 7. 分层验证命令

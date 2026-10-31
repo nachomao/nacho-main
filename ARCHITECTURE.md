@@ -166,9 +166,20 @@ powershell -ExecutionPolicy Bypass -File client/deploy/publish.ps1
 
 以下功能**尚未形成真实链路**，界面可用但不是生产实现：
 
-- 面板 AI 工作区是本地演示脚本，未调用真实模型或工具
+- 面板 AI Mode 已接入本地 opencode（Windows 桌面版）；浏览器访问不支持，developer preview 保留演示脚本
 - 面板 WebSSH 是模拟终端和模拟文件系统
 - 面板脚本页主要在浏览器本地生成，安装对话框才下载服务端真实生成的 `/nacho.ps1`
 - 插件的包下载、导入和批量安装没有真实传输与 Agent 执行闭环
 
 判断功能真假时以代码行为为准，不以注释为准。
+
+## 10. AI Mode（桌面本地）
+
+- 拓扑：面板渲染进程 → 同源 `/api/ai/*` → 面板 Next 进程 → 本机 opencode sidecar（`--pure`，127.0.0.1、随机端口与 Basic Auth）→ 面板 Provider 代理 / 内部 MCP broker → 控制服务端 `/api/panel/*`。
+- opencode 只拿到随机代理 Token 与 broker Token；真实 Provider Key 用 Windows DPAPI 保存在 `%LOCALAPPDATA%\NachoPanel\ai-settings.json`，不进入 sidecar 环境或配置。
+- 本机代码工具（bash/edit/read/write/grep 等）由 opencode permission 与会话规则控制；受管客户端工具由内部 MCP broker 执行并二次审批，直接调用 broker 也不能绕过危险确认。
+- 用户 MCP 仅支持 HTTP remote，Token 由设置页写入并加密保存；MCP 工具名以 `<server>_<tool>` 暴露，危险确认走 opencode permission。
+- 图片输入：输入框支持选择、粘贴或拖入 PNG/JPEG/WebP/GIF；非 GIF 图片在浏览器侧缩放到最长边 1568 px 后转为 JPEG，单图上限 4 MB、最多 3 张、总计 10 MB；面板以 opencode `file` part 发送，模型配置声明 `attachment` 与 `modalities`，Provider 代理上限 32 MB 以容纳多轮历史图片。
+- 消息展示：工具调用以可折叠时间线置于正文上方，全部结束后自动折叠；正文按 GFM Markdown 渲染，支持标题、列表、表格、代码块与软换行。
+- 限制：仅 Windows 桌面版；浏览器返回 `desktop-only`；不提供系统重启、本地用户/注册表管理、安装包与文件部署；会话不跨面板刷新持久化。
+

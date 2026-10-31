@@ -67,6 +67,8 @@ type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; message?: string; err
 
 type ServerDataContextValue = {
   serverBaseUrl: string
+  /** 当前控制服务端连接；AI 工具 broker 需要它转发请求。 */
+  serverConnection: { baseUrl: string; key: string } | null
   /** 开发者预览模式：使用内置演示数据，不连接真实控制服务端。 */
   developerPreview: boolean
   overview: Overview | null
@@ -318,7 +320,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   }, [connection, developerPreview, onboardingHydrated, refresh])
 
   const value = useMemo(
-    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), developerPreview, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),
+    () => ({ serverBaseUrl: connection?.baseUrl || defaultServerBaseUrl(), serverConnection: connection, developerPreview, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate }),
     [connection, developerPreview, overview, clients, groups, logs, notifications, notificationError, markNotificationRead, markAllNotificationsRead, clearNotifications, snoozeNotification, snoozeNotificationGroup, markNotificationGroupRead, loading, refreshing, error, refresh, apiRequest, uploadRequest, downloadRequest, transferProductUpdate],
   )
 

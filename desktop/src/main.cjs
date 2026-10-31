@@ -15,9 +15,11 @@ const { createUpdater } = require("./updates.cjs")
 const { createConnectionStore, registerConnectionIpc } = require("./connection-store.cjs")
 const { configureConnectionContext } = require("./connection-context.cjs")
 const { createCredentialProtector } = require("./credential-protector.cjs")
+const { killRuntimeProcess } = require("./ai-process.cjs")
 
 // 必须在 app.ready 及 safeStorage 初始化之前固定 profile，避免不同启动方式共用密文却使用不同密钥。
 const connectionPaths = configureConnectionContext(app)
+const aiRuntimePath = path.join(connectionPaths.dataDirectory, "ai-runtime.json")
 
 let mainWindow = null
 let connectionStore = null
@@ -111,6 +113,17 @@ function killPanelProcess() {
   })
 }
 
+function getUnpackedPath(fileName) {
+  const base = __dirname.replace(/app\.asar(?=$|[\\/])/, "app.asar.unpacked")
+  return path.join(base, fileName)
+}
+
+function getOpencodeBinaryPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "opencode", "opencode.exe")
+    : path.join(__dirname, "opencode", "opencode.exe")
+}
+
 async function startPanelServer() {
   panelPort = await getFreePort()
   const panelDir = app.isPackaged
@@ -131,6 +144,10 @@ async function startPanelServer() {
       PORT: String(panelPort),
       NODE_PATH: [panelDependenciesDir, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
       NACHO_PANEL_SETTINGS_PATH: process.env.NACHO_PANEL_SETTINGS_PATH || path.join(connectionPaths.dataDirectory, "panel-settings.json"),
+      NACHO_PANEL_DESKTOP: "1",
+      NACHO_AI_DATA_DIR: connectionPaths.dataDirectory,
+      NACHO_CREDENTIAL_PROTECTOR: getUnpackedPath("nacho-credential-protector.exe"),
+      NACHO_OPENCODE_BINARY: getOpencodeBinaryPath(),
     },
     stdio: "pipe",
   })
@@ -149,6 +166,7 @@ async function startPanelServer() {
   panelProcess.once("exit", (code, signal) => {
     panelProcessExited = true
     log(`面板服务退出 code=${code} signal=${signal}`, errorOutput)
+    killRuntimeProcess(aiRuntimePath)
     if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
       void dialog.showMessageBox(mainWindow, {
         type: "error",
@@ -308,6 +326,7 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     updates.unsubscribe()
+    killRuntimeProcess(aiRuntimePath)
     if (isQuitting) return
     isQuitting = true
     if (panelProcess && !panelProcessExited) {

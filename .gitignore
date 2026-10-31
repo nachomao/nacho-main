@@ -21,11 +21,9 @@ node_modules
 nacho-panel/tmp/
 tmp-*.ps1
 
-# Lock files: 面板与根包统一用 pnpm（packageManager=pnpm@10.28.2），
-# npm 锁文件只保留服务端实际执行 npm ci 所需的那一份。
+# Lock files: 面板与根包统一用 pnpm（packageManager=pnpm@10.28.2），不保留 npm 锁文件。
 nacho-panel/package-lock.json
 package-lock.json
-!server/package-lock.json
 
 # 运行时数据与密钥
 .env
@@ -39,7 +37,6 @@ tmp-script-check/
 # 编译与打包中间产物
 **/bin/
 **/obj/
-server/dist/
 **/*.tsbuildinfo
 *.log
 *.pid
@@ -54,4 +51,3 @@ desktop/build/
 desktop/native/**/bin/
 desktop/native/**/obj/
 desktop/build.log
-desktop/nacho-main/desktop/update-source.json

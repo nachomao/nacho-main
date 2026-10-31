@@ -1,6 +1,6 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "releaseChannel": "beta",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
@@ -13,7 +13,8 @@
     "bump-version": "node scripts/bump-version.cjs",
     "build:panel": "node scripts/build-panel.cjs",
     "build:credentials": "node scripts/build-credentials.cjs",
-    "stage": "pnpm run build:credentials && node scripts/stage-app.cjs",
+    "build:opencode": "node scripts/fetch-opencode.cjs",
+    "stage": "pnpm run build:credentials && pnpm run build:opencode && node scripts/stage-app.cjs",
     "build": "pnpm run build:panel && pnpm run stage && node scripts/build-desktop.cjs",
     "start": "pnpm run stage && electron .",
     "pack": "pnpm run stage && node scripts/build-desktop.cjs --dir",
@@ -39,7 +40,8 @@
     "files": [
       "**/*",
       "!panel/**",
-      "!panel-deps/**"
+      "!panel-deps/**",
+      "!opencode/**"
     ],
     "extraResources": [
       {
@@ -49,6 +51,10 @@
       {
         "from": "app/panel-deps",
         "to": "panel-deps"
+      },
+      {
+        "from": "app/opencode",
+        "to": "opencode"
       }
     ],
     "win": {

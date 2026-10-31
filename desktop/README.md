@@ -38,11 +38,21 @@ desktop/dist/NachoPanel/NachoPanel-Setup-<version>.exe
 如果使用面板中的“Windows 本机控制服务”管理功能，需要通过环境变量提供外部 `server/` 项目目录：
 
 ```powershell
-$env:NACHO_LOCAL_SERVER_DIR = "C:\Users\Administrator\Documents\Codex\Nacho\nacho-main\server"
+$env:NACHO_LOCAL_SERVER_DIR = "C:\Users\Administrator\Documents\Codex\Nacho\nacho-server"
 & "$env:LOCALAPPDATA\Programs\NachoPanel\NachoPanel.exe"
 ```
 
 安装目录中不会复制服务端源码、Agent 源码、SQLite 数据库或运行配置。若选择了其他安装目录，请将示例中的 EXE 路径替换为实际路径。
+
+## AI Mode（桌面本地）
+
+- AI Mode 只在 Windows 桌面版可用。浏览器访问面板时，AI 相关接口返回 `desktop-only`，不会写入任何本机密钥。
+- 安装包随附固定版本的 opencode（1.19.5，MIT，见 `THIRD_PARTY_NOTICES.md`），位于 `resources/opencode/opencode.exe`。运行时以 `--pure --hostname 127.0.0.1` 启动，隔离 HOME/XDG 数据目录，不安装外部插件，也不会自我更新。
+- 模型 Provider 指向面板进程内的本地代理；真实 API Key 由 DPAPI helper 加密保存在 `%LOCALAPPDATA%\NachoPanel\ai-settings.json`，不会进入 opencode 进程或其日志。
+- 本机代码工具（bash/edit/read/grep 等）只作用于面板所在机器；受管客户端操作通过内部 MCP broker 调用控制服务端 `/api/panel/*`。危险操作会等待面板确认，直接调用 broker 也不能绕过。
+- opencode 会话、工作区、MCP 配置和日志位于 `%LOCALAPPDATA%\NachoPanel\opencode`、`ai-workspace` 与 `ai-opencode.log`。卸载默认保留 AI 设置与工作区。
+- 面板侧会话快照保存在同目录的 `ai-chat-history.json`，`uiSessionId → opencodeSessionId` 映射保存在 `ai-chat-session-map.json`；历史中的图片正文不落盘，重启后显示文件占位。
+- 升级 opencode 必须更新 `opencode.lock.json` 并重新执行 `build:opencode`、桌面测试和 EXE 打包；不要在运行时替换二进制。
 
 ## GitHub 下载与镜像
 

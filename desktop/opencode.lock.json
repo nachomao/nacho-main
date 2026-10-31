@@ -1,0 +1,58 @@
+{
+  "$comment": "Pinned opencode runtime for Nacho desktop AI Mode. Phase 0 gate verified 2026-10-30 on Windows 10 x64. Do not upgrade without re-running the gate.",
+  "version": "1.19.5",
+  "license": "MIT",
+  "licenseSource": {
+    "package": "opencode-ai",
+    "version": "1.19.5",
+    "tarball": "https://registry.npmmirror.com/opencode-ai/-/opencode-ai-1.19.5.tgz",
+    "shasum": "4fb49717dfc8ca5fa97ab9823dadf4be3e244e82",
+    "integrity": "sha512-tEqMvQahfhdDj8vceYpXtoIrvjPXm5XRfetWnPN5YISueU7adNx9JcUA3zZ+2GKuDVgDpGdQe1ZLtCZDjqodvA==",
+    "path": "package/LICENSE"
+  },
+  "source": {
+    "type": "npm",
+    "package": "opencode-windows-x64",
+    "version": "1.19.5",
+    "tarball": "https://registry.npmmirror.com/opencode-windows-x64/-/opencode-windows-x64-1.19.5.tgz",
+    "shasum": "ff5597d752abc3ead76b93a3124a0f26441d8059",
+    "integrity": "sha512-xCVbrA8A/qQTAdBIKyhK5tx3/mcq18yF82Mi8phry0MJb2631nnnpxF9m6FFfWAVHyer4qFGrO7hbWXesHQ1Gg==",
+    "tarballSize": 79636104
+  },
+  "binary": {
+    "path": "package/bin/opencode.exe",
+    "size": 211564424,
+    "sha256": "d7b473388cb62555970e400ce54cdfb6d6573608beea6f8fdf382cd1a698a3fa"
+  },
+  "runtime": {
+    "mode": "pure",
+    "args": ["serve", "--pure", "--hostname", "127.0.0.1"],
+    "auth": {
+      "usernameEnv": "OPENCODE_SERVER_USERNAME",
+      "username": "opencode",
+      "passwordEnv": "OPENCODE_SERVER_PASSWORD"
+    },
+    "mcpProtocolVersion": "2025-11-25",
+    "provider": {
+      "id": "nacho",
+      "npm": "@ai-sdk/openai-compatible",
+      "note": "Provider package is bundled; --pure prevents the 61MB @opencode-ai/plugin runtime install."
+    }
+  },
+  "verified": {
+    "date": "2026-10-30",
+    "checks": [
+      "binary --version = 1.19.5",
+      "GET /global/health requires Basic auth and returns healthy",
+      "GET /doc exposes session, prompt_async, event, abort and permission reply endpoints",
+      "OpenAI-compatible provider streams via local proxy; real key never enters sidecar profile",
+      "message.part.delta, tool part states, permission.asked/replied, session.idle captured",
+      "permission reply once/always/reject works; last matching session rule wins",
+      "remote Streamable HTTP MCP connects, lists and calls tools; permission asks for MCP tool",
+      "prompt tools {\"*\":false} disables all tools for chat mode",
+      "per-prompt model override and per-session permission rules work without restart",
+      "isolated HOME/XDG; no runtime npm install under --pure",
+      "process tree must be killed with taskkill /PID <pid> /T /F; wrapper stop alone leaves opencode.exe"
+    ]
+  }
+}
