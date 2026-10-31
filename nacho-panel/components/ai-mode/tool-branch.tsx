@@ -48,19 +48,19 @@ function statusLabel(status: Status) {
   return "等待确认"
 }
 
-function aggregateStatus(steps: ToolStep[]): Status {
+function aggregateStatus(steps: ToolStep[], settled = true): Status {
   if (steps.some((step) => step.status === "waiting-confirm")) return "waiting-confirm"
-  if (steps.some((step) => step.status === "running")) return "running"
+  if (!settled || steps.some((step) => step.status === "running")) return "running"
   if (steps.some((step) => step.status === "error")) return "error"
   return "done"
 }
 
-function summaryText(steps: ToolStep[]) {
+function summaryText(steps: ToolStep[], settled: boolean) {
   const done = steps.filter((step) => step.status === "done").length
   const error = steps.filter((step) => step.status === "error").length
   const waiting = steps.filter((step) => step.status === "waiting-confirm").length
   if (waiting > 0) return `${done}/${steps.length} 完成 · ${waiting} 待确认`
-  if (steps.some((step) => step.status === "running")) return `${done}/${steps.length} 完成 · 执行中`
+  if (!settled || steps.some((step) => step.status === "running")) return `${done}/${steps.length} 完成 · 执行中`
   if (error > 0) return `${done}/${steps.length} 完成 · ${error} 失败`
   return "全部完成"
 }
@@ -152,10 +152,13 @@ function ToolStepDetail({
 
 export function ToolBranch({
   steps,
+  settled,
   onConfirm,
   onDeny,
 }: {
   steps: ToolStep[]
+  /** 本轮回复已结束，不会再追加新的工具调用 */
+  settled: boolean
   onConfirm: (stepId: string) => void
   onDeny: (stepId: string) => void
 }) {
@@ -169,10 +172,12 @@ export function ToolBranch({
   const markerTopRef = useRef<number | null>(null)
   const rowRefs = useRef(new Map<string, HTMLButtonElement>())
 
-  const active = steps.some((step) => step.status === "running" || step.status === "waiting-confirm")
+  // 相邻两次工具调用之间会出现“上一个已完成、下一个还没出现”的空档，
+  // 只看步骤状态会在每个工具结束时误判为全部完成并折叠，所以以整轮回复结束为准
+  const active = !settled || steps.some((step) => step.status === "running" || step.status === "waiting-confirm")
   const expanded = manualOpen ?? active
   const selected = steps.find((step) => step.id === selectedId) ?? null
-  const summaryStatus = aggregateStatus(steps)
+  const summaryStatus = aggregateStatus(steps, settled)
   const drawDuration = reduceMotion ? 0 : DRAW_DURATION
   const foldDuration = reduceMotion ? 0 : FOLD_DURATION
   const hasSteps = steps.length > 0
@@ -259,7 +264,7 @@ export function ToolBranch({
         <span className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
           {steps.length}
         </span>
-        <span className="min-w-0 flex-1 truncate">{summaryText(steps)}</span>
+        <span className="min-w-0 flex-1 truncate">{summaryText(steps, settled)}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
       </button>
 

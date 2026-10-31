@@ -863,6 +863,12 @@ export function AIWorkspace() {
     if (step.approvalId) {
       void postAIApproval({ uiSessionId: sid, approvalId: step.approvalId, decision: "reject" }).catch(() => undefined)
     } else {
+      patchSession(sid, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === msgId && m.role === "assistant" ? { ...m, done: true } : m,
+        ),
+      }))
       setBusy(false)
     }
   }
@@ -1807,7 +1813,7 @@ function AssistantBubble({
       ) : null}
 
       {msg.steps.length > 0 ? (
-        <ToolBranch steps={msg.steps} onConfirm={onConfirm} onDeny={onDeny} />
+        <ToolBranch steps={msg.steps} settled={msg.done} onConfirm={onConfirm} onDeny={onDeny} />
       ) : null}
 
       {!livePlanning && msg.text ? (
