@@ -103,6 +103,23 @@ test("normalization drops invalid entries and falls back to the first session", 
   assert.equal(normalizePersistedChatHistory("nope"), null)
 })
 
+test("persisted history keeps ThoughtLine seconds and drops invalid values", () => {
+  const assistant = (id: string, thoughtSeconds: unknown) =>
+    ({ id, role: "assistant", text: "回复", steps: [], done: true, thoughtSeconds }) as Session["messages"][number]
+  const history = toPersistedChatHistory([
+    session("s1", [
+      assistant("a1", 4.26),
+      assistant("a2", -1),
+      assistant("a3", Number.NaN),
+      assistant("a4", "3"),
+      assistant("a5", 90_000),
+    ]),
+  ], "s1")
+  const seconds = history.sessions[0].messages.map((message) =>
+    message.role === "assistant" ? message.thoughtSeconds : null)
+  assert.deepEqual(seconds, [4.3, undefined, undefined, undefined, undefined])
+})
+
 test("session ids stay within the persisted id pattern", () => {
   const id = createChatSessionId()
   assert.match(id, /^[A-Za-z0-9_:-]{1,160}$/)

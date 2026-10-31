@@ -15,6 +15,7 @@ export const MAX_AI_CHAT_HISTORY_TITLE_CHARS = 200
 export const MAX_AI_CHAT_HISTORY_ID_CHARS = 160
 export const MAX_AI_CHAT_HISTORY_ATTACHMENTS = 3
 export const MAX_AI_CHAT_HISTORY_ATTACHMENT_NAME_CHARS = 128
+export const MAX_AI_CHAT_THOUGHT_SECONDS = 24 * 60 * 60
 
 export type StepStatus = "running" | "done" | "error" | "waiting-confirm"
 
@@ -48,6 +49,8 @@ export type Message =
       done: boolean
       reasoning?: string
       reasoningActive?: boolean
+      /** ThoughtLine 实时计时的累计思考秒数，保留一位小数。 */
+      thoughtSeconds?: number
     }
 
 export type Session = { id: string; title: string; createdAt: number; messages: Message[] }
@@ -93,6 +96,12 @@ function normalizeText(value: unknown, maximum: number): string {
 function normalizeOptionalText(value: unknown, maximum: number): string | undefined {
   if (typeof value !== "string" || !value) return undefined
   return value.length > maximum ? value.slice(0, maximum) : value
+}
+
+function normalizeThoughtSeconds(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  if (value < 0 || value > MAX_AI_CHAT_THOUGHT_SECONDS) return undefined
+  return Math.round(value * 10) / 10
 }
 
 function normalizeAttachment(value: unknown): MessageAttachment | null {
@@ -166,6 +175,7 @@ function normalizeMessage(value: unknown): Message | null {
         .filter((item): item is ToolStep => Boolean(item))
       : []
     const reasoning = normalizeOptionalText(value.reasoning, MAX_AI_CHAT_HISTORY_TEXT_CHARS)
+    const thoughtSeconds = normalizeThoughtSeconds(value.thoughtSeconds)
     return {
       id,
       role: "assistant",
@@ -174,6 +184,7 @@ function normalizeMessage(value: unknown): Message | null {
       done: value.done === true,
       ...(reasoning ? { reasoning } : {}),
       reasoningActive: value.reasoningActive === true,
+      ...(thoughtSeconds !== undefined ? { thoughtSeconds } : {}),
     }
   }
   return null
@@ -255,6 +266,7 @@ function copyMessageForPersistence(message: Message): Message {
     done: message.done,
     ...(message.reasoning ? { reasoning: message.reasoning } : {}),
     reasoningActive: false,
+    ...(message.thoughtSeconds !== undefined ? { thoughtSeconds: message.thoughtSeconds } : {}),
   }
 }
 
