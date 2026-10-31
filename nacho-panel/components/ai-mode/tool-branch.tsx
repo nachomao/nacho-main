@@ -3,9 +3,10 @@
 /* 工具调用分支：改编自 React Bits BranchedMenu
  * https://reactbits.dev/micro/branched-menu
  * MIT + Commons Clause，Copyright (c) 2026 David Haz。
- * 本实现用来源分组 + 选中项详情面板替换原来的工具卡片，并接入面板动效偏好。 */
+ * 本实现用来源分组 + 选中项详情面板替换原来的工具卡片，并接入面板动效偏好；
+ * 卡片展开、分组折叠、新增步骤与详情切换都通过 AutoHeight 平滑过渡高度。 */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   CircleAlert,
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { useMotionPreference } from "@/lib/motion-preference"
 import { firstWaitingStepId, groupToolSteps } from "@/lib/ai/tool-groups"
 import type { ToolStep } from "@/lib/ai/chat-history"
+import { AutoHeight } from "@/components/ui/auto-height"
 import { sourceMeta } from "./tool-source-meta"
 
 const PAD = 6
@@ -46,43 +48,42 @@ function statusLabel(status: Status) {
   return "等待确认"
 }
 
-function aggregateStatus(steps: ToolStep[]): Status {
+function aggregateStatus(steps: ToolStep[], settled = true): Status {
   if (steps.some((step) => step.status === "waiting-confirm")) return "waiting-confirm"
-  if (steps.some((step) => step.status === "running")) return "running"
+  if (!settled || steps.some((step) => step.status === "running")) return "running"
   if (steps.some((step) => step.status === "error")) return "error"
   return "done"
 }
 
-function summaryText(steps: ToolStep[]) {
+function summaryText(steps: ToolStep[], settled: boolean) {
   const done = steps.filter((step) => step.status === "done").length
   const error = steps.filter((step) => step.status === "error").length
   const waiting = steps.filter((step) => step.status === "waiting-confirm").length
   if (waiting > 0) return `${done}/${steps.length} 完成 · ${waiting} 待确认`
-  if (steps.some((step) => step.status === "running")) return `${done}/${steps.length} 完成 · 执行中`
+  if (!settled || steps.some((step) => step.status === "running")) return `${done}/${steps.length} 完成 · 执行中`
   if (error > 0) return `${done}/${steps.length} 完成 · ${error} 失败`
   return "全部完成"
 }
 
-function Fold({ show, duration, children }: { show: boolean; duration: number; children: ReactNode }) {
-  return (
-    <div
-      className="grid [grid-template-rows:0fr]"
-      style={{
-        gridTemplateRows: show ? "1fr" : "0fr",
-        transition: `grid-template-rows ${duration}ms cubic-bezier(0.23,1,0.32,1)`,
-      }}
-    >
-      <div className="min-h-0 overflow-hidden">{children}</div>
-    </div>
-  )
+/** 布局坐标（不受祖先 transform 影响）：沿 offsetParent 链累加到指定祖先。 */
+function offsetTopWithin(element: HTMLElement, ancestor: HTMLElement) {
+  let top = 0
+  let node: HTMLElement | null = element
+  while (node && node !== ancestor) {
+    top += node.offsetTop
+    node = node.offsetParent instanceof HTMLElement ? node.offsetParent : null
+  }
+  return node === ancestor ? top : null
 }
 
 function ToolStepDetail({
   step,
+  className,
   onConfirm,
   onDeny,
 }: {
   step: ToolStep
+  className?: string
   onConfirm: (stepId: string) => void
   onDeny: (stepId: string) => void
 }) {
@@ -93,6 +94,7 @@ function ToolStepDetail({
       className={cn(
         "mt-3 rounded-lg border p-3",
         waiting ? "border-warning/40 bg-warning/5" : "border-border/60 bg-background/40",
+        className,
       )}
     >
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -150,28 +152,37 @@ function ToolStepDetail({
 
 export function ToolBranch({
   steps,
+  settled,
   onConfirm,
   onDeny,
 }: {
   steps: ToolStep[]
+  /** 本轮回复已结束，不会再追加新的工具调用 */
+  settled: boolean
   onConfirm: (stepId: string) => void
   onDeny: (stepId: string) => void
 }) {
   const { reduceMotion } = useMotionPreference()
   const groups = useMemo(() => groupToolSteps(steps), [steps])
   const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const [selectedId, setSelectedId] = useState("")
+  const [selectedId, setSelectedId] = useState(() => firstWaitingStepId(steps) ?? steps.at(-1)?.id ?? "")
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const navRef = useRef<HTMLElement>(null)
   const markerRef = useRef<HTMLSpanElement>(null)
+  const markerTopRef = useRef<number | null>(null)
   const rowRefs = useRef(new Map<string, HTMLButtonElement>())
 
-  const active = steps.some((step) => step.status === "running" || step.status === "waiting-confirm")
+  // 相邻两次工具调用之间会出现“上一个已完成、下一个还没出现”的空档，
+  // 只看步骤状态会在每个工具结束时误判为全部完成并折叠，所以以整轮回复结束为准
+  const active = !settled || steps.some((step) => step.status === "running" || step.status === "waiting-confirm")
   const expanded = manualOpen ?? active
   const selected = steps.find((step) => step.id === selectedId) ?? null
-  const summaryStatus = aggregateStatus(steps)
+  const summaryStatus = aggregateStatus(steps, settled)
   const drawDuration = reduceMotion ? 0 : DRAW_DURATION
   const foldDuration = reduceMotion ? 0 : FOLD_DURATION
+  const hasSteps = steps.length > 0
+  // 只有实时出现的卡片做入场淡入；切换到历史会话时直接呈现
+  const [entering] = useState(() => active && !reduceMotion)
 
   useEffect(() => {
     if (!steps.length) {
@@ -188,21 +199,46 @@ export function ToolBranch({
     setSelectedId(steps[steps.length - 1].id)
   }, [steps, selectedId])
 
-  useEffect(() => {
+  // glide=true：切换选中项时滑动；glide=false：上方分组正在折叠 / 展开时逐帧贴住所选行
+  const placeMarker = useEffectEvent((glide: boolean) => {
     const nav = navRef.current
     const marker = markerRef.current
     if (!nav || !marker) return
     const selectedStep = steps.find((step) => step.id === selectedId)
     const row = rowRefs.current.get(selectedId)
-    if (!expanded || !selectedStep || !row || collapsedGroups.has(selectedStep.source)) {
+    const rowTop = row ? offsetTopWithin(row, nav) : null
+    if (!expanded || !selectedStep || !row || rowTop === null || collapsedGroups.has(selectedStep.source)) {
       marker.removeAttribute("data-on")
+      markerTopRef.current = null
       return
     }
-    const navRect = nav.getBoundingClientRect()
-    const rowRect = row.getBoundingClientRect()
-    marker.style.top = `${rowRect.top - navRect.top + (rowRect.height - MARK) / 2}px`
+    const top = rowTop + (row.offsetHeight - MARK) / 2
+    const previous = markerTopRef.current
+    if (previous === null || Math.abs(top - previous) >= 0.5) {
+      if (glide && previous !== null) {
+        marker.style.top = `${top}px`
+      } else {
+        marker.style.transitionProperty = "opacity"
+        marker.style.top = `${top}px`
+        void marker.offsetHeight
+        marker.style.transitionProperty = ""
+      }
+      markerTopRef.current = top
+    }
     marker.setAttribute("data-on", "")
+  })
+
+  useEffect(() => {
+    placeMarker(true)
   }, [selectedId, steps, expanded, collapsedGroups])
+
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const observer = new ResizeObserver(() => placeMarker(false))
+    observer.observe(nav)
+    return () => observer.disconnect()
+  }, [hasSteps])
 
   if (!steps.length) return null
 
@@ -216,7 +252,7 @@ export function ToolBranch({
   }
 
   return (
-    <div className="ml-9 flex flex-col gap-2">
+    <div className={cn("ml-9 flex flex-col", entering && "animate-in fade-in-0 duration-300")}>
       <button
         type="button"
         aria-expanded={expanded}
@@ -228,11 +264,11 @@ export function ToolBranch({
         <span className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
           {steps.length}
         </span>
-        <span className="min-w-0 flex-1 truncate">{summaryText(steps)}</span>
+        <span className="min-w-0 flex-1 truncate">{summaryText(steps, settled)}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
       </button>
 
-      <Fold show={expanded} duration={foldDuration}>
+      <AutoHeight open={expanded} appear duration={foldDuration} innerClassName="pt-2">
         <div className="rounded-xl border border-border/60 bg-surface/30 p-2.5">
           <nav ref={navRef} className="relative w-full pl-3.5" aria-label="工具调用分支">
             <span
@@ -275,7 +311,7 @@ export function ToolBranch({
                     <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", groupOpen && "rotate-180")} />
                   </button>
 
-                  <Fold show={groupOpen} duration={foldDuration}>
+                  <AutoHeight open={groupOpen} duration={foldDuration}>
                     <div className="relative box-border py-1.5" style={{ height: bodyHeight }}>
                       <svg
                         className="pointer-events-none absolute left-0 top-0 overflow-visible opacity-100"
@@ -359,17 +395,25 @@ export function ToolBranch({
                         )
                       })}
                     </div>
-                  </Fold>
+                  </AutoHeight>
                 </section>
               )
             })}
           </nav>
 
-          {selected ? (
-            <ToolStepDetail step={selected} onConfirm={onConfirm} onDeny={onDeny} />
-          ) : null}
+          <AutoHeight duration={foldDuration}>
+            {selected ? (
+              <ToolStepDetail
+                key={selected.id}
+                step={selected}
+                className={reduceMotion ? undefined : "animate-in fade-in-0 duration-300"}
+                onConfirm={onConfirm}
+                onDeny={onDeny}
+              />
+            ) : null}
+          </AutoHeight>
         </div>
-      </Fold>
+      </AutoHeight>
     </div>
   )
 }

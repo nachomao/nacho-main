@@ -46,6 +46,7 @@ import {
 } from "@/lib/ai/client"
 import { createChatSessionId } from "@/lib/ai/chat-history"
 import { looksLikePlanningText } from "@/lib/ai/answer-separation"
+import { toThoughtSteps } from "@/lib/ai/thought-steps"
 import { resolveAIModel } from "@/lib/ai/config-shared"
 import {
   MAX_AI_ATTACHMENT_COUNT,
@@ -254,6 +255,8 @@ export function AIWorkspace() {
     }, 140)
   }
   const scrollRef = useRef<HTMLDivElement>(null)
+  const threadRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const centerSectionRef = useRef<HTMLElement>(null)
@@ -495,6 +498,26 @@ export function AIWorkspace() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages])
 
+  // 卡片展开与内容增长是逐帧过渡的：贴底阅读时跟随高度变化，避免新内容停在可视区外
+  const hasMessages = messages.length > 0
+  useEffect(() => {
+    const scroller = scrollRef.current
+    const thread = threadRef.current
+    if (!scroller || !thread) return
+    const onScroll = () => {
+      stickToBottomRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 64
+    }
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight
+    })
+    scroller.addEventListener("scroll", onScroll, { passive: true })
+    observer.observe(thread)
+    return () => {
+      scroller.removeEventListener("scroll", onScroll)
+      observer.disconnect()
+    }
+  }, [hasMessages])
+
   const schedule = (fn: () => void, ms: number) => {
     const t = setTimeout(fn, ms)
     timersRef.current.push(t)
@@ -512,6 +535,16 @@ export function AIWorkspace() {
           : m,
       ),
     }))
+
+  const recordThoughtSeconds = (msgId: string, seconds: number) => {
+    if (!active) return
+    patchSession(active.id, (s) => ({
+      ...s,
+      messages: s.messages.map((m) =>
+        m.id === msgId && m.role === "assistant" ? { ...m, thoughtSeconds: Math.round(seconds * 10) / 10 } : m,
+      ),
+    }))
+  }
 
   const updateAttachments = (next: AIChatAttachmentDraft[]) => {
     attachmentsRef.current = next
@@ -830,6 +863,12 @@ export function AIWorkspace() {
     if (step.approvalId) {
       void postAIApproval({ uiSessionId: sid, approvalId: step.approvalId, decision: "reject" }).catch(() => undefined)
     } else {
+      patchSession(sid, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === msgId && m.role === "assistant" ? { ...m, done: true } : m,
+        ),
+      }))
       setBusy(false)
     }
   }
@@ -1197,7 +1236,7 @@ export function AIWorkspace() {
                   </div>
                 )
               ) : (
-                <div className="mx-auto flex max-w-3xl flex-col gap-5 pb-2">
+                <div ref={threadRef} className="mx-auto flex max-w-3xl flex-col gap-5 pb-2">
                   {messages.map((m) =>
                     m.role === "user" ? (
                       <div key={m.id} className="flex flex-col items-end gap-2">
@@ -1240,6 +1279,7 @@ export function AIWorkspace() {
                         developerPreview={developerPreview}
                         onConfirm={(stepId) => confirmStep(m.id, stepId)}
                         onDeny={(stepId) => denyStep(m.id, stepId)}
+                        onThoughtSettle={(seconds) => recordThoughtSeconds(m.id, seconds)}
                       />
                     ),
                   )}
@@ -1728,35 +1768,20 @@ function EmptyState({
 
 /* ---------- assistant 气泡：深度思考 + 工具分支 + Markdown 回复 ---------- */
 
-function ReasoningTrace({ text, live }: { text: string; live: boolean }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!live) return
-    const element = ref.current
-    if (element) element.scrollTo({ top: element.scrollHeight })
-  }, [text, live])
-  return (
-    <div
-      ref={ref}
-      className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/50 bg-background/40 p-2.5 text-[11px] leading-relaxed text-muted-foreground"
-    >
-      {text}
-    </div>
-  )
-}
-
 function AssistantBubble({
   msg,
   agentMode,
   developerPreview,
   onConfirm,
   onDeny,
+  onThoughtSettle,
 }: {
   msg: Extract<Message, { role: "assistant" }>
   agentMode: "agent" | "chat"
   developerPreview: boolean
   onConfirm: (stepId: string) => void
   onDeny: (stepId: string) => void
+  onThoughtSettle: (seconds: number) => void
 }) {
   const livePlanning = agentMode === "agent"
     && !developerPreview
@@ -1769,6 +1794,7 @@ function AssistantBubble({
   const preTokenThinking = !msg.text && !msg.done && msg.steps.length === 0
   const showThought = Boolean(reasoning) || preTokenThinking
   const thinking = reasoningLive || preTokenThinking
+  const thoughtSteps = useMemo(() => toThoughtSteps(reasoning), [reasoning])
   return (
     <div className="flex max-w-[92%] flex-col gap-3">
       {showThought ? (
@@ -1777,16 +1803,17 @@ function AssistantBubble({
             label={reasoning ? "深度思考中…" : "正在思考…"}
             doneLabel={reasoning ? "已深度思考" : "已思考"}
             working={thinking}
+            steps={thoughtSteps}
+            elapsed={msg.thoughtSeconds}
+            onSettle={onThoughtSettle}
             glyph="sparkle"
             fontSize={13}
-          >
-            {reasoning ? <ReasoningTrace text={reasoning} live={reasoningLive} /> : null}
-          </ThoughtLine>
+          />
         </div>
       ) : null}
 
       {msg.steps.length > 0 ? (
-        <ToolBranch steps={msg.steps} onConfirm={onConfirm} onDeny={onDeny} />
+        <ToolBranch steps={msg.steps} settled={msg.done} onConfirm={onConfirm} onDeny={onDeny} />
       ) : null}
 
       {!livePlanning && msg.text ? (
