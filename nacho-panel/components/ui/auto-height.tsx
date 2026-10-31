@@ -21,8 +21,8 @@ type AutoHeightProps = {
  * 平滑高度容器：展开 / 收起、首次出现以及内容增减时，外层高度从当前值过渡到内容实际高度。
  *
  * 静止时外层保持 `height: auto`（展开）或 `0px`（收起），所以嵌套 AutoHeight 的过渡会被父级逐帧自然跟随；
- * 内容变化在 layout effect 中先钉回旧高度再过渡，ResizeObserver 只在自身过渡途中改目标，且不改变当前高度，
- * 因而不会触发 “ResizeObserver loop” 警告。
+ * 内容变化在 layout effect 中先钉回旧高度再过渡；ResizeObserver 只在自身过渡途中改目标，
+ * 且推迟到下一帧执行，回调内不写布局，因而不会触发 “ResizeObserver loop” 警告。
  */
 export function AutoHeight({
   open = true,
@@ -78,15 +78,24 @@ export function AutoHeight({
     else outer.style.height = openRef.current ? "auto" : "0px"
     readyRef.current = true
 
-    const observer = new ResizeObserver(() => {
+    let retargetFrame = 0
+    const retarget = () => {
+      retargetFrame = 0
       const height = inner.offsetHeight
       if (Math.abs(height - contentHeightRef.current) < 1) return
       contentHeightRef.current = height
       if (openRef.current && animationRef.current) glide(renderedHeight(), height)
+    }
+    // 回调内只登记、下一帧再重定目标：getComputedStyle 读回的高度只保留 6 位有效数字，
+    // 从读回值重启动画约一半概率差 1/64px，若在回调里同步执行，祖先会在同一轮观察中再次变化，
+    // 触发 “ResizeObserver loop completed with undelivered notifications”。
+    const observer = new ResizeObserver(() => {
+      if (!retargetFrame) retargetFrame = requestAnimationFrame(retarget)
     })
     observer.observe(inner)
     return () => {
       observer.disconnect()
+      cancelAnimationFrame(retargetFrame)
       animationRef.current?.cancel()
       animationRef.current = null
       readyRef.current = false
