@@ -6,9 +6,14 @@ import test from "node:test"
 import { createAIChatSessionMapStore, type ChatSessionMapStore } from "../lib/ai/chat-session-map"
 import {
   buildPermissionRules,
+  clearActiveChat,
   ensureChatSession,
   forgetChatSession,
+  getActiveChat,
   getChatSession,
+  isActiveTurn,
+  setActiveChat,
+  type ChatSession,
 } from "../lib/ai/chat-sessions"
 import { OpenCodeError, type OpencodeClient } from "../lib/ai/opencode-client"
 
@@ -34,6 +39,29 @@ test("permission rules default to ask, allow reads and let the broker own Nacho 
   assert.equal(last("nacho_run_shell")?.action, "allow")
   const allowRules = buildPermissionRules(false)
   assert.equal([...allowRules].reverse().find((rule) => rule.permission === "bash")?.action, "allow")
+})
+
+test("old turn abort/cleanup cannot clear a new active turn", () => {
+  const session: ChatSession = {
+    uiSessionId: "u-turn",
+    opencodeSessionId: "ses_turn",
+    connection,
+    model: "fake-model",
+    mode: "agent",
+    confirmDanger: true,
+    permissionKey: "ask",
+    createdAt: 1,
+    lastUsed: 1,
+  }
+  setActiveChat(session, "t-old")
+  assert.equal(isActiveTurn("u-turn", "t-old"), true)
+  setActiveChat(session, "t-new")
+  assert.equal(isActiveTurn("u-turn", "t-old"), false)
+  clearActiveChat("t-old")
+  assert.equal(getActiveChat()?.uiSessionId, "u-turn")
+  assert.equal(isActiveTurn("u-turn", "t-new"), true)
+  clearActiveChat("t-new")
+  assert.equal(getActiveChat(), null)
 })
 
 test("chat session is reused and permission rules are updated when confirmDanger changes", async () => {

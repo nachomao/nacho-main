@@ -221,6 +221,57 @@ export const NACHO_TOOLS: NachoToolDefinition[] = [
     { risk: "warn", danger: true },
   ),
   definition(
+    "nacho_set_timer",
+    "设置本轮 AI 检查点计时器：到点后面板会把 reminder 发回同一会话，提醒你检查进度并决定继续/调整/停止。长任务启动本地后台 job 后使用。",
+    obj({
+      afterSeconds: int("多少秒后提醒，10..3600", 10, 3600),
+      reminder: str("到点提醒 AI 做什么（含 jobId、日志路径、判断条件）", { maxLength: 500 }),
+      label: str("短标签，最多 80 字", { maxLength: 80 }),
+      onExpire: oneOf("到期策略，默认 wait；慢编译用 wait", ["wait", "interrupt"]),
+    }, ["afterSeconds", "reminder"]),
+    (args) => `设置计时器 ${String(args.afterSeconds ?? "")} 秒：${text(args.reminder).slice(0, 80)}`,
+  ),
+  definition(
+    "nacho_cancel_timer",
+    "取消本轮 AI 检查点计时器。任务完成或不再需要检查时调用。",
+    obj({ reason: str("取消原因", { maxLength: 200 }) }),
+    (args) => `取消计时器${text(args.reason) ? `：${text(args.reason)}` : ""}`,
+  ),
+  definition(
+    "nacho_start_local_job",
+    "在面板本机启动后台任务（编译、构建、长命令），立即返回 jobId、PID 和日志路径。危险操作，必须先说明目的和日志位置。",
+    obj({
+      command: str("要执行的本地命令", { maxLength: 32_768 }),
+      cwd: str("工作目录，默认 AI 工作区", { maxLength: 4_096 }),
+      shell: oneOf("解释器，默认 powershell", ["powershell", "cmd"]),
+      label: str("任务标签，最多 80 字", { maxLength: 80 }),
+    }, ["command"]),
+    (args) => `启动本地后台任务：${text(args.command).slice(0, 160)}`,
+    { danger: true },
+  ),
+  definition(
+    "nacho_get_local_job",
+    "读取面板本机后台任务的运行状态和日志 tail。计时器到期时先调用它检查编译/构建是否完成。",
+    obj({
+      jobId: str("本地任务 ID", { maxLength: 128 }),
+      tailLines: int("返回日志行数，默认 80", 20, 200),
+    }, ["jobId"]),
+    (args) => `读取本地任务 ${text(args.jobId)}`,
+  ),
+  definition(
+    "nacho_stop_local_job",
+    "终止面板本机后台任务及其子进程。危险操作；仅在确认要放弃/停止长任务时使用。",
+    obj({ jobId: str("本地任务 ID", { maxLength: 128 }) }, ["jobId"]),
+    (args) => `停止本地任务 ${text(args.jobId)}`,
+    { danger: true },
+  ),
+  definition(
+    "nacho_list_local_jobs",
+    "列出面板本机最近的后台任务及状态。",
+    obj({}),
+    () => "列出本地后台任务",
+  ),
+  definition(
     "nacho_show_message",
     "在客户端弹出提示框并等待用户确认/取消。",
     obj({

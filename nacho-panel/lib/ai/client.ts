@@ -162,11 +162,23 @@ export type AIChatConnection = { baseUrl: string; key: string }
 
 export type AIChatRequest = {
   uiSessionId: string
+  turnId: string
   text: string
   attachments?: AIChatAttachment[]
   model: string
   mode: "agent" | "chat"
+  /** 本轮开启深度思考；由服务端映射为模型 reasoning effort。 */
+  deepThinking?: boolean
   connection: AIChatConnection
+}
+
+const AI_STREAM_STALL_MS = 45_000
+
+export function createAIChatTurnId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `t-${crypto.randomUUID()}`
+  }
+  return `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 export async function streamAIChat(
@@ -174,19 +186,44 @@ export async function streamAIChat(
   onEvent: (event: AIChatEvent) => void,
   signal?: AbortSignal,
 ) {
+  const controller = new AbortController()
+  let stalled = false
+  let watchdog: ReturnType<typeof setTimeout> | null = null
+  const armWatchdog = () => {
+    if (watchdog) clearTimeout(watchdog)
+    watchdog = setTimeout(() => {
+      stalled = true
+      controller.abort()
+    }, AI_STREAM_STALL_MS)
+  }
+  const onAbort = () => controller.abort()
+  if (signal) {
+    if (signal.aborted) controller.abort()
+    else signal.addEventListener("abort", onAbort, { once: true })
+  }
+  const cleanup = () => {
+    if (watchdog) clearTimeout(watchdog)
+    watchdog = null
+    signal?.removeEventListener("abort", onAbort)
+  }
+
   let response: Response
   try {
+    armWatchdog()
     response = await fetch("/api/ai/chat", {
       method: "POST",
       headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
       body: JSON.stringify(request),
-      signal,
+      signal: controller.signal,
     })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") return
+  } catch {
+    cleanup()
+    if (stalled) throw new AIRequestError("AI 连接已中断", 0, "stream-stalled")
+    if (signal?.aborted) return
     throw new AIRequestError("连接 AI 服务失败", 0, "network")
   }
   if (!response.ok) {
+    cleanup()
     const body = await response.json().catch(() => null) as Envelope<never> | null
     throw new AIRequestError(
       body && !body.ok ? body.message || "AI 请求失败" : `AI 请求失败（HTTP ${response.status}）`,
@@ -195,13 +232,18 @@ export async function streamAIChat(
     )
   }
   const reader = response.body?.getReader()
-  if (!reader) throw new AIRequestError("AI 服务未返回流", 0, "empty-stream")
+  if (!reader) {
+    cleanup()
+    throw new AIRequestError("AI 服务未返回流", 0, "empty-stream")
+  }
   const decoder = new TextDecoder()
   let buffer = ""
   try {
+    armWatchdog()
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
+      armWatchdog()
       buffer += decoder.decode(value, { stream: true })
       let index
       while ((index = buffer.indexOf("\n")) >= 0) {
@@ -222,7 +264,12 @@ export async function streamAIChat(
         // ignore trailing partial line
       }
     }
+  } catch {
+    if (stalled) throw new AIRequestError("AI 连接已中断", 0, "stream-stalled")
+    if (signal?.aborted) return
+    throw new AIRequestError("AI 连接已中断", 0, "stream-error")
   } finally {
+    cleanup()
     await reader.cancel().catch(() => undefined)
   }
 }
@@ -239,12 +286,20 @@ export function postAIApproval(input: {
   })
 }
 
-export function abortAIChat(uiSessionId: string) {
+export function abortAIChat(uiSessionId: string, turnId?: string) {
   return requestAI<{ aborted: boolean }>("/api/ai/abort", {
     method: "POST",
-    body: JSON.stringify({ uiSessionId }),
+    body: JSON.stringify({ uiSessionId, ...(turnId ? { turnId } : {}) }),
     signal: AbortSignal.timeout(10_000),
   }).catch(() => undefined)
+}
+
+export function restartAIEngine(uiSessionId: string) {
+  return requestAI<{ restarted: boolean }>("/api/ai/restart", {
+    method: "POST",
+    body: JSON.stringify({ uiSessionId }),
+    signal: AbortSignal.timeout(20_000),
+  })
 }
 
 export function deleteAISession(uiSessionId: string) {

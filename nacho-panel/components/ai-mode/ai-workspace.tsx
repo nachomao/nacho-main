@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   Sparkles,
+  Brain,
   Send,
   Blocks,
   Server,
@@ -28,26 +29,31 @@ import {
   ChevronDown,
   Bot,
   MessageCircle,
+  Square,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { assessInputRisk } from "./danger-lexicon"
 import { BorderBeam } from "./border-beam"
-import { isReducedMotion } from "@/lib/motion-preference"
+import { isReducedMotion, useMotionPreference } from "@/lib/motion-preference"
+import { AutoHeight } from "@/components/ui/auto-height"
 import { useServerData } from "@/components/server-data-context"
 import { modelOptions, useAIConfig, aiConfigStore } from "@/components/settings/ai-data"
 import { useAIRuntimeStatus } from "@/components/settings/ai-config-sync"
 import {
+  AIRequestError,
   abortAIChat,
+  createAIChatTurnId,
   deleteAISession,
   fetchAIChatHistory,
   postAIApproval,
+  restartAIEngine,
   saveAIChatHistory,
   streamAIChat,
 } from "@/lib/ai/client"
 import { createChatSessionId } from "@/lib/ai/chat-history"
-import { looksLikePlanningText } from "@/lib/ai/answer-separation"
 import { toThoughtSteps } from "@/lib/ai/thought-steps"
 import { resolveAIModel } from "@/lib/ai/config-shared"
+import { activeTimerElapsedMs, createTimer, formatTimerDuration } from "@/lib/ai/task-timer"
 import {
   MAX_AI_ATTACHMENT_COUNT,
   MAX_AI_ATTACHMENT_TOTAL_BYTES,
@@ -59,7 +65,9 @@ import { useAIMode } from "./ai-mode-context"
 import { applyAIEvent, finalizeAssistantMessage, restoreChatSessions } from "./ai-event-reducer"
 import type { Message, Session, StepStatus, ToolStep } from "./ai-types"
 import { ThoughtLine } from "./thought-line"
+import { TaskTimerLine } from "./task-timer-line"
 import { ToolBranch } from "./tool-branch"
+import { ToolApprovalCard } from "./tool-approval-card"
 import { sourceMeta } from "./tool-source-meta"
 import { AIIntro } from "./ai-intro"
 import {
@@ -89,7 +97,7 @@ const scenarios: Scenario[] = [
     steps: [
       { source: "core", tool: "clients.query", detail: "定位客户端「核心服务器」(192.168.1.10)", output: "在线 · Ubuntu 22.04 · 负载 0.42" },
       { source: "plugin", tool: "nginx.status", detail: "检查 nginx 当前状态", output: "active (running) · 2 workers · 已运行 14 天" },
-      { source: "skill", tool: "ops.exec", detail: "systemctl restart nginx", output: "服务已重启 · 配置校验通过", danger: true, risk: "warn" },
+      { source: "skill", tool: "ops.exec", detail: "systemctl restart nginx", output: "服务已重启 · 配置校验通过", danger: true, risk: "warn", ask: "需要你确认：在「核心服务器」重启 nginx，服务会短暂中断。" },
       { source: "mcp", tool: "prometheus.query", detail: "验证重启后 5xx 错误率", output: "错误率 0.00% · P99 延迟 38ms" },
     ],
   },
@@ -120,7 +128,7 @@ const scenarios: Scenario[] = [
     reply: "我来为核心服务器创建一次数据库备份，并校验备份完整性。",
     final: "备份完成：db-2026-07-10.sql.gz (1.4 GB) 已写入备份节点并通过校验，本月配额剩余 82%。",
     steps: [
-      { source: "plugin", tool: "backup.create", detail: "创建 PostgreSQL 全量备份", output: "导出完成 · 压缩后 1.4 GB", danger: true, risk: "warn" },
+      { source: "plugin", tool: "backup.create", detail: "创建 PostgreSQL 全量备份", output: "导出完成 · 压缩后 1.4 GB", danger: true, risk: "warn", ask: "需要你确认：创建 PostgreSQL 全量备份并写入备份节点。" },
       { source: "mcp", tool: "fs.transfer", detail: "传输到备份节点 /data/backups", output: "传输完成 · SHA256 校验一致" },
       { source: "skill", tool: "ops.verify", detail: "抽样恢复校验（10 张表）", output: "10/10 通过" },
     ],
@@ -221,7 +229,11 @@ export function AIWorkspace() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const attachmentsRef = useRef<AIChatAttachmentDraft[]>([])
   const [busy, setBusy] = useState(false)
-  const streamRef = useRef<AbortController | null>(null)
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null)
+  const [runNow, setRunNow] = useState(() => Date.now())
+  type ActiveTurn = { sid: string; aid: string; turnId: string; stop: () => void }
+  const turnRef = useRef<ActiveTurn | null>(null)
+  const stopTurnRef = useRef<(reason?: string) => void>(() => {})
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -234,6 +246,8 @@ export function AIWorkspace() {
   // 输入框底部的模式胶囊：Agent（多步执行）/ Chat（仅对话）
   const [agentMode, setAgentMode] = useState<"agent" | "chat">("agent")
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
+  // 深度思考开关：开启后请求 reasoning effort=high，直到再次关闭；不写入历史会话。
+  const [deepThinking, setDeepThinking] = useState(false)
   /** 从任意触发按钮打开模型菜单（Portal 定位到该按钮上方） */
   const openModelMenuFrom = (el: HTMLButtonElement | null) => {
     setAgentMenuOpen(false)
@@ -285,6 +299,16 @@ export function AIWorkspace() {
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
   const messages = active?.messages ?? []
+  const lastAssistant = [...messages].reverse().find(
+    (message): message is Extract<Message, { role: "assistant" }> => message.role === "assistant",
+  )
+  const runElapsed = runStartedAt !== null ? Math.max(0, (runNow - runStartedAt) / 1_000) : 0
+  const activeTimer = lastAssistant?.timer
+  const headerRunLabel = activeTimer?.state === "fired"
+    ? "AI 正在检查进度…"
+    : activeTimer?.state === "waiting"
+      ? `等待计时器 · ${formatTimerDuration(Math.max(0, activeTimer.afterSeconds - activeTimerElapsedMs(activeTimer, runNow) / 1_000))}`
+      : `正在执行… ${formatTimerDuration(runElapsed)}`
 
   /** 串行落盘：始终使用最新的 sessions/activeId，避免并发 PUT 乱序覆盖。 */
   const flushHistory = useCallback(() => {
@@ -454,7 +478,8 @@ export function AIWorkspace() {
 
   const enabledCaps = {
     skills: cfg.skills.filter((s) => s.enabled).length,
-    mcp: cfg.mcpServers.filter((m) => m.status === "connected").length,
+    // 内置 nacho broker 也是一个 MCP；这里把外部已连接服务器和它一起计数。
+    mcp: cfg.mcpServers.filter((m) => m.status === "connected").length + 1,
     plugins: cfg.plugins.filter((p) => p.enabled).length,
   }
 
@@ -487,12 +512,17 @@ export function AIWorkspace() {
     if (phase === "closed") {
       timersRef.current.forEach(clearTimeout)
       timersRef.current = []
+      stopTurnRef.current("已退出 AI Mode")
       setBusy(false)
-      streamRef.current?.abort()
-      streamRef.current = null
-      if (!developerPreview && activeIdRef.current) void abortAIChat(activeIdRef.current)
     }
   }, [phase, developerPreview])
+
+  useEffect(() => {
+    if (!busy || runStartedAt === null) return undefined
+    setRunNow(Date.now())
+    const interval = window.setInterval(() => setRunNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [busy, runStartedAt])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -541,10 +571,93 @@ export function AIWorkspace() {
     patchSession(active.id, (s) => ({
       ...s,
       messages: s.messages.map((m) =>
-        m.id === msgId && m.role === "assistant" ? { ...m, thoughtSeconds: Math.round(seconds * 10) / 10 } : m,
+        m.id === msgId && m.role === "assistant"
+          ? { ...m, thoughtSeconds: Math.round(Math.max(m.thoughtSeconds ?? 0, seconds) * 10) / 10 }
+          : m,
       ),
     }))
   }
+
+  const stopTurn = (reason = "已停止") => {
+    const turn = turnRef.current
+    if (!turn) {
+      setBusy(false)
+      setRunStartedAt(null)
+      return
+    }
+    turnRef.current = null
+    turn.stop()
+    patchSession(turn.sid, (s) => ({
+      ...s,
+      messages: s.messages.map((m) =>
+        m.id === turn.aid && m.role === "assistant" && !m.done
+          ? finalizeAssistantMessage(m, reason, true)
+          : m,
+      ),
+    }))
+    setBusy(false)
+    setRunStartedAt(null)
+  }
+  stopTurnRef.current = stopTurn
+
+  const finishTurnById = (aid: string) => {
+    if (turnRef.current?.aid === aid) turnRef.current = null
+    setBusy(false)
+    setRunStartedAt(null)
+  }
+
+  const restartEngine = async () => {
+    const sid = activeIdRef.current
+    if (!sid) return
+    turnRef.current?.stop()
+    turnRef.current = null
+    setBusy(false)
+    setRunStartedAt(null)
+    try {
+      await restartAIEngine(sid)
+      patchSession(sid, (s) => ({
+        ...s,
+        messages: s.messages.map((m) => {
+          if (m.role !== "assistant" || m.timer?.state !== "wake-failed") return m
+          return {
+            ...m,
+            timer: { ...m.timer, state: "canceled" as const },
+            text: m.text
+              ? `${m.text}\n\n已重启 AI 引擎，当前会话的模型上下文已清除。`
+              : "已重启 AI 引擎，当前会话的模型上下文已清除。",
+          }
+        }),
+      }))
+    } catch (error) {
+      const message = `重启 AI 引擎失败：${error instanceof Error ? error.message : "未知错误"}`
+      patchSession(sid, (s) => ({
+        ...s,
+        messages: s.messages.map((m) => {
+          if (m.role !== "assistant") return m
+          if (m.timer?.state === "wake-failed") {
+            return { ...m, text: m.text ? `${m.text}\n\n${message}` : message }
+          }
+          return !m.done ? finalizeAssistantMessage(m, message, true) : m
+        }),
+      }))
+    }
+  }
+
+  // 执行中 Esc 先停止当前回合；空闲时再退出 AI Mode。开场阶段仍由 context 处理。
+  useEffect(() => {
+    if (phase !== "entering" && phase !== "active") return undefined
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return
+      event.preventDefault()
+      if (turnRef.current) {
+        stopTurnRef.current()
+        return
+      }
+      exit()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [phase, exit])
 
   const updateAttachments = (next: AIChatAttachmentDraft[]) => {
     attachmentsRef.current = next
@@ -630,15 +743,18 @@ export function AIWorkspace() {
   const runDemo = (text: string, images: AIChatAttachment[]) => {
     if ((!text.trim() && images.length === 0) || busy || !cfg.enabled || !active) return
     const sid = active.id
+    const turnId = `demo-${Date.now()}`
+    const startedAt = Date.now()
+    const suffix = Math.random().toString(36).slice(2, 8)
     const scenario = scenarios.find((s) => s.match.test(text)) ?? fallbackScenario
     const userMsg: Message = {
-      id: `u-${Date.now()}`,
+      id: `u-${startedAt}-${suffix}`,
       role: "user",
       text: text.trim(),
       ...(images.length ? { attachments: images } : {}),
     }
     const title = text.trim().slice(0, 18) || images[0]?.name.slice(0, 18) || "图片"
-    const aid = `a-${Date.now()}`
+    const aid = `a-${startedAt}-${suffix}`
     const steps: ToolStep[] = scenario.steps.map((s, i) => ({
       ...s,
       id: `${aid}-s${i}`,
@@ -650,6 +766,13 @@ export function AIWorkspace() {
       text: scenario.reply,
       steps: [],
       done: false,
+      timer: createTimer({
+        afterSeconds: 45,
+        startedAt,
+        reminder: "检查演示任务进度；桌面版会唤醒 AI 读取本地后台任务日志。",
+        label: "演示检查点",
+        onExpire: "wait",
+      }),
       ...(scenario.reasoning ? { reasoning: scenario.reasoning, reasoningActive: true } : {}),
     }
 
@@ -660,6 +783,16 @@ export function AIWorkspace() {
     }))
     setInput("")
     setBusy(true)
+    setRunStartedAt(startedAt)
+    turnRef.current = {
+      sid,
+      aid,
+      turnId,
+      stop: () => {
+        timersRef.current.forEach(clearTimeout)
+        timersRef.current = []
+      },
+    }
 
     // 演示深度思考：先展示 reasoning trace，settle 后再开始工具调用
     if (scenario.reasoning) {
@@ -707,7 +840,7 @@ export function AIWorkspace() {
             m.id === aid && m.role === "assistant" ? { ...m, text: scenario.final, done: true } : m,
           ),
         }))
-        setBusy(false)
+        finishTurnById(aid)
       }, delay + 300)
     }
   }
@@ -715,14 +848,17 @@ export function AIWorkspace() {
   const runReal = async (text: string, images: AIChatAttachment[]) => {
     if (!active) return
     const sid = active.id
+    const turnId = createAIChatTurnId()
+    const startedAt = Date.now()
+    const suffix = Math.random().toString(36).slice(2, 8)
     const userMsg: Message = {
-      id: `u-${Date.now()}`,
+      id: `u-${startedAt}-${suffix}`,
       role: "user",
       text: text.trim(),
       ...(images.length ? { attachments: images } : {}),
     }
     const title = text.trim().slice(0, 18) || images[0]?.name.slice(0, 18) || "图片"
-    const aid = `a-${Date.now()}`
+    const aid = `a-${startedAt}-${suffix}`
     const aiMsg: Message = { id: aid, role: "assistant", text: "", steps: [], done: false }
     patchSession(sid, (s) => ({
       ...s,
@@ -731,59 +867,77 @@ export function AIWorkspace() {
     }))
     setInput("")
     setBusy(true)
+    setRunStartedAt(startedAt)
     const controller = new AbortController()
-    streamRef.current = controller
+    turnRef.current = {
+      sid,
+      aid,
+      turnId,
+      stop: () => {
+        controller.abort()
+        void abortAIChat(sid, turnId)
+      },
+    }
     let terminal = false
-    const fail = (reason: string) => {
+    const finishTurn = () => {
+      if (turnRef.current?.aid === aid) turnRef.current = null
+      setBusy(false)
+      setRunStartedAt(null)
+    }
+    const finalize = (reason: string, stopped: boolean) => {
       patchSession(sid, (s) => ({
         ...s,
         messages: s.messages.map((m) =>
           m.id === aid && m.role === "assistant" && !m.done
-            ? finalizeAssistantMessage(m, `请求失败：${reason}`)
+            ? finalizeAssistantMessage(m, reason, stopped)
             : m,
         ),
       }))
     }
+    const fail = (reason: string) => finalize(`请求失败：${reason}`, false)
     try {
       if (!aiRuntime.desktop) throw new Error("AI Mode 仅支持 Windows 桌面版")
       if (!aiRuntime.available) throw new Error("AI 引擎未安装，请重新安装桌面面板")
       if (!serverConnection) throw new Error("尚未配置控制服务端连接")
       await streamAIChat({
         uiSessionId: sid,
+        turnId,
         text: text.trim(),
         ...(images.length ? { attachments: images } : {}),
         model: resolveAIModel(cfg),
         mode: agentMode,
+        ...(deepThinking ? { deepThinking: true } : {}),
         connection: serverConnection,
       }, (event) => {
-        if (event.type === "done" || event.type === "error") terminal = true
+        const isTerminal = event.type === "done" || event.type === "error"
         patchSession(sid, (s) => ({
           ...s,
           messages: s.messages.map((m) =>
             m.id === aid && m.role === "assistant" ? applyAIEvent(m, event) : m,
           ),
         }))
-        if (event.type === "done" || event.type === "error") {
-          if (streamRef.current === controller) streamRef.current = null
-          setBusy(false)
+        if (isTerminal) {
+          terminal = true
+          finishTurn()
         }
       }, controller.signal)
     } catch (error) {
-      fail(error instanceof Error ? error.message : "AI 请求失败")
+      if (controller.signal.aborted) {
+        // stopTurn / 退出流程已经收尾，不覆盖“已停止”。
+      } else if (error instanceof AIRequestError && error.code === "stream-stalled") {
+        void abortAIChat(sid, turnId)
+        finalize("AI 连接已中断", true)
+      } else {
+        fail(error instanceof Error ? error.message : "AI 请求失败")
+      }
     } finally {
       if (!terminal) {
-        patchSession(sid, (s) => ({
-          ...s,
-          messages: s.messages.map((m) =>
-            m.id === aid && m.role === "assistant" && !m.done
-              ? finalizeAssistantMessage(m, controller.signal.aborted ? "已中止" : "AI 连接已中断")
-              : m,
-          ),
-        }))
+        finalize(controller.signal.aborted ? "已停止" : "AI 连接已中断", controller.signal.aborted)
       }
-      if (streamRef.current === controller) {
-        streamRef.current = null
+      if (turnRef.current?.aid === aid) {
+        turnRef.current = null
         setBusy(false)
+        setRunStartedAt(null)
       }
     }
   }
@@ -848,7 +1002,7 @@ export function AIWorkspace() {
           m.id === msgId && m.role === "assistant" ? { ...m, text: scenario.final, done: true } : m,
         ),
       }))
-      setBusy(false)
+      finishTurnById(msgId)
     }, delay + 400)
   }
 
@@ -869,7 +1023,7 @@ export function AIWorkspace() {
           m.id === msgId && m.role === "assistant" ? { ...m, done: true } : m,
         ),
       }))
-      setBusy(false)
+      finishTurnById(msgId)
     }
   }
 
@@ -1192,8 +1346,8 @@ export function AIWorkspace() {
                 </span>
                 <div className="min-w-0 leading-tight">
                   <h2 className="truncate text-sm font-semibold">{active?.title ?? "AI Mode"}</h2>
-                  <p className="text-[11px] text-muted-foreground">
-                    {busy ? "正在执行…" : cfg.enabled ? "待命中 · 自然语言操作所有客户端" : "已停用"}
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {busy ? headerRunLabel : cfg.enabled ? "待命中 · 自然语言操作所有客户端" : "已停用"}
                   </p>
                 </div>
               </div>
@@ -1207,6 +1361,19 @@ export function AIWorkspace() {
                   <span className={cn("h-1.5 w-1.5 rounded-full", busy ? "animate-pulse bg-primary" : "bg-positive")} />
                   {busy ? "RUNNING" : "READY"}
                 </span>
+                {busy ? (
+                  <button
+                    type="button"
+                    onClick={() => stopTurnRef.current()}
+                    aria-label="停止当前任务"
+                    title="停止当前回合（Esc）"
+                    className="flex h-8 items-center gap-1.5 rounded-full border border-negative/40 bg-negative/10 px-2.5 text-xs font-medium text-negative transition-colors hover:bg-negative/20"
+                  >
+                    <Square className="h-3 w-3" />
+                    停止
+                    <kbd className="hidden rounded border border-negative/30 px-1 font-mono text-[10px] sm:inline">Esc</kbd>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={exit}
@@ -1214,7 +1381,7 @@ export function AIWorkspace() {
                 >
                   <X className="h-3.5 w-3.5" />
                   退出
-                  <kbd className="rounded border border-border px-1 font-mono text-[10px]">Esc</kbd>
+                  {!busy ? <kbd className="rounded border border-border px-1 font-mono text-[10px]">Esc</kbd> : null}
                 </button>
               </div>
             </header>
@@ -1275,11 +1442,10 @@ export function AIWorkspace() {
                       <AssistantBubble
                         key={m.id}
                         msg={m}
-                        agentMode={agentMode}
-                        developerPreview={developerPreview}
                         onConfirm={(stepId) => confirmStep(m.id, stepId)}
                         onDeny={(stepId) => denyStep(m.id, stepId)}
                         onThoughtSettle={(seconds) => recordThoughtSeconds(m.id, seconds)}
+                        onRestart={() => { void restartEngine() }}
                       />
                     ),
                   )}
@@ -1529,7 +1695,7 @@ export function AIWorkspace() {
                     disabled={!cfg.enabled}
                     onClick={() => openModelMenuFrom(inputModelBtnRef.current)}
                     className={cn(
-                      "flex h-8 max-w-40 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors disabled:opacity-40",
+                      "flex h-8 max-w-28 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors disabled:opacity-40 sm:max-w-40",
                       modelMenuOpen
                         ? "border-primary/40 bg-foreground/[0.05] text-foreground"
                         : "border-border/70 bg-foreground/[0.03] text-muted-foreground hover:border-border hover:text-foreground",
@@ -1543,18 +1709,57 @@ export function AIWorkspace() {
 
                   <button
                     type="button"
-                    onClick={() => run(input)}
-                    disabled={(!input.trim() && attachments.length === 0) || busy || !cfg.enabled || !historyReady}
-                    aria-label="发送"
+                    aria-label={deepThinking ? "关闭深度思考" : "开启深度思考"}
+                    aria-pressed={deepThinking}
+                    title={
+                      developerPreview
+                        ? "演示环境不支持深度思考"
+                        : deepThinking
+                          ? "关闭深度思考（reasoning effort: high）"
+                          : "开启深度思考；若上游在工具调用模式下不返回 reasoning，将只显示正文"
+                    }
+                    disabled={!cfg.enabled || developerPreview}
+                    onClick={() => {
+                      setDeepThinking((value) => !value)
+                      inputRef.current?.focus()
+                    }}
                     className={cn(
-                      "ml-auto flex h-8 w-8 items-center justify-center rounded-full transition-all",
-                      (input.trim() || attachments.length > 0) && !busy
-                        ? "bg-primary text-primary-foreground shadow-[0_0_20px_-6px] shadow-primary/60 hover:brightness-110"
-                        : "border border-border/70 bg-foreground/[0.03] text-muted-foreground/50",
+                      "flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors disabled:opacity-40",
+                      deepThinking
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/70 bg-foreground/[0.03] text-muted-foreground hover:border-border hover:text-foreground",
                     )}
                   >
-                    {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    <Brain className="h-3.5 w-3.5 shrink-0" />
+                    <span>思考</span>
                   </button>
+
+                  {busy ? (
+                    <button
+                      type="button"
+                      onClick={() => stopTurnRef.current()}
+                      aria-label="停止"
+                      title="停止当前回合（Esc）"
+                      className="ml-auto flex h-8 w-8 items-center justify-center rounded-full border border-negative/40 bg-negative/10 text-negative transition-colors hover:bg-negative/20"
+                    >
+                      <Square className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => run(input)}
+                      disabled={(!input.trim() && attachments.length === 0) || !cfg.enabled || !historyReady}
+                      aria-label="发送"
+                      className={cn(
+                        "ml-auto flex h-8 w-8 items-center justify-center rounded-full transition-all",
+                        (input.trim() || attachments.length > 0)
+                          ? "bg-white text-neutral-950 shadow-[0_0_20px_-6px] shadow-white/40 hover:bg-white/90"
+                          : "border border-border/70 bg-foreground/[0.03] text-muted-foreground/50",
+                      )}
+                    >
+                      <Send className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
               <p className="mt-2 text-center text-[10px] text-muted-foreground/60">
@@ -1770,38 +1975,36 @@ function EmptyState({
 
 function AssistantBubble({
   msg,
-  agentMode,
-  developerPreview,
   onConfirm,
   onDeny,
   onThoughtSettle,
+  onRestart,
 }: {
   msg: Extract<Message, { role: "assistant" }>
-  agentMode: "agent" | "chat"
-  developerPreview: boolean
   onConfirm: (stepId: string) => void
   onDeny: (stepId: string) => void
   onThoughtSettle: (seconds: number) => void
+  onRestart: () => void
 }) {
-  const livePlanning = agentMode === "agent"
-    && !developerPreview
-    && !msg.done
-    && msg.steps.length === 0
-    && !msg.reasoning
-    && looksLikePlanningText(msg.text)
-  const reasoning = msg.reasoning ?? (livePlanning ? msg.text : "")
-  const reasoningLive = !msg.done && (msg.reasoningActive === true || livePlanning)
-  const preTokenThinking = !msg.text && !msg.done && msg.steps.length === 0
+  const { reduceMotion } = useMotionPreference()
+  const reasoning = msg.reasoning ?? ""
+  const reasoningLive = !msg.done && msg.reasoningActive === true
+  // “Waiting for model…” 只表示模型尚未产生任何输出（正文、工具步骤、reasoning 都没有）；
+  // 一旦 reasoning 到达就进入思考态，标签必须切到 “Thinking…”。
+  const preTokenThinking = !msg.text && !msg.done && msg.steps.length === 0 && !reasoning
   const showThought = Boolean(reasoning) || preTokenThinking
   const thinking = reasoningLive || preTokenThinking
   const thoughtSteps = useMemo(() => toThoughtSteps(reasoning), [reasoning])
+  // 等待确认的工具调用固定在正文之后渲染：正文继续增长时入口始终跟随消息末尾，
+  // 不会像放在工具分支里那样被逐字输出顶出可视区。
+  const waitingApprovals = msg.steps.filter((step) => step.status === "waiting-confirm")
   return (
     <div className="flex max-w-[92%] flex-col gap-3">
       {showThought ? (
         <div className="ml-9">
           <ThoughtLine
-            label={reasoning ? "深度思考中…" : "正在思考…"}
-            doneLabel={reasoning ? "已深度思考" : "已思考"}
+            label={preTokenThinking ? "Waiting for model…" : "Thinking…"}
+            doneLabel={reasoning ? "Thought for" : "Thought"}
             working={thinking}
             steps={thoughtSteps}
             elapsed={msg.thoughtSeconds}
@@ -1812,11 +2015,28 @@ function AssistantBubble({
         </div>
       ) : null}
 
-      {msg.steps.length > 0 ? (
-        <ToolBranch steps={msg.steps} settled={msg.done} onConfirm={onConfirm} onDeny={onDeny} />
+      {msg.timer || msg.capReached ? (
+        <div className="ml-9">
+          <TaskTimerLine
+            timer={msg.timer}
+            capReached={msg.capReached}
+            live={!msg.done}
+            done={msg.done}
+            onRestart={onRestart}
+          />
+        </div>
       ) : null}
 
-      {!livePlanning && msg.text ? (
+      {msg.steps.length > 0 ? (
+        <ToolBranch
+          steps={msg.steps}
+          settled={msg.done}
+          stopped={msg.stopped === true || msg.capReached === true || msg.timer?.state === "wake-failed"}
+          waiting={!msg.done && msg.timer?.state === "waiting"}
+        />
+      ) : null}
+
+      {msg.text ? (
         <div className="flex min-w-0 items-start gap-2.5">
           <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-foreground/[0.04]">
             {/* 极光小圆点：呼应对话框的弥散光雾配色，生成中缓慢脉动 */}
@@ -1832,6 +2052,22 @@ function AssistantBubble({
             <AIMarkdown text={msg.text} />
           </div>
         </div>
+      ) : null}
+
+      {waitingApprovals.length > 0 ? (
+        <AutoHeight appear duration={reduceMotion ? 0 : 320}>
+          <div className="ml-9 flex flex-col gap-2">
+            {waitingApprovals.map((step) => (
+              <ToolApprovalCard
+                key={step.id}
+                step={step}
+                onConfirm={onConfirm}
+                onDeny={onDeny}
+                className={reduceMotion ? undefined : "animate-in fade-in-0 slide-in-from-top-2 duration-300"}
+              />
+            ))}
+          </div>
+        </AutoHeight>
       ) : null}
     </div>
   )

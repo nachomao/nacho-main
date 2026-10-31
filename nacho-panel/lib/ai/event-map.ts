@@ -1,6 +1,7 @@
 import type { AIChatEvent, AIChatStep } from "./chat-events"
 import type { OpenCodeEvent } from "./event-hub"
 import { redactSecrets, truncateMiddle } from "./redact"
+import { isTimerCancelTool, isTimerTool, normalizeTimerSeconds } from "./task-timer"
 import { toolDanger, toolRisk, toolSource } from "./tool-meta"
 
 type ToolState = {
@@ -13,6 +14,19 @@ type ToolState = {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
+}
+
+export function isSessionIdleEvent(event: OpenCodeEvent): boolean {
+  if (event.type === "session.idle") return true
+  if (event.type !== "session.status") return false
+  const properties = event.properties || {}
+  const status = asRecord(properties.status)
+  return status.type === "idle" || properties.type === "idle"
+}
+
+export function isUserMessageEvent(event: OpenCodeEvent): boolean {
+  if (event.type !== "message.updated") return false
+  return asRecord(event.properties?.info).role === "user"
 }
 
 function toolStatus(value: unknown): "running" | "done" | "error" {
@@ -61,7 +75,17 @@ export class SessionEventMapper {
   private partByCall = new Map<string, string>()
   private seenSteps = new Set<string>()
   private lastStepPatch = new Map<string, string>()
+  private timerCalls = new Map<string, string>()
   private idle = false
+
+  /** 同一会话内开始新一轮提醒时复用 mapper，但清空上一轮的分片与步骤状态。 */
+  resetTurn() {
+    this.parts.clear()
+    this.partByCall.clear()
+    this.seenSteps.clear()
+    this.lastStepPatch.clear()
+    this.idle = false
+  }
 
   private isUserPart(messageID: string) {
     return this.userIds.has(messageID)
@@ -161,7 +185,7 @@ export class SessionEventMapper {
     if (event.type === "session.error") {
       return [{ type: "error", message: mapError(properties.error) }]
     }
-    if (event.type === "session.idle") {
+    if (isSessionIdleEvent(event)) {
       if (this.idle) return []
       this.idle = true
       return [{ type: "done" }]
@@ -169,11 +193,44 @@ export class SessionEventMapper {
     return []
   }
 
+  private mapTimerPart(id: string, part: Record<string, unknown>): AIChatEvent[] {
+    const state = asRecord(part.state)
+    const input = asRecord(state.input)
+    const seconds = normalizeTimerSeconds(input.afterSeconds)
+    if (seconds === null) return []
+    const reminder = typeof input.reminder === "string" ? redactSecrets(input.reminder).trim().slice(0, 500) : ""
+    if (!reminder) return []
+    const label = typeof input.label === "string" ? redactSecrets(input.label).trim().slice(0, 80) : ""
+    const onExpire = input.onExpire === "interrupt" ? "interrupt" : "wait"
+    const signature = JSON.stringify({ seconds, reminder, label, onExpire })
+    if (this.timerCalls.get(id) === signature) return []
+    this.timerCalls.set(id, signature)
+    return [{
+      type: "timer-set",
+      afterSeconds: seconds,
+      reminder,
+      ...(label ? { label } : {}),
+      onExpire,
+    }]
+  }
+
+  private mapTimerCancelPart(id: string, part: Record<string, unknown>): AIChatEvent[] {
+    const state = asRecord(part.state)
+    const input = asRecord(state.input)
+    const reason = typeof input.reason === "string" ? redactSecrets(input.reason).trim().slice(0, 200) : ""
+    const signature = JSON.stringify({ reason })
+    if (this.timerCalls.get(id) === signature) return []
+    this.timerCalls.set(id, signature)
+    return [{ type: "timer-cancel", ...(reason ? { reason } : {}) }]
+  }
+
   private mapToolPart(part: Record<string, unknown>): AIChatEvent[] {
     const id = typeof part.id === "string" ? part.id : ""
     const tool = typeof part.tool === "string" ? part.tool : "tool"
     const callID = typeof part.callID === "string" ? part.callID : ""
     if (!id) return []
+    if (isTimerTool(tool)) return this.mapTimerPart(id, part)
+    if (isTimerCancelTool(tool)) return this.mapTimerCancelPart(id, part)
     if (callID) this.partByCall.set(callID, id)
     const state = asRecord(part.state) as ToolState
     const input = asRecord(state.input)

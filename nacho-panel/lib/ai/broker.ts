@@ -1,6 +1,8 @@
 import { createControlClient, ControlError, type PanelCommand } from "./control-client"
 import { createBrokerApproval } from "./approvals"
+import { getLocalJobsManager } from "./local-jobs"
 import { redactSecrets, truncateMiddle } from "./redact"
+import { normalizeTimerSeconds } from "./task-timer"
 import { findNachoTool, validateToolArgs } from "./tool-registry"
 import type { StoredAIConfig } from "./settings-schema"
 import type { ChatSession } from "./chat-sessions"
@@ -271,6 +273,56 @@ export async function executeNachoTool(input: {
           timeoutSeconds,
         }
         return dispatchAndWait(control, clientId, "show-message", payload, (timeoutSeconds + 30) * 1000)
+      }
+      case "nacho_set_timer": {
+        const seconds = normalizeTimerSeconds(args.afterSeconds)
+        if (seconds === null) return { ok: false, text: "afterSeconds 必须是 10..3600 的数字" }
+        const reminder = text(args.reminder)
+        if (!reminder) return { ok: false, text: "reminder 不能为空" }
+        return {
+          ok: true,
+          text: `计时器已设置：${seconds} 秒后提醒你：${reminder.slice(0, 500)}。任务提前完成或不再需要检查时，请调用 nacho_cancel_timer 取消；到期后会提醒你检查进度并决定继续/停止。`,
+        }
+      }
+      case "nacho_cancel_timer":
+        return { ok: true, text: "计时器已取消。" }
+      case "nacho_start_local_job": {
+        const command = text(args.command)
+        if (!command) return { ok: false, text: "command 不能为空" }
+        const job = getLocalJobsManager().start({
+          uiSessionId: input.chat.uiSessionId,
+          command,
+          ...(text(args.cwd) ? { cwd: text(args.cwd) } : {}),
+          shell: args.shell === "cmd" ? "cmd" : "powershell",
+          ...(text(args.label) ? { label: text(args.label) } : {}),
+        })
+        return {
+          ok: true,
+          text: `本地后台任务已启动：jobId=${job.id} pid=${job.pid} logPath=${job.logPath}。请立即调用 nacho_set_timer 设置检查点。`,
+        }
+      }
+      case "nacho_get_local_job": {
+        const jobId = text(args.jobId)
+        if (!jobId) return { ok: false, text: "jobId 不能为空" }
+        const description = getLocalJobsManager().describe(jobId, numberOr(args.tailLines, 80, 20, 200))
+        return description ? { ok: true, text: description } : { ok: false, text: `本地任务 ${jobId} 不存在` }
+      }
+      case "nacho_stop_local_job": {
+        const jobId = text(args.jobId)
+        if (!jobId) return { ok: false, text: "jobId 不能为空" }
+        const job = getLocalJobsManager().stop(jobId)
+        return job
+          ? { ok: true, text: `本地任务 ${job.id} 状态：${job.status}` }
+          : { ok: false, text: `本地任务 ${jobId} 不存在` }
+      }
+      case "nacho_list_local_jobs": {
+        const jobs = getLocalJobsManager().list()
+        if (jobs.length === 0) return { ok: true, text: "没有本地后台任务。" }
+        return {
+          ok: true,
+          text: jobs.slice(0, 20).map((job) =>
+            `${job.id}\t${job.status}\tpid=${job.pid}\t${job.label}\t${new Date(job.startedAt).toISOString()}`).join("\n"),
+        }
       }
       case "nacho_open_url":
         return dispatchAndWait(control, clientId, "open-url", { url: text(args.url) }, 60_000)

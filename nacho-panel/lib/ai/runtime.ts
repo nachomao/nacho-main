@@ -20,7 +20,7 @@ import {
   getOpencodeStatePath,
   getPanelLocalBaseUrl,
   getAIRuntimePath,
-  getAIOpencodeLogPath,
+  getAIEngineLogPath,
   hasOpencodeBinary,
   isDesktopEnvironment,
 } from "./runtime-paths"
@@ -109,11 +109,7 @@ async function writeRuntimeState(handle: RuntimeHandle | null, error?: string) {
     pid: handle.pid,
     port: handle.port,
     url: handle.url,
-    username: handle.username,
-    password: handle.password,
-    proxyToken: handle.proxyToken,
-    brokerToken: handle.brokerToken,
-    opencodeVersion: handle.version,
+    engineVersion: handle.version,
     startedAt: handle.startedAt,
     state: error ? "error" : "ready",
     ...(error ? { error } : {}),
@@ -190,7 +186,7 @@ async function waitForHealth(url: string, username: string, password: string, ch
 
 function logTail(secrets: string[]) {
   try {
-    const raw = fs.readFileSync(getAIOpencodeLogPath(), "utf8")
+    const raw = fs.readFileSync(getAIEngineLogPath(), "utf8")
     return redactSecrets(raw.slice(-4_000), secrets)
   } catch {
     return ""
@@ -199,7 +195,7 @@ function logTail(secrets: string[]) {
 
 async function startRuntime(): Promise<RuntimeHandle> {
   if (!isDesktopEnvironment()) throw new AIRuntimeError("AI Mode 仅支持 Windows 桌面版", "desktop-only")
-  if (!hasOpencodeBinary()) throw new AIRuntimeError("未找到 AI 引擎（opencode）", "not-installed")
+  if (!hasOpencodeBinary()) throw new AIRuntimeError("未找到 AI 引擎", "not-installed")
   if (!getCredentialProtectorPath()) throw new AIRuntimeError("缺少 Windows 凭据保护组件", "desktop-only")
   const snapshot = await getAISettingsStore().read()
   const settings = snapshot.config
@@ -228,7 +224,7 @@ async function startRuntime(): Promise<RuntimeHandle> {
   await fsp.mkdir(getOpencodeConfigPath(), { recursive: true })
   await fsp.writeFile(path.join(getOpencodeConfigPath(), "opencode.json"), configText, { encoding: "utf8", mode: 0o600 })
 
-  const logPath = getAIOpencodeLogPath()
+  const logPath = getAIEngineLogPath()
   await fsp.mkdir(path.dirname(logPath), { recursive: true })
   try {
     const stat = await fsp.stat(logPath)
@@ -237,7 +233,7 @@ async function startRuntime(): Promise<RuntimeHandle> {
     // no log yet
   }
   const logStream = fs.createWriteStream(logPath, { flags: "a", mode: 0o600 })
-  logStream.write(`\n=== ${new Date().toISOString()} opencode ${built.model} ===\n`)
+  logStream.write(`\n=== ${new Date().toISOString()} AI engine (${built.model}) ===\n`)
 
   const handleBase = {
     proxyToken,
@@ -277,7 +273,7 @@ async function startRuntime(): Promise<RuntimeHandle> {
     const health = await waitForHealth(url, username, password, child)
     const handle: RuntimeHandle = { ...startingHandle, version: health.version }
     child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-      logStream.write(`\n=== opencode exited code=${code} signal=${signal} ===\n`)
+      logStream.write(`\n=== AI engine exited code=${code} signal=${signal} ===\n`)
       logStream.end()
       if (current?.child === child) {
         current = null
@@ -292,7 +288,7 @@ async function startRuntime(): Promise<RuntimeHandle> {
     return handle
   } catch (error) {
     killTree(child.pid || 0)
-    logStream.write(`\n=== opencode start failed: ${error instanceof Error ? error.message : "unknown"} ===\n`)
+    logStream.write(`\n=== AI engine start failed: ${error instanceof Error ? error.message : "unknown"} ===\n`)
     logStream.end()
     await writeRuntimeState(null)
     const tail = logTail(secrets)

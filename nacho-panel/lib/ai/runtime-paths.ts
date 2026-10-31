@@ -33,8 +33,8 @@ export function getAIRuntimePath() {
   return path.join(getAIDataDirectory(), "ai-runtime.json")
 }
 
-export function getAIOpencodeLogPath() {
-  return path.join(getAIDataDirectory(), "ai-opencode.log")
+export function getAIEngineLogPath() {
+  return path.join(getAIDataDirectory(), "ai-engine.log")
 }
 
 export function getAIWorkspacePath() {

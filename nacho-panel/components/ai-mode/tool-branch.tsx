@@ -48,18 +48,21 @@ function statusLabel(status: Status) {
   return "等待确认"
 }
 
-function aggregateStatus(steps: ToolStep[], settled = true): Status {
+function aggregateStatus(steps: ToolStep[], settled = true, stopped = false): Status {
+  if (stopped) return "error"
   if (steps.some((step) => step.status === "waiting-confirm")) return "waiting-confirm"
   if (!settled || steps.some((step) => step.status === "running")) return "running"
   if (steps.some((step) => step.status === "error")) return "error"
   return "done"
 }
 
-function summaryText(steps: ToolStep[], settled: boolean) {
+function summaryText(steps: ToolStep[], settled: boolean, stopped = false, waiting = false) {
   const done = steps.filter((step) => step.status === "done").length
   const error = steps.filter((step) => step.status === "error").length
-  const waiting = steps.filter((step) => step.status === "waiting-confirm").length
-  if (waiting > 0) return `${done}/${steps.length} 完成 · ${waiting} 待确认`
+  const waitingConfirm = steps.filter((step) => step.status === "waiting-confirm").length
+  if (waitingConfirm > 0) return `${done}/${steps.length} 完成 · ${waitingConfirm} 待确认`
+  if (waiting) return `${done}/${steps.length} 完成 · 等待计时器`
+  if (stopped) return `${done}/${steps.length} 完成 · 已停止`
   if (!settled || steps.some((step) => step.status === "running")) return `${done}/${steps.length} 完成 · 执行中`
   if (error > 0) return `${done}/${steps.length} 完成 · ${error} 失败`
   return "全部完成"
@@ -79,13 +82,9 @@ function offsetTopWithin(element: HTMLElement, ancestor: HTMLElement) {
 function ToolStepDetail({
   step,
   className,
-  onConfirm,
-  onDeny,
 }: {
   step: ToolStep
   className?: string
-  onConfirm: (stepId: string) => void
-  onDeny: (stepId: string) => void
 }) {
   const meta = sourceMeta[step.source]
   const waiting = step.status === "waiting-confirm"
@@ -128,23 +127,10 @@ function ToolStepDetail({
         </div>
       ) : null}
       {waiting ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-warning">此操作会影响线上服务，需要你确认</span>
-          <button
-            type="button"
-            onClick={() => onConfirm(step.id)}
-            className="rounded-lg bg-warning px-2.5 py-1 text-[11px] font-semibold text-background transition-all hover:brightness-105"
-          >
-            确认执行
-          </button>
-          <button
-            type="button"
-            onClick={() => onDeny(step.id)}
-            className="rounded-lg border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            拒绝
-          </button>
-        </div>
+        <p className="mt-2.5 flex items-center gap-1.5 text-[11px] text-warning/85">
+          <ShieldAlert className="h-3 w-3 shrink-0" />
+          请在正文下方确认
+        </p>
       ) : null}
     </div>
   )
@@ -153,14 +139,16 @@ function ToolStepDetail({
 export function ToolBranch({
   steps,
   settled,
-  onConfirm,
-  onDeny,
+  stopped = false,
+  waiting = false,
 }: {
   steps: ToolStep[]
   /** 本轮回复已结束，不会再追加新的工具调用 */
   settled: boolean
-  onConfirm: (stepId: string) => void
-  onDeny: (stepId: string) => void
+  /** 回合被用户/计时器/安全上限停止 */
+  stopped?: boolean
+  /** 回合仍在等待 AI 计时器 */
+  waiting?: boolean
 }) {
   const { reduceMotion } = useMotionPreference()
   const groups = useMemo(() => groupToolSteps(steps), [steps])
@@ -174,10 +162,10 @@ export function ToolBranch({
 
   // 相邻两次工具调用之间会出现“上一个已完成、下一个还没出现”的空档，
   // 只看步骤状态会在每个工具结束时误判为全部完成并折叠，所以以整轮回复结束为准
-  const active = !settled || steps.some((step) => step.status === "running" || step.status === "waiting-confirm")
-  const expanded = manualOpen ?? active
+  const active = !settled && !stopped && !waiting
+  const expanded = manualOpen ?? (active || stopped || waiting)
   const selected = steps.find((step) => step.id === selectedId) ?? null
-  const summaryStatus = aggregateStatus(steps, settled)
+  const summaryStatus = aggregateStatus(steps, settled, stopped)
   const drawDuration = reduceMotion ? 0 : DRAW_DURATION
   const foldDuration = reduceMotion ? 0 : FOLD_DURATION
   const hasSteps = steps.length > 0
@@ -264,7 +252,7 @@ export function ToolBranch({
         <span className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
           {steps.length}
         </span>
-        <span className="min-w-0 flex-1 truncate">{summaryText(steps, settled)}</span>
+        <span className="min-w-0 flex-1 truncate">{summaryText(steps, settled, stopped, waiting)}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
       </button>
 
@@ -407,8 +395,6 @@ export function ToolBranch({
                 key={selected.id}
                 step={selected}
                 className={reduceMotion ? undefined : "animate-in fade-in-0 duration-300"}
-                onConfirm={onConfirm}
-                onDeny={onDeny}
               />
             ) : null}
           </AutoHeight>

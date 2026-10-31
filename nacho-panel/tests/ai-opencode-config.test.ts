@@ -32,6 +32,8 @@ test("opencode config contains no secrets and points at panel proxies", () => {
   const customModel = (nacho.models as Record<string, Record<string, unknown>>)["my-model"]
   assert.equal(customModel.tool_call, true)
   assert.equal(customModel.attachment, true)
+  assert.equal(customModel.reasoning, true)
+  assert.equal(customModel.interleaved, "reasoning_content")
   assert.deepEqual(customModel.modalities, { input: ["text", "image"], output: ["text"] })
   const mcp = built.config.mcp as Record<string, Record<string, unknown>>
   assert.equal(mcp.nacho.url, "http://127.0.0.1:3100/api/ai/mcp")
@@ -45,6 +47,11 @@ test("opencode config contains no secrets and points at panel proxies", () => {
   assert.equal(built.config.share, "disabled")
   assert.equal(built.config.lsp, false)
   assert.equal(built.config.snapshot, false)
+  const agent = built.config.agent as Record<string, Record<string, unknown>>
+  assert.equal(agent.nacho.mode, "primary")
+  assert.equal(typeof agent.nacho.prompt, "string")
+  assert.equal(String(agent.nacho.prompt).includes("Nacho AI"), true)
+  assert.equal(String(agent.nacho.prompt).includes("You are opencode"), false)
 })
 
 test("disabled MCP servers are not included", () => {

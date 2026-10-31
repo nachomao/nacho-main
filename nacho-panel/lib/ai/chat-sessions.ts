@@ -20,6 +20,7 @@ export type ChatSession = {
 const sessions = new Map<string, ChatSession>()
 const creating = new Map<string, Promise<ChatSession>>()
 let active: ChatSession | null = null
+let activeTurnId: string | null = null
 
 export function buildPermissionRules(confirmDanger: boolean): OpenCodePermissionRule[] {
   const rules: OpenCodePermissionRule[] = [{ permission: "*", pattern: "*", action: "ask" }]
@@ -131,7 +132,10 @@ export function getChatSession(uiSessionId: string) {
 
 export function forgetChatSession(uiSessionId: string) {
   sessions.delete(uiSessionId)
-  if (active?.uiSessionId === uiSessionId) active = null
+  if (active?.uiSessionId === uiSessionId) {
+    active = null
+    activeTurnId = null
+  }
 }
 
 export async function deleteChatSession(
@@ -143,13 +147,29 @@ export async function deleteChatSession(
   const session = sessions.get(uiSessionId)
   const target = session?.opencodeSessionId ?? opencodeSessionId
   sessions.delete(uiSessionId)
-  if (active?.uiSessionId === uiSessionId) active = null
+  if (active?.uiSessionId === uiSessionId) {
+    active = null
+    activeTurnId = null
+  }
   await mapStore.forget(uiSessionId).catch(() => undefined)
   if (target) await client.deleteSession(target).catch(() => undefined)
 }
 
-export function setActiveChat(session: ChatSession | null) {
+export function setActiveChat(session: ChatSession | null, turnId: string | null = null) {
   active = session
+  activeTurnId = session ? turnId : null
+}
+
+export function isActiveTurn(uiSessionId: string, turnId: string | null) {
+  return Boolean(active && activeTurnId && active.uiSessionId === uiSessionId && activeTurnId === turnId)
+}
+
+/** 只清理仍属于该回合的 active chat，避免旧回合的收尾清掉刚发出的新回合。 */
+export function clearActiveChat(turnId?: string | null) {
+  if (!turnId || activeTurnId === turnId) {
+    active = null
+    activeTurnId = null
+  }
 }
 
 export function getActiveChat() {
@@ -161,5 +181,8 @@ export function pruneChatSessions(maxAgeMs = 8 * 60 * 60 * 1000) {
   for (const [id, session] of sessions) {
     if (session.lastUsed < cutoff) sessions.delete(id)
   }
-  if (active && active.lastUsed < cutoff) active = null
+  if (active && active.lastUsed < cutoff) {
+    active = null
+    activeTurnId = null
+  }
 }

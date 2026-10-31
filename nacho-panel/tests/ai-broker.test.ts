@@ -192,6 +192,28 @@ test("offline client and disabled plugin are rejected before execution", async (
   assert.match(plugin.text, /插件/)
 })
 
+test("timer tools are handled locally without a control-server call", async () => {
+  const settings = defaultStoredSettings()
+  const chat = sessionFor("http://127.0.0.1:1", `u-timer-${Date.now()}`)
+  const set = await executeNachoTool({
+    toolName: "set_timer",
+    args: { afterSeconds: 1800, reminder: "检查构建日志" },
+    chat,
+    settings,
+  })
+  assert.equal(set.ok, true)
+  assert.match(set.text, /1800/)
+  assert.match(set.text, /检查构建日志/)
+  const cancel = await executeNachoTool({
+    toolName: "cancel_timer",
+    args: { reason: "完成" },
+    chat,
+    settings,
+  })
+  assert.equal(cancel.ok, true)
+  assert.match(cancel.text, /取消/)
+})
+
 test("finalizeToolText redacts the panel key and truncates", () => {
   const output = `key=${KEY} sk-abcdefghijklmnop ${"x".repeat(40_000)}`
   const result = finalizeToolText(output, KEY)

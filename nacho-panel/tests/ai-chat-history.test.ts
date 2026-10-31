@@ -8,6 +8,7 @@ import {
   toPersistedChatHistory,
   type Session,
 } from "../lib/ai/chat-history"
+import { createTimer } from "../lib/ai/task-timer"
 
 function session(id: string, messages: Session["messages"] = []): Session {
   return { id, title: `会话 ${id}`, createdAt: 1000, messages }
@@ -36,6 +37,7 @@ test("persisted history strips image data urls and keeps reasoning and tool step
           detail: "path=C:",
           status: "done",
           output: "ok",
+          ask: "需要确认读取磁盘信息",
         }],
       },
     ]),
@@ -53,6 +55,7 @@ test("persisted history strips image data urls and keeps reasoning and tool step
     assert.equal(assistant.reasoning, "先看图再回答")
     assert.equal(assistant.reasoningActive, false)
     assert.equal(assistant.steps[0].output, "ok")
+    assert.equal(assistant.steps[0].ask, "需要确认读取磁盘信息")
   }
 })
 
@@ -118,6 +121,33 @@ test("persisted history keeps ThoughtLine seconds and drops invalid values", () 
   const seconds = history.sessions[0].messages.map((message) =>
     message.role === "assistant" ? message.thoughtSeconds : null)
   assert.deepEqual(seconds, [4.3, undefined, undefined, undefined, undefined])
+})
+
+test("persisted history keeps stopped but drops live timer state", () => {
+  const history = toPersistedChatHistory([
+    session("s1", [{
+      id: "a1",
+      role: "assistant",
+      text: "已停止",
+      steps: [],
+      done: true,
+      stopped: true,
+      timer: createTimer({ afterSeconds: 60, startedAt: 1_000, reminder: "检查" }),
+      capReached: true,
+    }]),
+  ], "s1")
+  const assistant = history.sessions[0].messages[0]
+  assert.equal(assistant.role, "assistant")
+  if (assistant.role === "assistant") {
+    assert.equal(assistant.stopped, true)
+    assert.equal(assistant.timer, undefined)
+    assert.equal(assistant.capReached, undefined)
+  }
+  const normalized = normalizePersistedChatHistory(history)
+  assert.equal(normalized?.sessions[0].messages[0].role, "assistant")
+  if (normalized?.sessions[0].messages[0].role === "assistant") {
+    assert.equal(normalized.sessions[0].messages[0].stopped, true)
+  }
 })
 
 test("session ids stay within the persisted id pattern", () => {

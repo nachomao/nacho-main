@@ -9,6 +9,8 @@ test("tool list respects enabled skills and plugins", () => {
   assert.equal(names.includes("nacho_list_clients"), true)
   assert.equal(names.includes("nacho_run_shell"), true)
   assert.equal(names.includes("nacho_collect_logs"), true)
+  assert.equal(names.includes("nacho_set_timer"), true)
+  assert.equal(names.includes("nacho_start_local_job"), true)
   assert.equal(names.includes("nacho_backup"), false) // p-backup 默认关闭
   assert.equal(names.includes("nacho_list_tasks"), false) // s-task 默认关闭
 
@@ -28,6 +30,20 @@ test("mcp tool names are the suffix and resolve back to full ids", () => {
   assert.equal(findNachoTool("nacho_run_shell")?.mcpName, "run_shell")
   assert.equal(findNachoTool("unknown"), null)
   assert.equal(findNachoTool("list_clients")?.inputSchema.type, "object")
+})
+
+test("timer and local job tool schemas are exposed and validated", () => {
+  assert.equal(findNachoTool("set_timer")?.id, "nacho_set_timer")
+  assert.equal(findNachoTool("start_local_job")?.id, "nacho_start_local_job")
+  const timer = findNachoTool("set_timer")
+  assert.ok(timer)
+  assert.deepEqual(validateToolArgs(timer.inputSchema, { afterSeconds: 1800, reminder: "检查日志" }), [])
+  assert.equal(validateToolArgs(timer.inputSchema, { afterSeconds: 9, reminder: "检查" }).length > 0, true)
+  assert.equal(validateToolArgs(timer.inputSchema, { afterSeconds: 60 }).some((message) => message.includes("reminder")), true)
+  const job = findNachoTool("start_local_job")
+  assert.ok(job)
+  assert.equal(validateToolArgs(job.inputSchema, { command: "npm run build" }).length, 0)
+  assert.equal(validateToolArgs(job.inputSchema, { command: "x", shell: "bash" }).some((message) => message.includes("shell")), true)
 })
 
 test("argument validation catches required, extra, enum and range errors", () => {

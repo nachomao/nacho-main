@@ -1,7 +1,7 @@
 /* AI Mode 会话历史：客户端与服务端共用的类型、限额与归一化。
  * 本文件不得引入 node: 内置模块，面板浏览器端与 Next 服务端都会引用。 */
 
-import type { AIChatStepSource } from "./chat-events"
+import type { AIChatStepSource, AIChatTimer } from "./chat-events"
 import { isAIImageMime, type AIImageMime } from "./chat-attachments"
 
 export const MAX_AI_CHAT_HISTORY_BYTES = 8 * 1024 * 1024
@@ -11,6 +11,7 @@ export const MAX_AI_CHAT_HISTORY_TEXT_CHARS = 200_000
 export const MAX_AI_CHAT_HISTORY_STEPS = 100
 export const MAX_AI_CHAT_HISTORY_OUTPUT_CHARS = 8_000
 export const MAX_AI_CHAT_HISTORY_DETAIL_CHARS = 2_000
+export const MAX_AI_CHAT_HISTORY_ASK_CHARS = 400
 export const MAX_AI_CHAT_HISTORY_TITLE_CHARS = 200
 export const MAX_AI_CHAT_HISTORY_ID_CHARS = 160
 export const MAX_AI_CHAT_HISTORY_ATTACHMENTS = 3
@@ -37,6 +38,8 @@ export type ToolStep = {
   danger?: boolean
   risk?: "warn" | "danger"
   approvalId?: string
+  /** 工具调用前模型写下的确认说明，用于审批卡展示。 */
+  ask?: string
 }
 
 export type Message =
@@ -51,6 +54,12 @@ export type Message =
       reasoningActive?: boolean
       /** ThoughtLine 实时计时的累计思考秒数，保留一位小数。 */
       thoughtSeconds?: number
+      /** 实时 AI 检查点计时器；不落盘，重载后本轮会被 finalize。 */
+      timer?: AIChatTimer
+      /** 是否触发了单轮 2 小时安全上限；实时状态，不落盘。 */
+      capReached?: boolean
+      /** 本轮是被用户/安全上限/中断结束的，而不是正常完成。 */
+      stopped?: boolean
     }
 
 export type Session = { id: string; title: string; createdAt: number; messages: Message[] }
@@ -139,6 +148,7 @@ function normalizeToolStep(value: unknown): ToolStep | null {
   const output = normalizeOptionalText(value.output, MAX_AI_CHAT_HISTORY_OUTPUT_CHARS)
   const risk = value.risk === "warn" || value.risk === "danger" ? value.risk : undefined
   const approvalId = normalizeOptionalText(value.approvalId, MAX_AI_CHAT_HISTORY_ID_CHARS)
+  const ask = normalizeOptionalText(value.ask, MAX_AI_CHAT_HISTORY_ASK_CHARS)
   return {
     id,
     source,
@@ -149,6 +159,7 @@ function normalizeToolStep(value: unknown): ToolStep | null {
     ...(value.danger === true ? { danger: true } : {}),
     ...(risk ? { risk } : {}),
     ...(approvalId ? { approvalId } : {}),
+    ...(ask ? { ask } : {}),
   }
 }
 
@@ -185,6 +196,7 @@ function normalizeMessage(value: unknown): Message | null {
       ...(reasoning ? { reasoning } : {}),
       reasoningActive: value.reasoningActive === true,
       ...(thoughtSeconds !== undefined ? { thoughtSeconds } : {}),
+      ...(value.stopped === true ? { stopped: true } : {}),
     }
   }
   return null
@@ -267,6 +279,7 @@ function copyMessageForPersistence(message: Message): Message {
     ...(message.reasoning ? { reasoning: message.reasoning } : {}),
     reasoningActive: false,
     ...(message.thoughtSeconds !== undefined ? { thoughtSeconds: message.thoughtSeconds } : {}),
+    ...(message.stopped ? { stopped: true } : {}),
   }
 }
 

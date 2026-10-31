@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react"
 import { animate, type AnimationPlaybackControls } from "motion/react"
-import { Check, ChevronDown, Sparkles } from "lucide-react"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMotionPreference } from "@/lib/motion-preference"
 import { AutoHeight } from "@/components/ui/auto-height"
@@ -64,9 +64,15 @@ const spoken = (ds: number) =>
     ? `${(ds / 10).toFixed(1)} 秒`
     : `${Math.floor(ds / 600)} 分 ${((ds % 600) / 10).toFixed(1)} 秒`
 
+/* 扫光无缝循环：位移必须正好等于 250% 背景的一个平铺周期（2.5 个文本宽度）。
+   125% → -41.6667% 的位移是 166.6667 个百分点 × 1.5 = 2.5 个文本宽度；
+   原来的 -125% 停在 1.5 个周期处，回环时渲染不重合，高光会瞬移。 */
 const STYLE = `
 @keyframes thought-line-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-@keyframes thought-line-shimmer { to { background-position: -125% 0; } }
+@keyframes thought-line-shimmer {
+  from { background-position: 125% 0; }
+  to { background-position: -41.6667% 0; }
+}
 `
 
 export function ThoughtLine({
@@ -77,7 +83,9 @@ export function ThoughtLine({
   steps = EMPTY_STEPS,
   collapsible = true,
   collapseOnSettle = true,
-  color = "currentColor",
+  // 扫光渐变会在子元素上设置 color: transparent；这里必须是可解析的具体颜色，
+  // 否则 currentColor 会解析成透明，实时 “Thinking…” 文案完全不可见。
+  color = "var(--foreground)",
   glyphColor = "",
   fontSize = 16,
   breathPeriod = 1.6,
@@ -385,10 +393,9 @@ export function ThoughtLine({
                   )}
                   data-done={done ? "" : undefined}
                 >
+                  {/* 保留 1em 状态列与 gap，去掉完成态勾号后文字缩进仍与之前一致。 */}
                   <span className="inline-grid h-[1.6em] w-[1em] flex-none place-items-center opacity-55" aria-hidden="true">
-                    {done ? (
-                      <Check size="1em" strokeWidth={2.5} />
-                    ) : (
+                    {done ? null : (
                       <i
                         className={cn(
                           "block h-[0.4em] w-[0.4em] rounded-full bg-current [animation:thought-line-pulse_1.6s_cubic-bezier(0.77,0,0.175,1)_infinite]",

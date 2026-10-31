@@ -140,6 +140,56 @@ test("permission events correlate to tool call and resolve", () => {
   ])
 })
 
+test("timer tools map to timer events without creating tool steps", () => {
+  const mapper = mapperWithMessages()
+  const part = (id: string, tool: string, input: Record<string, unknown>) => ({
+    type: "message.part.updated",
+    properties: {
+      sessionID: SESSION,
+      part: { id, messageID: ASSISTANT, type: "tool", tool, state: { status: "running", input } },
+    },
+  })
+
+  assert.deepEqual(mapper.map(part("prt_timer", "nacho_set_timer", {
+    afterSeconds: 1800,
+    reminder: "检查构建日志",
+    label: "构建",
+    onExpire: "wait",
+  })), [{
+    type: "timer-set",
+    afterSeconds: 1800,
+    reminder: "检查构建日志",
+    label: "构建",
+    onExpire: "wait",
+  }])
+  // 同一分片的重复快照不重复发送
+  assert.deepEqual(mapper.map(part("prt_timer", "nacho_set_timer", {
+    afterSeconds: 1800,
+    reminder: "检查构建日志",
+    label: "构建",
+    onExpire: "wait",
+  })), [])
+  // 同一工具的新参数是一次修订
+  assert.deepEqual(mapper.map(part("prt_timer_2", "nacho_set_timer", {
+    afterSeconds: 300,
+    reminder: "继续检查",
+  })), [{
+    type: "timer-set",
+    afterSeconds: 300,
+    reminder: "继续检查",
+    onExpire: "wait",
+  }])
+  assert.deepEqual(mapper.map(part("prt_cancel", "nacho_cancel_timer", { reason: "完成" })), [
+    { type: "timer-cancel", reason: "完成" },
+  ])
+  assert.deepEqual(mapper.map(part("prt_cancel", "nacho_cancel_timer", { reason: "完成" })), [])
+
+  // resetTurn 让同一会话可以进入下一轮并再次收到 idle
+  assert.deepEqual(mapper.map({ type: "session.idle", properties: { sessionID: SESSION } }), [{ type: "done" }])
+  mapper.resetTurn()
+  assert.deepEqual(mapper.map({ type: "session.idle", properties: { sessionID: SESSION } }), [{ type: "done" }])
+})
+
 test("errors are sanitized and idle is emitted once", () => {
   const mapper = mapperWithMessages()
   const error = mapper.map({

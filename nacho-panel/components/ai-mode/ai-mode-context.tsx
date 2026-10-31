@@ -99,9 +99,9 @@ export function AIModeProvider({ children }: { children: ReactNode }) {
     }
   }, [phase])
 
-  // ESC 退出（开场与激活阶段均可按 Esc 立即退场）
+  // ESC 退出（开场阶段）；入场与激活阶段由 AIWorkspace 处理：执行中先停止，空闲时退出。
   useEffect(() => {
-    if (phase !== "active" && phase !== "entering" && phase !== "intro" && phase !== "dimming") return
+    if (phase !== "intro" && phase !== "dimming") return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") exit()
     }

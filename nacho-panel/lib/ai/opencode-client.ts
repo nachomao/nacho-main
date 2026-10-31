@@ -22,6 +22,8 @@ export type OpenCodePromptBody = {
   agent?: string
   tools?: Record<string, boolean>
   system?: string
+  /** 模型变体；high 会映射为 openai-compatible 的 reasoning_effort=high。 */
+  variant?: string
 }
 
 export class OpenCodeError extends Error {
@@ -74,6 +76,8 @@ export function createOpencodeClient(runtime: RuntimeHandle) {
     health: () => request<{ healthy?: boolean; version?: string }>("/global/health", undefined, 5_000),
     createSession: (input: { title: string; permission: OpenCodePermissionRule[] }) =>
       request<OpenCodeSession>("/session", { method: "POST", body: JSON.stringify(input) }),
+    getSessionStatus: () =>
+      request<Record<string, { type?: string }>>("/session/status", undefined, 2_000),
     getSession: (sessionId: string) => request<OpenCodeSession>(`/session/${encodeURIComponent(sessionId)}`),
     deleteSession: (sessionId: string) =>
       request<boolean>(`/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
