@@ -33,7 +33,7 @@ const FOLD_DURATION = 300
 
 type Status = ToolStep["status"]
 
-function StepStatusIcon({ status, className }: { status: Status; className?: string }) {
+export function StepStatusIcon({ status, className }: { status: Status; className?: string }) {
   const classes = cn("h-3.5 w-3.5 shrink-0", className)
   if (status === "running") return <LoaderCircle className={cn(classes, "animate-spin text-primary")} />
   if (status === "done") return <CircleCheck className={cn(classes, "text-positive")} />
@@ -41,7 +41,7 @@ function StepStatusIcon({ status, className }: { status: Status; className?: str
   return <ShieldAlert className={cn(classes, "text-warning")} />
 }
 
-function statusLabel(status: Status) {
+export function statusLabel(status: Status) {
   if (status === "running") return "执行中"
   if (status === "done") return "已完成"
   if (status === "error") return "失败"

@@ -13,7 +13,6 @@ import {
   CircleCheck,
   LoaderCircle,
   ShieldAlert,
-  Settings2,
   X,
   Plus,
   Trash2,
@@ -23,7 +22,6 @@ import {
   Zap,
   Radio,
   Check,
-  ChevronsUpDown,
   AtSign,
   ImagePlus,
   ChevronDown,
@@ -51,6 +49,7 @@ import {
   streamAIChat,
 } from "@/lib/ai/client"
 import { createChatSessionId } from "@/lib/ai/chat-history"
+import { collectRecentCalls } from "@/lib/ai/recent-calls"
 import { toThoughtSteps } from "@/lib/ai/thought-steps"
 import { resolveAIModel } from "@/lib/ai/config-shared"
 import { activeTimerElapsedMs, createTimer, formatTimerDuration } from "@/lib/ai/task-timer"
@@ -68,7 +67,9 @@ import { ThoughtLine } from "./thought-line"
 import { TaskTimerLine } from "./task-timer-line"
 import { ToolBranch } from "./tool-branch"
 import { ToolApprovalCard } from "./tool-approval-card"
-import { sourceMeta } from "./tool-source-meta"
+import { ModelSettingsCapsule } from "./model-settings-capsule"
+import { RecentCallsBranch } from "./recent-calls-branch"
+import { SwipeRow } from "./swipe-row"
 import { AIIntro } from "./ai-intro"
 import {
   AI_MODE_TIMING,
@@ -241,8 +242,9 @@ export function AIWorkspace() {
   const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
   // 关闭时先播放退场动画，动画结束后再卸载
   const [menuClosing, setMenuClosing] = useState(false)
-  const modelBtnRef = useRef<HTMLButtonElement>(null)
   const inputModelBtnRef = useRef<HTMLButtonElement>(null)
+  // 同一时间只保留一行会话露出删除键
+  const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
   // 输入框底部的模式胶囊：Agent（多步执行）/ Chat（仅对话）
   const [agentMode, setAgentMode] = useState<"agent" | "chat">("agent")
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
@@ -488,7 +490,6 @@ export function AIWorkspace() {
     let toolCalls = 0
     let dangerOps = 0
     let doneSteps = 0
-    const recent: { tool: string; source: ToolStep["source"]; status: StepStatus }[] = []
     for (const s of sessions) {
       for (const m of s.messages) {
         if (m.role !== "assistant") continue
@@ -496,12 +497,12 @@ export function AIWorkspace() {
           toolCalls++
           if (st.danger) dangerOps++
           if (st.status === "done") doneSteps++
-          recent.push({ tool: st.tool, source: st.source, status: st.status })
         }
       }
     }
-    return { toolCalls, dangerOps, doneSteps, recent: recent.slice(-6).reverse() }
+    return { toolCalls, dangerOps, doneSteps }
   }, [sessions])
+  const recentCalls = useMemo(() => collectRecentCalls(sessions), [sessions])
 
   // 进入后聚焦输入框；退出时清理定时器
   useEffect(() => {
@@ -708,27 +709,28 @@ export function AIWorkspace() {
     inputRef.current?.focus()
   }
 
-  const deleteSession = (sid: string) => {
-    if (busy && sid === activeId) return
-    void (async () => {
-      // 取消尚未触发的防抖保存，再让在途保存完成，避免旧快照在 DELETE 之后复活。
-      if (saveTimerRef.current !== null) {
-        window.clearTimeout(saveTimerRef.current)
-        saveTimerRef.current = null
+  /** 返回 false 表示本次未删除（当前会话仍在执行），左滑行据此恢复原状。 */
+  const deleteSession = async (sid: string) => {
+    if (busy && sid === activeId) return false
+    // 取消尚未触发的防抖保存，再让在途保存完成，避免旧快照在 DELETE 之后复活。
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (persistenceRef.current.enabled) await persistenceRef.current.chain.catch(() => undefined)
+    if (!developerPreview) await deleteAISession(sid)
+    setSessions((prev) => {
+      const rest = prev.filter((s) => s.id !== sid)
+      if (rest.length === 0) {
+        const fresh = newSession()
+        setActiveId(fresh.id)
+        return [fresh]
       }
-      if (persistenceRef.current.enabled) await persistenceRef.current.chain.catch(() => undefined)
-      if (!developerPreview) await deleteAISession(sid)
-      setSessions((prev) => {
-        const rest = prev.filter((s) => s.id !== sid)
-        if (rest.length === 0) {
-          const fresh = newSession()
-          setActiveId(fresh.id)
-          return [fresh]
-        }
-        if (sid === activeId) setActiveId(rest[0].id)
-        return rest
-      })
-    })()
+      if (sid === activeId) setActiveId(rest[0].id)
+      return rest
+    })
+    setSwipeOpenId((current) => (current === sid ? null : current))
+    return true
   }
 
   const switchSession = (sid: string) => {
@@ -1162,53 +1164,77 @@ export function AIWorkspace() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-              <div className="flex flex-col gap-1">
+              {/* 会话行：左滑露出删除，滑过阈值松手直接删除；删除时操作块铺满整行后收起行高 */}
+              <ul aria-label="会话列表" className="flex flex-col">
                 {sessions.map((s) => {
                   const isActive = s.id === active?.id
                   const count = s.messages.filter((m) => m.role === "user").length
+                  const swipeOpen = swipeOpenId === s.id
+                  const locked = busy && isActive
                   return (
-                    <div
-                      key={s.id}
-                      className={cn(
-                        "group relative flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-all",
-                        isActive
-                          ? "border-border bg-foreground/[0.05]"
-                          : "border-transparent hover:border-border/60 hover:bg-foreground/[0.03]",
-                      )}
-                      onClick={() => switchSession(s.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") switchSession(s.id)
-                      }}
-                    >
-                      <MessageSquare
-                        className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-foreground/80" : "text-muted-foreground/60")}
-                      />
-                      <div className="min-w-0 flex-1 leading-tight">
-                        <p className={cn("truncate text-xs", isActive ? "font-medium text-foreground" : "text-muted-foreground")}>
-                          {s.title}
-                        </p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground/60">
-                          {timeLabel(s.createdAt)}
-                          {count > 0 && ` · ${count} 条指令`}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        aria-label={`删除会话 ${s.title}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          deleteSession(s.id)
-                        }}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/50 opacity-0 transition-all hover:bg-negative/15 hover:text-negative group-hover:opacity-100"
+                    <li key={s.id}>
+                      <SwipeRow
+                        label={`会话 ${s.title}`}
+                        height={52}
+                        className="mb-1"
+                        frameClassName={cn(
+                          "rounded-xl border transition-colors has-[:focus-visible]:border-primary/40",
+                          isActive
+                            ? "border-border bg-foreground/[0.05]"
+                            : "border-transparent hover:border-border/60 hover:bg-foreground/[0.03]",
+                        )}
+                        disabled={locked}
+                        open={swipeOpen}
+                        onOpenChange={(next) =>
+                          setSwipeOpenId((current) => (next ? s.id : current === s.id ? null : current))
+                        }
+                        action={{ label: "删除", icon: <Trash2 className="h-4 w-4" /> }}
+                        onCommit={() => deleteSession(s.id)}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => switchSession(s.id)}
+                          aria-current={isActive ? "true" : undefined}
+                          className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 pl-3 pr-1 text-left outline-none"
+                        >
+                          <MessageSquare
+                            className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-foreground/80" : "text-muted-foreground/60")}
+                          />
+                          <span className="min-w-0 flex-1 leading-tight">
+                            <span
+                              className={cn(
+                                "block truncate text-xs",
+                                isActive ? "font-medium text-foreground" : "text-muted-foreground",
+                              )}
+                            >
+                              {s.title}
+                            </span>
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground/60">
+                              {timeLabel(s.createdAt)}
+                              {count > 0 && ` · ${count} 条指令`}
+                            </span>
+                          </span>
+                        </button>
+                        {locked ? null : (
+                          <button
+                            type="button"
+                            aria-label={swipeOpen ? `收起会话 ${s.title} 的删除操作` : `删除会话 ${s.title}`}
+                            aria-expanded={swipeOpen}
+                            title="左滑或点击显示删除"
+                            onClick={() => setSwipeOpenId(swipeOpen ? null : s.id)}
+                            className={cn(
+                              "mr-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-[opacity,color] hover:text-negative focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none",
+                              swipeOpen ? "opacity-0" : "opacity-0 group-hover/swipe:opacity-100",
+                            )}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </SwipeRow>
+                    </li>
                   )
                 })}
-              </div>
+              </ul>
             </div>
 
             {/* 能力概览 */}
@@ -1232,79 +1258,9 @@ export function AIWorkspace() {
                   {onlineCount} 在线
                 </span>
               </div>
-              {/* 内联模型切换器：点击展开列表，选中即生效 */}
-              <div className="relative mt-3">
-                <button
-                  type="button"
-                  ref={modelBtnRef}
-                  onClick={() => openModelMenuFrom(modelBtnRef.current)}
-                  aria-expanded={modelMenuOpen}
-                  aria-haspopup="listbox"
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-[11px] transition-colors",
-                    modelMenuOpen
-                      ? "border-border bg-foreground/[0.05] text-foreground"
-                      : "border-border/70 bg-foreground/[0.03] text-muted-foreground hover:border-border hover:bg-foreground/[0.06] hover:text-foreground",
-                  )}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Settings2 className="h-3.5 w-3.5" />
-                    {modelLabel}
-                  </span>
-                  <ChevronsUpDown className="h-3 w-3 text-muted-foreground/60" />
-                </button>
-                {modelMenuOpen && menuRect && createPortal(
-                  <>
-                    {/* 点击外部关闭 */}
-                    <button
-                      type="button"
-                      aria-label="关闭模型菜单"
-                      className="fixed inset-0 z-[60] cursor-default"
-                      onClick={() => {
-                        if (!menuClosing) closeModelMenu()
-                      }}
-                    />
-                    <ul
-                      role="listbox"
-                      aria-label="选择模型"
-                      style={{ left: menuRect.left, bottom: menuRect.bottom, width: menuRect.width }}
-                      className={cn(
-                        "fixed z-[70] overflow-hidden rounded-xl border border-border bg-card/60 py-1 shadow-xl backdrop-blur-2xl backdrop-saturate-150",
-                        menuClosing ? "animate-dropdown-out" : "animate-dropdown-in",
-                      )}
-                    >
-                      {modelOptions
-                        .filter((m) => m.id !== "custom" || cfg.customModel)
-                        .map((m) => {
-                          const selected = cfg.model === m.id
-                          return (
-                            <li key={m.id}>
-                              <button
-                                type="button"
-                                role="option"
-                                aria-selected={selected}
-                                onClick={() => {
-                                  aiConfigStore.set({ model: m.id })
-                                  if (!menuClosing) closeModelMenu()
-                                }}
-                                className={cn(
-                                  "flex w-full items-center justify-between px-2.5 py-1.5 text-left text-[11px] transition-colors",
-                                  selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
-                                )}
-                              >
-                                <span className="flex flex-col leading-tight">
-                                  <span>{m.id === "custom" ? cfg.customModel : m.label}</span>
-                                  <span className="text-[10px] text-muted-foreground/60">{m.vendor}</span>
-                                </span>
-                                {selected && <Check className="h-3.5 w-3.5" />}
-                              </button>
-                            </li>
-                          )
-                        })}
-                    </ul>
-                  </>,
-                  document.body,
-                )}
+              {/* 模型设置胶囊：点击后原地浮起并弹性展开为居中的设置卡片 */}
+              <div className="mt-3">
+                <ModelSettingsCapsule modelLabel={modelLabel} />
               </div>
             </div>
           </aside>
@@ -1706,6 +1662,58 @@ export function AIWorkspace() {
                       className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform", modelMenuOpen && "rotate-180")}
                     />
                   </button>
+                  {modelMenuOpen && menuRect && createPortal(
+                    <>
+                      {/* 点击外部关闭 */}
+                      <button
+                        type="button"
+                        aria-label="关闭模型菜单"
+                        className="fixed inset-0 z-[60] cursor-default"
+                        onClick={() => {
+                          if (!menuClosing) closeModelMenu()
+                        }}
+                      />
+                      <ul
+                        role="listbox"
+                        aria-label="选择模型"
+                        style={{ left: menuRect.left, bottom: menuRect.bottom, width: menuRect.width }}
+                        className={cn(
+                          "fixed z-[70] overflow-hidden rounded-xl border border-border bg-card/60 py-1 shadow-xl backdrop-blur-2xl backdrop-saturate-150",
+                          menuClosing ? "animate-dropdown-out" : "animate-dropdown-in",
+                        )}
+                      >
+                        {modelOptions
+                          .filter((m) => m.id !== "custom" || cfg.customModel)
+                          .map((m) => {
+                            const selected = cfg.model === m.id
+                            return (
+                              <li key={m.id}>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    aiConfigStore.set({ model: m.id })
+                                    if (!menuClosing) closeModelMenu()
+                                  }}
+                                  className={cn(
+                                    "flex w-full items-center justify-between px-2.5 py-1.5 text-left text-[11px] transition-colors",
+                                    selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+                                  )}
+                                >
+                                  <span className="flex flex-col leading-tight">
+                                    <span>{m.id === "custom" ? cfg.customModel : m.label}</span>
+                                    <span className="text-[10px] text-muted-foreground/60">{m.vendor}</span>
+                                  </span>
+                                  {selected && <Check className="h-3.5 w-3.5" />}
+                                </button>
+                              </li>
+                            )
+                          })}
+                      </ul>
+                    </>,
+                    document.body,
+                  )}
 
                   <button
                     type="button"
@@ -1789,37 +1797,9 @@ export function AIWorkspace() {
               <TelemetryStat label="会话数" value={sessions.length} Icon={History} />
             </div>
 
-            {/* 最近调用流 */}
-            <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-border px-3 pt-3">
-              <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">最近调用</p>
-              {telemetry.recent.length === 0 ? (
-                <p className="px-1 text-[11px] text-muted-foreground/50">暂无调用记录</p>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  {telemetry.recent.map((r, i) => {
-                    const meta = sourceMeta[r.source]
-                    return (
-                      <div
-                        key={`${r.tool}-${i}`}
-                        className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/40 px-2.5 py-1.5"
-                      >
-                        {r.status === "running" ? (
-                          <LoaderCircle className="h-3 w-3 shrink-0 animate-spin text-primary" />
-                        ) : r.status === "waiting-confirm" ? (
-                          <ShieldAlert className="h-3 w-3 shrink-0 text-warning" />
-                        ) : (
-                          <CircleCheck className="h-3 w-3 shrink-0 text-positive" />
-                        )}
-                        <code className="truncate font-mono text-[10px] text-foreground/90">{r.tool}</code>
-                        <span className="ml-auto flex shrink-0 items-center gap-1 text-[9px] text-muted-foreground/60">
-                          <meta.Icon className="h-2.5 w-2.5" />
-                          {meta.label}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+            {/* 最近调用：分支菜单串起各次调用，点选看命令，再点命令块弹出详情 */}
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-border px-3 pt-1.5">
+              <RecentCallsBranch calls={recentCalls} />
             </div>
 
             {/* 模型信息 */}
