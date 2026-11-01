@@ -37,6 +37,8 @@ const RESISTANCE = 0.55
 const COMMIT_AT = 0.6
 const SNAP_BOUNCE = 0.2
 const COLLAPSE_MS = 220
+/** 行高过渡没有触发 transitionend（被打断、元素不可见）时的兜底等待 */
+const FOLD_FALLBACK_MS = COLLAPSE_MS + 500
 /** 松手后这段时间内到达的 click 视为拖动 / 收起抽屉的副产物 */
 const CLICK_GUARD_MS = 400
 const EASE_OUT = [0.23, 1, 0.32, 1] as const
@@ -229,16 +231,29 @@ export function SwipeRow({
     spreadOn.current = true
     const fold = () => {
       setPhase("collapsing")
-      foldTimer.current = window.setTimeout(
-        () => {
-          Promise.resolve()
-            .then(() => latest.current.onCommit())
-            .then((result) => {
-              if (result === false) restore()
-            }, restore)
-        },
-        reduceMotion ? 0 : COLLAPSE_MS,
-      )
+      const node = root.current
+      let finished = false
+      const finish = () => {
+        if (finished) return
+        finished = true
+        window.clearTimeout(foldTimer.current)
+        node?.removeEventListener("transitionend", onFolded)
+        Promise.resolve()
+          .then(() => latest.current.onCommit())
+          .then((result) => {
+            if (result === false) restore()
+          }, restore)
+      }
+      // 以行高过渡真正结束为准：帧率吃紧时过渡会晚一帧才开始，固定计时器会让行在收起一半时被直接移除
+      function onFolded(event: TransitionEvent) {
+        if (event.target === node && event.propertyName === "height") finish()
+      }
+      if (reduceMotion || !node) {
+        foldTimer.current = window.setTimeout(finish, 0)
+        return
+      }
+      node.addEventListener("transitionend", onFolded)
+      foldTimer.current = window.setTimeout(finish, FOLD_FALLBACK_MS)
     }
     if (viaKey || reduceMotion) {
       spread.set(1)

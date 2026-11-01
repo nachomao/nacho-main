@@ -315,13 +315,16 @@ export function RecentCallsBranch({ calls }: { calls: RecentCall[] }) {
   const liveCall = popup ? (calls.find((call) => call.key === popup.call.key) ?? popup.call) : null
 
   const select = (key: string) => {
-    if (popup) return
+    if (popup?.open) return
+    // 收回的回弹尾段里换选：直接结束收回，旧命令卡随所在行一起折叠退场，不在原位留下残影
+    if (popup) setPopup(null)
     setSelection({ key: key === selection.key && selectedIndex >= 0 ? null : key, origin: selectedIndex })
   }
 
   const openPopup = (call: RecentCall) => {
-    if (popup) return
+    if (popup?.open) return
     railRef.current = null
+    // 收回途中再次点开：弹层从当前形态反向展开
     setPopup({ call, open: true })
   }
 

@@ -210,6 +210,7 @@ export function MorphPopover({
       extentTargetRef.current = next
       extent.jump(next)
       bump()
+      cardRef.current?.removeAttribute("inert")
       cardRef.current?.focus({ preventScroll: true })
       controlsRef.current = [
         animate(position, 1, reduced ? REDUCED : OPEN_POSITION),
@@ -221,6 +222,8 @@ export function MorphPopover({
 
     bump()
     if (cardRef.current?.contains(document.activeElement)) latest.current.getAnchor()?.focus({ preventScroll: true })
+    // 回弹尾段里卡片仍在画面上，但已不再是对话框：交还焦点之后再设 inert，Tab 与辅助技术都不再进入
+    cardRef.current?.setAttribute("inert", "")
     const finish = () => {
       if (generationRef.current !== generation) return
       setMounted(false)
@@ -355,7 +358,7 @@ export function MorphPopover({
       <motion.div
         ref={cardRef}
         role="dialog"
-        aria-modal={modal ? true : undefined}
+        aria-modal={modal && open ? true : undefined}
         aria-label={label}
         aria-labelledby={labelledBy}
         tabIndex={-1}
