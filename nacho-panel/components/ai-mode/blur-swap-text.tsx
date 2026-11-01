@@ -13,7 +13,7 @@ const SHOWN = { opacity: 1, filter: "blur(0px)" }
 export function BlurSwapText({ text, className }: { text: string; className?: string }) {
   const { reduceMotion } = useMotionPreference()
   // 前后段都留出可见的模糊过程，避免前倾曲线让变化在开头一瞬间完成
-  const transition = reduceMotion ? { duration: 0.16 } : { duration: 0.6, ease: [0.4, 0, 0.2, 1] as const }
+  const transition = reduceMotion ? { duration: 0.16 } : { duration: 0.8, ease: [0.4, 0, 0.2, 1] as const }
 
   return (
     <span className={cn("relative flex min-w-0", className)}>
