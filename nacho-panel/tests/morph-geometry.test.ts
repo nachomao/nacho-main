@@ -6,6 +6,7 @@ import {
   clamp01,
   morphContentScale,
   morphFrame,
+  morphLandingScale,
   type MorphRect,
 } from "../lib/morph-geometry"
 
@@ -39,10 +40,13 @@ test("位置与尺寸进度相互独立", () => {
   approx(grown.left + grown.width / 2, capsule.left + capsule.width / 2)
 })
 
-test("尺寸不会被外推成非正数", () => {
-  const collapsed = morphFrame(capsule, card, 0, -2)
-  assert.ok(collapsed.width >= 1)
-  assert.ok(collapsed.height >= 1)
+test("尺寸进度跌破 0 时宽高停在锚点尺寸，越界部分换成整体等比缩小", () => {
+  assert.deepEqual(morphFrame(capsule, card, 0, -0.05), capsule)
+  assert.deepEqual(morphFrame(capsule, card, 0, -2), capsule)
+  assert.equal(morphLandingScale(0), 1)
+  assert.equal(morphLandingScale(0.6, 1.1), 1)
+  approx(morphLandingScale(-0.05, 1.1), 0.945)
+  assert.equal(morphLandingScale(-5, 1.1), 0)
 })
 
 test("内容缩放在静止宽度附近吸附为 1", () => {

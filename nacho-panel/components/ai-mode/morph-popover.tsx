@@ -1,7 +1,9 @@
 "use client"
 
 /* 灵动形变弹层：从触发元素原位展开成悬浮卡片，关闭时沿原路收回成触发元素的形状。
- * 位置弹簧几乎无回弹、尺寸弹簧带回弹（完全展开后再多撑开一点再回落），收回落位时整体轻压再弹回。
+ * 展开只用无回弹的平滑弹簧，直接停在目标尺寸。收回参考 iOS 26 液态玻璃菜单收回按钮：位置略快且几乎不过冲，
+ * 先把卡片送回原位；尺寸用欠阻尼弹簧（ζ = 0.7），带着收缩的惯性越过锚点尺寸一点再弹回，只回弹一次。
+ * 越过锚点的那一段换成整体等比缩小，触发元素的形状不会被压扁。
  * 内容按固定基准宽度排版，随卡片宽度等比缩放并在展开后段淡入，整个过程不会逐帧重排文字。 */
 
 import {
@@ -20,6 +22,7 @@ import {
   clamp01,
   morphContentScale,
   morphFrame,
+  morphLandingScale,
   type MorphPoint,
   type MorphRect,
   type MorphSize,
@@ -30,17 +33,15 @@ export type MorphPlacement = (size: MorphSize, anchor: MorphRect, viewport: Morp
 
 type Controls = ReturnType<typeof animate>
 
-const OPEN_POSITION = { type: "spring", visualDuration: 0.5, bounce: 0.12 } as const
-const OPEN_SIZE = { type: "spring", visualDuration: 0.56, bounce: 0.34 } as const
-const CLOSE_POSITION = { type: "spring", visualDuration: 0.42, bounce: 0 } as const
-const CLOSE_SIZE = { type: "spring", visualDuration: 0.4, bounce: 0 } as const
-const REFIT = { type: "spring", visualDuration: 0.36, bounce: 0.2 } as const
-const SQUISH_IN = { type: "spring", visualDuration: 0.12, bounce: 0 } as const
-const SQUISH_OUT = { type: "spring", visualDuration: 0.34, bounce: 0.55 } as const
+const OPEN_POSITION = { type: "spring", visualDuration: 0.42, bounce: 0 } as const
+const OPEN_SIZE = { type: "spring", visualDuration: 0.46, bounce: 0 } as const
+const CLOSE_POSITION = { type: "spring", visualDuration: 0.34, bounce: 0.1 } as const
+/** 约 280ms 回到锚点尺寸、370ms 越界最深（尺寸进度 -0.046），二次过冲仅 0.002，720ms 静止；越界最深时位置已落位 */
+const CLOSE_SIZE = { type: "spring", visualDuration: 0.44, bounce: 0.3 } as const
+const REFIT = { type: "spring", visualDuration: 0.32, bounce: 0 } as const
 const REDUCED = { duration: 0.16, ease: "easeOut" } as const
-/** 收回进行到快落位时开始整体轻压，随后弹回原尺寸 */
-const SQUISH_DELAY_MS = 300
-const SQUISH_DEPTH = 0.94
+/** 越界尺寸进度换算成整体缩放的倍率：-0.046 × 1.1 ≈ 缩小 5% */
+const LANDING_GAIN = 1.1
 /** 卡片固定 1px 描边：目标尺寸 = 内容尺寸 + 两侧描边 */
 const BORDER = 1
 const FOCUSABLE =
@@ -116,14 +117,12 @@ export function MorphPopover({
   const widthRef = useRef(contentWidth)
   const extentTargetRef = useRef(1)
   const controlsRef = useRef<Controls[]>([])
-  const squishTimerRef = useRef<number | null>(null)
   const generationRef = useRef(0)
   const latest = useRef({ getAnchor, onRequestClose, onClosed, place, fromRadius, toRadius, maxHeight, gutter, width, open, reduceMotion })
   latest.current = { getAnchor, onRequestClose, onClosed, place, fromRadius, toRadius, maxHeight, gutter, width, open, reduceMotion }
 
   const position = useMotionValue(0)
   const size = useMotionValue(0)
-  const squish = useMotionValue(1)
   const extent = useMotionValue(1)
   // 参与几何计算的普通 ref（锚点、视口、内容宽度）变化后递增，迫使派生值重算
   const tick = useMotionValue(0)
@@ -150,6 +149,7 @@ export function MorphPopover({
     const { fromRadius: start, toRadius: end } = latest.current
     return start + (end - start) * t
   })
+  const landing = useTransform(size, (value: number) => morphLandingScale(value, LANDING_GAIN))
   const faceOpacity = useTransform(size, [0, 0.22], [1, 0])
   const skinOpacity = useTransform(size, [0, 0.2], [0, 1])
   const contentOpacity = useTransform(size, [0.38, 0.82], [0, 1])
@@ -184,10 +184,6 @@ export function MorphPopover({
   const stopAll = () => {
     for (const control of controlsRef.current) control.stop()
     controlsRef.current = []
-    if (squishTimerRef.current !== null) {
-      window.clearTimeout(squishTimerRef.current)
-      squishTimerRef.current = null
-    }
   }
 
   useLayoutEffect(() => {
@@ -215,7 +211,6 @@ export function MorphPopover({
       controlsRef.current = [
         animate(position, 1, reduced ? REDUCED : OPEN_POSITION),
         animate(size, 1, reduced ? REDUCED : OPEN_SIZE),
-        animate(squish, 1, reduced ? REDUCED : SQUISH_OUT),
       ]
       return
     }
@@ -229,27 +224,13 @@ export function MorphPopover({
       setMounted(false)
       latest.current.onClosed?.()
     }
+    // 落位回弹由尺寸弹簧自己越过 0 产生（见 landing），不再另起一段轻压；两条弹簧都静止后再卸载
     const collapse = [
       animate(position, 0, reduced ? REDUCED : CLOSE_POSITION),
       animate(size, 0, reduced ? REDUCED : CLOSE_SIZE),
     ]
     controlsRef.current = collapse
-    if (reduced) {
-      void Promise.all(collapse).then(finish)
-      return
-    }
-    squishTimerRef.current = window.setTimeout(() => {
-      squishTimerRef.current = null
-      if (generationRef.current !== generation) return
-      const dip = animate(squish, SQUISH_DEPTH, SQUISH_IN)
-      controlsRef.current.push(dip)
-      void dip.then(() => {
-        if (generationRef.current !== generation) return
-        const rebound = animate(squish, 1, SQUISH_OUT)
-        controlsRef.current.push(rebound)
-        void Promise.all([...collapse, rebound]).then(finish)
-      })
-    }, SQUISH_DELAY_MS)
+    void Promise.all(collapse).then(finish)
     // 只响应开合与挂载；其余输入都经 latest ref 读取最新值
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mounted])
@@ -370,7 +351,7 @@ export function MorphPopover({
           width: cardWidth,
           height: cardHeight,
           borderRadius: radius,
-          scale: squish,
+          scale: landing,
           boxShadow: shadow,
           pointerEvents: open ? "auto" : "none",
         }}

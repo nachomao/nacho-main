@@ -3,7 +3,7 @@
 /* 最近调用分支：改编自 React Bits BranchedMenu
  * https://reactbits.dev/micro/branched-menu
  * MIT + Commons Clause，Copyright (c) 2026 David Haz。
- * 一条主干把最近的工具调用串起来；点选某次调用时描线沿主干逐段推进到它的分支，并在分支下方弹性展开命令；
+ * 一条主干把最近的工具调用串起来；点选某次调用时描线沿主干逐段推进到它的分支，并在分支下方平滑展开命令；
  * 再点展开的命令块，它会从原位形变成贴着右栏的详情弹窗（只看命令，不含输出）。
  * 每行自带一段主干，所以展开命令撑高某一行时，主干与后续分支会自然跟随。 */
 
@@ -34,7 +34,7 @@ const SEGMENT_MS = 90
 const DRAW_MS = 300
 const FOLD_MS = 300
 const EASE = "cubic-bezier(0.23, 1, 0.32, 1)"
-const DETAIL_SPRING = { type: "spring", visualDuration: 0.36, bounce: 0.38 } as const
+const DETAIL_SPRING = { type: "spring", visualDuration: 0.3, bounce: 0 } as const
 const DETAIL_CLASS = "block w-full rounded-lg border border-border/60 bg-background/40 px-2.5 py-2 text-left"
 const DETAIL_RADIUS = 12
 const POPUP_RADIUS = 20
