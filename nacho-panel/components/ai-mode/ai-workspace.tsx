@@ -68,6 +68,7 @@ import { ToolBranch } from "./tool-branch"
 import { ToolApprovalCard } from "./tool-approval-card"
 import { ModelSettingsCapsule } from "./model-settings-capsule"
 import { CapsuleMenu } from "./capsule-menu"
+import { BlurSwapText } from "./blur-swap-text"
 import { RecentCallsBranch } from "./recent-calls-branch"
 import { SwipeRow } from "./swipe-row"
 import { AIIntro } from "./ai-intro"
@@ -357,7 +358,7 @@ export function AIWorkspace() {
   const inputRisk = useMemo(() => assessInputRisk(input), [input])
 
   // 执行风险感知：需确认的步骤在「等待确认 → 确认后执行」全程使用步骤自身的风险等级，
-  // 警告级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
+  // 警��级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
   const execRisk = useMemo<"safe" | "warn" | "danger">(() => {
     const last = [...(active?.messages ?? [])].reverse().find((m) => m.role === "assistant")
     if (!last || last.role !== "assistant" || last.done) return "safe"
@@ -1554,7 +1555,7 @@ export function AIWorkspace() {
                     disabled={!cfg.enabled}
                     trigger={
                       <>
-                        {agentMode === "agent" ? "Agent" : "Chat"}
+                        <BlurSwapText text={agentMode === "agent" ? "Agent" : "Chat"} />
                         <ChevronDown
                           className={cn("h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-300", agentMenuOpen && "rotate-180")}
                         />
@@ -1610,7 +1611,7 @@ export function AIWorkspace() {
                     triggerClassName="max-w-28 sm:max-w-40"
                     trigger={
                       <>
-                        <span className="truncate">{modelLabel}</span>
+                        <BlurSwapText text={modelLabel} />
                         <ChevronDown
                           className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-300", modelMenuOpen && "rotate-180")}
                         />
