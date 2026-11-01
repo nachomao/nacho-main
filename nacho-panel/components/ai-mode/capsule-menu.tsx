@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils"
 import { useMotionPreference } from "@/lib/motion-preference"
 
 const PILL_HEIGHT = 32
-const OPEN = { type: "spring", visualDuration: 0.42, bounce: 0 } as const
-const CLOSE = { type: "spring", visualDuration: 0.4, bounce: 0.32 } as const
+const OPEN = { type: "spring", visualDuration: 0.56, bounce: 0 } as const
+const CLOSE = { type: "spring", visualDuration: 0.54, bounce: 0.32 } as const
 const REDUCED = { duration: 0.16, ease: "easeOut" } as const
 /** 越界进度换算成整体缩放：约 -0.05 × 1.2 ≈ 缩小 6% 后弹回 */
 const LANDING_GAIN = 1.2
