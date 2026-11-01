@@ -69,6 +69,7 @@ import { ToolApprovalCard } from "./tool-approval-card"
 import { ModelSettingsCapsule } from "./model-settings-capsule"
 import { CapsuleMenu } from "./capsule-menu"
 import { BlurSwapText } from "./blur-swap-text"
+import { SessionRowEnter } from "./session-row-enter"
 import { RecentCallsBranch } from "./recent-calls-branch"
 import { SwipeRow } from "./swipe-row"
 import { AIIntro } from "./ai-intro"
@@ -218,6 +219,8 @@ export function AIWorkspace() {
   const cfg = useAIConfig()
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? "")
+  // 刚由“新会话”插入、需要播放入场动画的会话
+  const [enteringSessionId, setEnteringSessionId] = useState<string | null>(null)
   const [historyReady, setHistoryReady] = useState(false)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
@@ -679,6 +682,7 @@ export function AIWorkspace() {
     if (busy) return
     const s = newSession()
     setSessions((prev) => [s, ...prev])
+    setEnteringSessionId(s.id)
     setActiveId(s.id)
     setInput("")
     clearAttachments()
@@ -1148,7 +1152,11 @@ export function AIWorkspace() {
                   const swipeOpen = swipeOpenId === s.id
                   const locked = busy && isActive
                   return (
-                    <li key={s.id}>
+                    <SessionRowEnter
+                      key={s.id}
+                      entering={s.id === enteringSessionId}
+                      onEntered={() => setEnteringSessionId((current) => (current === s.id ? null : current))}
+                    >
                       <SwipeRow
                         label={`会话 ${s.title}`}
                         height={52}
@@ -1207,7 +1215,7 @@ export function AIWorkspace() {
                           </button>
                         )}
                       </SwipeRow>
-                    </li>
+                    </SessionRowEnter>
                   )
                 })}
               </ul>
@@ -1797,7 +1805,7 @@ function TelemetryStat({
 
 /**
  * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
- * 仅用于空态欢迎语；对话正文走 Markdown 渲染，避免破坏块级结构。
+ * 仅用于空态欢迎语；对��正文走 Markdown 渲染，避免破坏块级结构。
  */
 function BlurWords({
   text,
