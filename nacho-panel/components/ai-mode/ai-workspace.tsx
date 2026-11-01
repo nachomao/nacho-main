@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import {
   Sparkles,
   Brain,
@@ -68,6 +67,9 @@ import { TaskTimerLine } from "./task-timer-line"
 import { ToolBranch } from "./tool-branch"
 import { ToolApprovalCard } from "./tool-approval-card"
 import { ModelSettingsCapsule } from "./model-settings-capsule"
+import { CapsuleMenu } from "./capsule-menu"
+import { BlurSwapText } from "./blur-swap-text"
+import { SessionRowEnter } from "./session-row-enter"
 import { RecentCallsBranch } from "./recent-calls-branch"
 import { SwipeRow } from "./swipe-row"
 import { AIIntro } from "./ai-intro"
@@ -217,6 +219,8 @@ export function AIWorkspace() {
   const cfg = useAIConfig()
   const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? "")
+  // 刚由“新会话”插入、需要播放入场动画的会话
+  const [enteringSessionId, setEnteringSessionId] = useState<string | null>(null)
   const [historyReady, setHistoryReady] = useState(false)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
@@ -238,11 +242,6 @@ export function AIWorkspace() {
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  // 弹窗定位：菜单通过 Portal 渲染到 body（父级带 backdrop-filter 会阻断嵌套的 backdrop-blur）
-  const [menuRect, setMenuRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
-  // 关闭时先播放退场动画，动画结束后再卸载
-  const [menuClosing, setMenuClosing] = useState(false)
-  const inputModelBtnRef = useRef<HTMLButtonElement>(null)
   // 同一时间只保留一行会话露出删除键
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
   // 输入框底部的模式胶囊：Agent（多步执行）/ Chat（仅对话）
@@ -250,26 +249,6 @@ export function AIWorkspace() {
   const [agentMenuOpen, setAgentMenuOpen] = useState(false)
   // 深度思考开关：开启后请求 reasoning effort=high，直到再次关闭；不写入历史会话。
   const [deepThinking, setDeepThinking] = useState(false)
-  /** 从任意触发按钮打开模型菜单（Portal 定位到该按钮上方） */
-  const openModelMenuFrom = (el: HTMLButtonElement | null) => {
-    setAgentMenuOpen(false)
-    if (modelMenuOpen) {
-      if (!menuClosing) closeModelMenu()
-      return
-    }
-    if (el) {
-      const r = el.getBoundingClientRect()
-      setMenuRect({ left: r.left, bottom: window.innerHeight - r.top + 6, width: Math.max(r.width, 200) })
-    }
-    setModelMenuOpen(true)
-  }
-  const closeModelMenu = () => {
-    setMenuClosing(true)
-    window.setTimeout(() => {
-      setModelMenuOpen(false)
-      setMenuClosing(false)
-    }, 140)
-  }
   const scrollRef = useRef<HTMLDivElement>(null)
   const threadRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
@@ -382,7 +361,7 @@ export function AIWorkspace() {
   const inputRisk = useMemo(() => assessInputRisk(input), [input])
 
   // 执行风险感知：需确认的步骤在「等待确认 → 确认后执行」全程使用步骤自身的风险等级，
-  // 警告级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
+  // 警��级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
   const execRisk = useMemo<"safe" | "warn" | "danger">(() => {
     const last = [...(active?.messages ?? [])].reverse().find((m) => m.role === "assistant")
     if (!last || last.role !== "assistant" || last.done) return "safe"
@@ -644,7 +623,7 @@ export function AIWorkspace() {
     }
   }
 
-  // 执行中 Esc 先停止当前回合；空闲时再退出 AI Mode。开场阶段仍由 context 处理。
+  // 执行中 Esc 先停��当前回合；空闲时再退出 AI Mode。开场阶段仍由 context 处理。
   useEffect(() => {
     if (phase !== "entering" && phase !== "active") return undefined
     const onKey = (event: KeyboardEvent) => {
@@ -703,6 +682,7 @@ export function AIWorkspace() {
     if (busy) return
     const s = newSession()
     setSessions((prev) => [s, ...prev])
+    setEnteringSessionId(s.id)
     setActiveId(s.id)
     setInput("")
     clearAttachments()
@@ -1172,7 +1152,11 @@ export function AIWorkspace() {
                   const swipeOpen = swipeOpenId === s.id
                   const locked = busy && isActive
                   return (
-                    <li key={s.id}>
+                    <SessionRowEnter
+                      key={s.id}
+                      entering={s.id === enteringSessionId}
+                      onEntered={() => setEnteringSessionId((current) => (current === s.id ? null : current))}
+                    >
                       <SwipeRow
                         label={`会话 ${s.title}`}
                         height={52}
@@ -1231,7 +1215,7 @@ export function AIWorkspace() {
                           </button>
                         )}
                       </SwipeRow>
-                    </li>
+                    </SessionRowEnter>
                   )
                 })}
               </ul>
@@ -1568,152 +1552,111 @@ export function AIWorkspace() {
 
                 {/* 底部：模式 / 模型胶囊 + 发送 */}
                 <div className="relative mt-1.5 flex items-center gap-2">
-                  {/* Agent 模式胶囊下拉 */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      aria-haspopup="listbox"
-                      aria-expanded={agentMenuOpen}
-                      disabled={!cfg.enabled}
-                      onClick={() => {
-                        if (modelMenuOpen && !menuClosing) closeModelMenu()
-                        setAgentMenuOpen((v) => !v)
-                      }}
-                      className={cn(
-                        "flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors disabled:opacity-40",
-                        agentMenuOpen
-                          ? "border-primary/40 bg-foreground/[0.05] text-foreground"
-                          : "border-border/70 bg-foreground/[0.03] text-muted-foreground hover:border-border hover:text-foreground",
-                      )}
-                    >
-                      {agentMode === "agent" ? "Agent" : "Chat"}
-                      <ChevronDown
-                        className={cn("h-3.5 w-3.5 text-muted-foreground/60 transition-transform", agentMenuOpen && "rotate-180")}
-                      />
-                    </button>
-                    {agentMenuOpen && (
-                      <>
-                        <button
-                          type="button"
-                          aria-label="关闭模式菜单"
-                          className="fixed inset-0 z-[60] cursor-default"
-                          onClick={() => setAgentMenuOpen(false)}
-                        />
-                        <ul
-                          role="listbox"
-                          aria-label="选择工作模式"
-                          className="animate-dropdown-in absolute bottom-full left-0 z-[70] mb-2 w-52 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-xl"
-                        >
-                          {(
-                            [
-                              { id: "agent", label: "Agent", desc: "拆解步骤并调用工具执行", Icon: Bot },
-                              { id: "chat", label: "Chat", desc: "仅对话，不执行任何操作", Icon: MessageCircle },
-                            ] as const
-                          ).map((m) => {
-                            const selected = agentMode === m.id
-                            return (
-                              <li key={m.id}>
-                                <button
-                                  type="button"
-                                  role="option"
-                                  aria-selected={selected}
-                                  onClick={() => {
-                                    setAgentMode(m.id)
-                                    setAgentMenuOpen(false)
-                                    inputRef.current?.focus()
-                                  }}
-                                  className={cn(
-                                    "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors",
-                                    selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
-                                  )}
-                                >
-                                  <m.Icon className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="flex min-w-0 flex-col leading-tight">
-                                    <span>{m.label}</span>
-                                    <span className="truncate text-[10px] text-muted-foreground/60">{m.desc}</span>
-                                  </span>
-                                  {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
-                                </button>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </>
-                    )}
-                  </div>
-
-                  {/* 模型胶囊下拉：复用左栏的模型菜单 */}
-                  <button
-                    type="button"
-                    ref={inputModelBtnRef}
-                    aria-haspopup="listbox"
-                    aria-expanded={modelMenuOpen}
+                  {/* Agent 模式胶囊：原位展开，右侧的模型与思考胶囊一起被推开 */}
+                  <CapsuleMenu
+                    open={agentMenuOpen}
+                    onOpenChange={(next) => {
+                      if (next) setModelMenuOpen(false)
+                      setAgentMenuOpen(next)
+                    }}
+                    panelWidth={208}
                     disabled={!cfg.enabled}
-                    onClick={() => openModelMenuFrom(inputModelBtnRef.current)}
-                    className={cn(
-                      "flex h-8 max-w-28 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors disabled:opacity-40 sm:max-w-40",
-                      modelMenuOpen
-                        ? "border-primary/40 bg-foreground/[0.05] text-foreground"
-                        : "border-border/70 bg-foreground/[0.03] text-muted-foreground hover:border-border hover:text-foreground",
-                    )}
+                    trigger={
+                      <>
+                        <BlurSwapText text={agentMode === "agent" ? "Agent" : "Chat"} />
+                        <ChevronDown
+                          className={cn("h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-300", agentMenuOpen && "rotate-180")}
+                        />
+                      </>
+                    }
                   >
-                    <span className="truncate">{modelLabel}</span>
-                    <ChevronDown
-                      className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform", modelMenuOpen && "rotate-180")}
-                    />
-                  </button>
-                  {modelMenuOpen && menuRect && createPortal(
-                    <>
-                      {/* 点击外部关闭 */}
-                      <button
-                        type="button"
-                        aria-label="关闭模型菜单"
-                        className="fixed inset-0 z-[60] cursor-default"
-                        onClick={() => {
-                          if (!menuClosing) closeModelMenu()
-                        }}
-                      />
-                      <ul
-                        role="listbox"
-                        aria-label="选择模型"
-                        style={{ left: menuRect.left, bottom: menuRect.bottom, width: menuRect.width }}
-                        className={cn(
-                          "fixed z-[70] overflow-hidden rounded-xl border border-border bg-card/60 py-1 shadow-xl backdrop-blur-2xl backdrop-saturate-150",
-                          menuClosing ? "animate-dropdown-out" : "animate-dropdown-in",
-                        )}
-                      >
-                        {modelOptions
-                          .filter((m) => m.id !== "custom" || cfg.customModel)
-                          .map((m) => {
-                            const selected = cfg.model === m.id
-                            return (
-                              <li key={m.id}>
-                                <button
-                                  type="button"
-                                  role="option"
-                                  aria-selected={selected}
-                                  onClick={() => {
-                                    aiConfigStore.set({ model: m.id })
-                                    if (!menuClosing) closeModelMenu()
-                                  }}
-                                  className={cn(
-                                    "flex w-full items-center justify-between px-2.5 py-1.5 text-left text-[11px] transition-colors",
-                                    selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
-                                  )}
-                                >
-                                  <span className="flex flex-col leading-tight">
-                                    <span>{m.id === "custom" ? cfg.customModel : m.label}</span>
-                                    <span className="text-[10px] text-muted-foreground/60">{m.vendor}</span>
-                                  </span>
-                                  {selected && <Check className="h-3.5 w-3.5" />}
-                                </button>
-                              </li>
-                            )
-                          })}
-                      </ul>
-                    </>,
-                    document.body,
-                  )}
+                    <ul role="listbox" aria-label="选择工作模式" className="py-1">
+                      {(
+                        [
+                          { id: "agent", label: "Agent", desc: "拆解步骤并调用工具执行", Icon: Bot },
+                          { id: "chat", label: "Chat", desc: "仅对话，不执行任何操作", Icon: MessageCircle },
+                        ] as const
+                      ).map((m) => {
+                        const selected = agentMode === m.id
+                        return (
+                          <li key={m.id}>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              onClick={() => {
+                                setAgentMode(m.id)
+                                setAgentMenuOpen(false)
+                                inputRef.current?.focus()
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors",
+                                selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+                              )}
+                            >
+                              <m.Icon className="h-3.5 w-3.5 shrink-0" />
+                              <span className="flex min-w-0 flex-col leading-tight">
+                                <span>{m.label}</span>
+                                <span className="truncate text-[10px] text-muted-foreground/60">{m.desc}</span>
+                              </span>
+                              {selected && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </CapsuleMenu>
+
+                  {/* 模型胶囊：原位展开，右侧的思考胶囊被推开 */}
+                  <CapsuleMenu
+                    open={modelMenuOpen}
+                    onOpenChange={(next) => {
+                      if (next) setAgentMenuOpen(false)
+                      setModelMenuOpen(next)
+                    }}
+                    panelWidth={208}
+                    disabled={!cfg.enabled}
+                    triggerClassName="max-w-28 sm:max-w-40"
+                    trigger={
+                      <>
+                        <BlurSwapText text={modelLabel} />
+                        <ChevronDown
+                          className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-300", modelMenuOpen && "rotate-180")}
+                        />
+                      </>
+                    }
+                  >
+                    <ul role="listbox" aria-label="选择模型" className="py-1">
+                      {modelOptions
+                        .filter((m) => m.id !== "custom" || cfg.customModel)
+                        .map((m) => {
+                          const selected = cfg.model === m.id
+                          return (
+                            <li key={m.id}>
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                onClick={() => {
+                                  aiConfigStore.set({ model: m.id })
+                                  setModelMenuOpen(false)
+                                }}
+                                className={cn(
+                                  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[11px] transition-colors",
+                                  selected ? "text-primary" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+                                )}
+                              >
+                                <span className="flex min-w-0 flex-col leading-tight">
+                                  <span className="truncate">{m.id === "custom" ? cfg.customModel : m.label}</span>
+                                  <span className="text-[10px] text-muted-foreground/60">{m.vendor}</span>
+                                </span>
+                                {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                              </button>
+                            </li>
+                          )
+                        })}
+                    </ul>
+                  </CapsuleMenu>
 
                   <button
                     type="button"
@@ -1862,7 +1805,7 @@ function TelemetryStat({
 
 /**
  * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
- * 仅用于空态欢迎语；对话正文走 Markdown 渲染，避免破坏块级结构。
+ * 仅用于空态欢迎语；对��正文走 Markdown 渲染，避免破坏块级结构。
  */
 function BlurWords({
   text,
