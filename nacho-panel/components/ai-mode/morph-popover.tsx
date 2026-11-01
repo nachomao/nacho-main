@@ -33,12 +33,12 @@ export type MorphPlacement = (size: MorphSize, anchor: MorphRect, viewport: Morp
 
 type Controls = ReturnType<typeof animate>
 
-const OPEN_POSITION = { type: "spring", visualDuration: 0.42, bounce: 0 } as const
-const OPEN_SIZE = { type: "spring", visualDuration: 0.46, bounce: 0 } as const
-const CLOSE_POSITION = { type: "spring", visualDuration: 0.34, bounce: 0.1 } as const
-/** 约 280ms 回到锚点尺寸、370ms 越界最深（尺寸进度 -0.046），二次过冲仅 0.002，720ms 静止；越界最深时位置已落位 */
-const CLOSE_SIZE = { type: "spring", visualDuration: 0.44, bounce: 0.3 } as const
-const REFIT = { type: "spring", visualDuration: 0.32, bounce: 0 } as const
+const OPEN_POSITION = { type: "spring", visualDuration: 0.35, bounce: 0 } as const
+const OPEN_SIZE = { type: "spring", visualDuration: 0.38, bounce: 0 } as const
+const CLOSE_POSITION = { type: "spring", visualDuration: 0.28, bounce: 0.1 } as const
+/** 约 230ms 回到锚点尺寸、300ms 越界最深（尺寸进度 -0.046），二次过冲仅 0.002，590ms 静止；越界最深时位置已落位 */
+const CLOSE_SIZE = { type: "spring", visualDuration: 0.36, bounce: 0.3 } as const
+const REFIT = { type: "spring", visualDuration: 0.26, bounce: 0 } as const
 const REDUCED = { duration: 0.16, ease: "easeOut" } as const
 /** 越界尺寸进度换算成整体缩放的倍率：-0.046 × 1.1 ≈ 缩小 5% */
 const LANDING_GAIN = 1.1
