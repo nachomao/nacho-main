@@ -1,6 +1,6 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.3.19",
+  "version": "0.3.22",
   "releaseChannel": "beta",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
@@ -18,7 +18,7 @@
     "build": "pnpm run build:panel && pnpm run stage && node scripts/build-desktop.cjs",
     "start": "pnpm run stage && electron .",
     "pack": "pnpm run stage && node scripts/build-desktop.cjs --dir",
-    "test": "pnpm run stage && node --test tests/*.test.cjs"
+    "test": "pnpm run stage && node scripts/run-tests.cjs"
   },
   "devDependencies": {
     "electron": "44.4.5",
