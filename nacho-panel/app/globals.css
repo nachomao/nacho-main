@@ -224,6 +224,15 @@
   }
 }
 
+/* 隐藏滚动条但保留滚动能力，用于 AI 对话等沉浸区域 */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* 瀹㈡埛绔潰鏉垮垏鎹㈠姩鐢汇€?   娉ㄦ剰锛氳繖浜涚被蹇呴』鏀惧湪 @layer utilities 涔嬪鐨勬櫘閫?CSS 涓€?   鍦?Tailwind v4 閲岋紝鍐欒繘 @layer utilities 鐨勮嚜瀹氫箟绫讳細琚綋浣滃伐鍏风被鍋氭寜闇€鐢熸垚锛?   鏈鍙潬妫€娴嬪埌鏃朵細琚墧闄わ紝瀵艰嚧鍔ㄧ敾閫€鍖栨垚鐬棿闂幇銆?*/
 
 /* 寰€鍚庡垏锛氬綋鍓嶅崱鐗囧悜涓婂钩绉荤鍦猴紝涓嬩竴寮犱粠涓嬫柟鍚戜笂骞崇Щ杩涘満 */
@@ -494,6 +503,78 @@
 
 .animate-avatar-pop {
   animation: avatar-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* iOS 26 iMessage 风格气泡入场。
+   发送气泡自输入区方向浮起（起点低 22px、1.02 倍），按 SOFT 弹簧（480ms，阻尼比 0.82）落位；
+   回复气泡 260ms 淡入并自下方浮起。参考开源实现 Appllama/liquid-glass-chat-ui。 */
+@keyframes imessage-bubble-send-move {
+  0% {
+    transform: translate3d(0, 22px, 0) scale(1.02);
+  }
+  8% {
+    transform: translate3d(0, 19.12px, 0) scale(1.0174);
+  }
+  16% {
+    transform: translate3d(0, 13.74px, 0) scale(1.0125);
+  }
+  25% {
+    transform: translate3d(0, 8.1px, 0) scale(1.0074);
+  }
+  33% {
+    transform: translate3d(0, 4.44px, 0) scale(1.004);
+  }
+  42% {
+    transform: translate3d(0, 1.86px, 0) scale(1.0017);
+  }
+  50% {
+    transform: translate3d(0, 0.62px, 0) scale(1.0006);
+  }
+  60% {
+    transform: translate3d(0, -0.06px, 0) scale(0.9999);
+  }
+  70% {
+    transform: translate3d(0, -0.24px, 0) scale(0.9998);
+  }
+  80% {
+    transform: translate3d(0, -0.22px, 0) scale(0.9998);
+  }
+  90% {
+    transform: translate3d(0, -0.14px, 0) scale(0.9999);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes imessage-bubble-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-imessage-send {
+  animation:
+    imessage-bubble-send-move 0.48s linear both,
+    imessage-bubble-fade-in 0.14s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes imessage-bubble-receive {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-imessage-receive {
+  animation: imessage-bubble-receive 0.26s cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 /* 设置卡片明确过渡高度，避免自动高度与表单网格同时收展时跳变。 */
@@ -961,6 +1042,11 @@ html[data-reduce-motion='true'] .orb-container {
 
 html[data-reduce-motion='true'] .animate-aurora,
 html[data-reduce-motion='true'] .animate-pulse-slow {
+  animation: none !important;
+}
+
+html[data-reduce-motion='true'] .animate-imessage-send,
+html[data-reduce-motion='true'] .animate-imessage-receive {
   animation: none !important;
 }
 

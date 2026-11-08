@@ -202,7 +202,9 @@ function Rise({
   return (
     <div
       data-testid={`ai-workspace-col-${vector}`}
-      className={cn("will-change-transform", className)}
+      // AI 工作台覆盖在退场中的应用外壳之上；外壳的 Sidebar/Topbar 仍是 Electron 拖拽区。
+      // 三栏内容必须显式 no-drag，否则会话卡、按钮等会被无边框窗口当作拖动区域吞掉点击。
+      className={cn("electron-no-drag will-change-transform", className)}
       style={effectiveStyle}
     >
       {children}
@@ -361,7 +363,7 @@ export function AIWorkspace() {
   const inputRisk = useMemo(() => assessInputRisk(input), [input])
 
   // 执行风险感知：需确认的步骤在「等待确认 → 确认后执行」全程使用步骤自身的风险等级，
-  // 警��级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
+  // 警告级(warn)始终金黄、危险级(danger)始终赤红，绝不跨级渐变
   const execRisk = useMemo<"safe" | "warn" | "danger">(() => {
     const last = [...(active?.messages ?? [])].reverse().find((m) => m.role === "assistant")
     if (!last || last.role !== "assistant" || last.done) return "safe"
@@ -481,7 +483,8 @@ export function AIWorkspace() {
     }
     return { toolCalls, dangerOps, doneSteps }
   }, [sessions])
-  const recentCalls = useMemo(() => collectRecentCalls(sessions), [sessions])
+  // 最近调用跟随当前会话：新会话从空开始，切回旧会话恢复它自己的调用记录
+  const recentCalls = useMemo(() => collectRecentCalls(active), [active])
 
   // 进入后聚焦输入框；退出时清理定时器
   useEffect(() => {
@@ -623,7 +626,7 @@ export function AIWorkspace() {
     }
   }
 
-  // 执行中 Esc 先停��当前回合；空闲时再退出 AI Mode。开场阶段仍由 context 处理。
+  // 执行中 Esc 先停止当前回合；空闲时再退出 AI Mode。开场阶段仍由 context 处理。
   useEffect(() => {
     if (phase !== "entering" && phase !== "active") return undefined
     const onKey = (event: KeyboardEvent) => {
@@ -1330,7 +1333,7 @@ export function AIWorkspace() {
             <div
               ref={scrollRef}
               data-testid="ai-workspace-center-body"
-              className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+              className="min-h-0 flex-1 overflow-y-auto px-5 py-5 scrollbar-none"
               style={computeCenterZoneBlurMotion("body", shown, exiting, phase === "active")}
             >
               {messages.length === 0 ? (
@@ -1373,7 +1376,7 @@ export function AIWorkspace() {
                           </div>
                         ) : null}
                         {m.text ? (
-                          <span className="max-w-[85%] rounded-2xl rounded-br-md border border-border/70 bg-foreground/[0.06] px-4 py-2.5 text-sm text-foreground backdrop-blur-sm">
+                          <span className="animate-imessage-send max-w-[85%] rounded-2xl rounded-br-md border border-border/70 bg-foreground/[0.06] px-4 py-2.5 text-sm text-foreground backdrop-blur-sm">
                             {m.text}
                           </span>
                         ) : null}
@@ -1742,7 +1745,8 @@ export function AIWorkspace() {
 
             {/* 最近调用：分支菜单串起各次调用，点选看命令，再点命令块弹出详情 */}
             <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-border px-3 pt-1.5">
-              <RecentCallsBranch calls={recentCalls} />
+              {/* 会话切换时由组件内部先收展牵引线，再逐行模糊切换调用记录，并收起上一会话的选中项与详情 */}
+              <RecentCallsBranch sessionId={active?.id ?? "no-session"} calls={recentCalls} />
             </div>
 
             {/* 模型信息 */}
@@ -1805,7 +1809,7 @@ function TelemetryStat({
 
 /**
  * iOS 风格逐词模糊渐显：把文本按词切分，每个词从模糊中错峰浮现。
- * 仅用于空态欢迎语；对��正文走 Markdown 渲染，避免破坏块级结构。
+ * 仅用于空态欢迎语；对话正文走 Markdown 渲染，避免破坏块级结构。
  */
 function BlurWords({
   text,
@@ -1960,7 +1964,7 @@ function AssistantBubble({
       ) : null}
 
       {msg.text ? (
-        <div className="flex min-w-0 items-start gap-2.5">
+        <div className="animate-imessage-receive flex min-w-0 items-start gap-2.5">
           <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-foreground/[0.04]">
             {/* 极光小圆点：呼应对话框的弥散光雾配色，生成中缓慢脉动 */}
             <span

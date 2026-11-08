@@ -5,15 +5,28 @@
  * MIT + Commons Clause，Copyright (c) 2026 David Haz。
  * 一条主干把最近的工具调用串起来；点选某次调用时描线沿主干逐段推进到它的分支，并在分支下方平滑展开命令；
  * 再点展开的命令块，它会从原位形变成贴着右栏的详情弹窗（只看命令，不含输出）。
- * 每行自带一段主干，所以展开命令撑高某一行时，主干与后续分支会自然跟随。 */
+ * 每行自带一段主干，所以展开命令撑高某一行时，主干与后续分支会自然跟随。
+ * 会话切换时主干先逐行延伸/收展，工具行随后才模糊渐显/渐隐；牵引线始终先动。 */
 
-import { useEffect, useId, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react"
 import { motion } from "motion/react"
 import { Check, ChevronDown, Copy, Maximize2, ShieldAlert, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMotionPreference } from "@/lib/motion-preference"
 import { besideRailPlacement, type MorphRect, type MorphSize, type MorphViewport } from "@/lib/morph-geometry"
-import { branchTraceDelay, recentCallCommand, type RecentCall } from "@/lib/ai/recent-calls"
+import {
+  branchTraceDelay,
+  recentCallCommand,
+  recentCallsContentDelay,
+  recentCallsLeadDelay,
+  recentCallsSwapDuration,
+  RECENT_CALLS_BLUR_MS,
+  RECENT_CALLS_CURVE_DELAY_MS,
+  RECENT_CALLS_CURVE_MS,
+  RECENT_CALLS_STEP_MS,
+  type RecentCall,
+  type RecentCallsSwapPhase,
+} from "@/lib/ai/recent-calls"
 import { AutoHeight } from "@/components/ui/auto-height"
 import { MorphPopover } from "./morph-popover"
 import { StepStatusIcon, statusLabel } from "./tool-branch"
@@ -39,6 +52,42 @@ const DETAIL_CLASS = "block w-full rounded-lg border border-border/60 bg-backgro
 const DETAIL_RADIUS = 12
 const POPUP_RADIUS = 20
 const POPUP_WIDTH = 340
+/** 会话切换时工具行的模糊渐显/渐隐曲线，与 AI Mode 其他文字切换保持同一套动效语言。 */
+const SWAP_EASE = "cubic-bezier(0.4, 0, 0.2, 1)"
+/** 末行主干只画到分叉点，按比例缩短，保持牵引线匀速推进。 */
+const LAST_LEAD_MS = Math.max(1, Math.round(RECENT_CALLS_STEP_MS * (BRANCH_TOP / ROW_HEIGHT)))
+
+/** 会话切换动画：牵引主干逐行延伸/收展，弧线随后绘制/收回，工具内容最后模糊进出。 */
+const SWAP_STYLE = `
+@keyframes recent-call-lead-in {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes recent-call-lead-out {
+  from { clip-path: inset(0 0 0 0); }
+  to { clip-path: inset(0 0 100% 0); }
+}
+@keyframes recent-call-curve-in {
+  from { stroke-dashoffset: var(--recent-call-curve); }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes recent-call-curve-out {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: var(--recent-call-curve); }
+}
+@keyframes recent-call-content-in {
+  from { opacity: 0; filter: blur(5px); transform: translateY(3px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+@keyframes recent-call-content-out {
+  from { opacity: 1; filter: blur(0); transform: translateY(0); }
+  to { opacity: 0; filter: blur(5px); transform: translateY(-3px); }
+}
+@keyframes recent-call-empty-in {
+  from { opacity: 0; filter: blur(5px); }
+  to { opacity: 1; filter: blur(0); }
+}
+`
 
 /** origin：本次选择变化前选中行的下标（没有则为 -1），描线从这里出发 */
 type Selection = { key: string | null; origin: number }
@@ -70,6 +119,9 @@ function CommandFace({ command }: { command: string }) {
 function RecentCallRow({
   call,
   last,
+  index,
+  count,
+  phase,
   selected,
   leadOn,
   passOn,
@@ -85,6 +137,9 @@ function RecentCallRow({
 }: {
   call: RecentCall
   last: boolean
+  index: number
+  count: number
+  phase: RecentCallsSwapPhase
   selected: boolean
   leadOn: boolean
   passOn: boolean
@@ -106,13 +161,41 @@ function RecentCallRow({
     transform: `scaleY(${on ? 1 : 0})`,
     transition: `transform ${timing.segment}ms linear ${delay}ms`,
   })
+  const leadDelay = recentCallsLeadDelay(index, count, phase)
+  const contentDelay = recentCallsContentDelay(index, count, phase)
+  const leadMs = last ? LAST_LEAD_MS : RECENT_CALLS_STEP_MS
+  // 主干先动：主干的裁切动画从行首开始；弧线在主干经过分叉点后才绘制；工具内容最后模糊。
+  const leadAnimation =
+    phase === "enter"
+      ? `recent-call-lead-in ${leadMs}ms linear ${leadDelay}ms both`
+      : phase === "exit"
+        ? `recent-call-lead-out ${leadMs}ms linear ${leadDelay}ms both`
+        : undefined
+  const curveAnimation =
+    phase === "enter"
+      ? `recent-call-curve-in ${RECENT_CALLS_CURVE_MS}ms ${EASE} ${leadDelay + RECENT_CALLS_CURVE_DELAY_MS}ms both`
+      : phase === "exit"
+        ? `recent-call-curve-out ${RECENT_CALLS_CURVE_MS}ms ${EASE} ${leadDelay + RECENT_CALLS_CURVE_DELAY_MS}ms both`
+        : undefined
+  const contentAnimation =
+    phase === "enter"
+      ? `recent-call-content-in ${RECENT_CALLS_BLUR_MS}ms ${SWAP_EASE} ${contentDelay}ms both`
+      : phase === "exit"
+        ? `recent-call-content-out ${RECENT_CALLS_BLUR_MS}ms ${SWAP_EASE} ${contentDelay}ms both`
+        : undefined
 
   return (
     <li className="relative">
       <span
         aria-hidden="true"
         className="pointer-events-none absolute top-0 bg-border"
-        style={{ ...trunkStyle, height: last ? BRANCH_TOP : "100%" }}
+        style={{
+          ...trunkStyle,
+          height: last ? BRANCH_TOP : "100%",
+          ...(leadAnimation
+            ? { animation: leadAnimation, willChange: "clip-path" }
+            : null),
+        }}
       />
       <span
         aria-hidden="true"
@@ -132,7 +215,23 @@ function RecentCallRow({
         width={INDENT}
         height={ROW_HEIGHT}
       >
-        <path d={CURVE} fill="none" stroke="var(--border)" strokeWidth={LINE} strokeLinecap="round" strokeLinejoin="round" />
+        <path
+          d={CURVE}
+          fill="none"
+          stroke="var(--border)"
+          strokeWidth={LINE}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={
+            {
+              strokeDasharray: CURVE_LENGTH,
+              "--recent-call-curve": `${CURVE_LENGTH}`,
+              ...(curveAnimation
+                ? { animation: curveAnimation, strokeDashoffset: phase === "enter" ? 0 : CURVE_LENGTH }
+                : { strokeDashoffset: 0 }),
+            } as unknown as CSSProperties
+          }
+        />
         <path
           d={CURVE}
           fill="none"
@@ -148,61 +247,63 @@ function RecentCallRow({
         />
       </svg>
 
-      <button
-        type="button"
-        aria-expanded={selected}
-        aria-controls={detailId}
-        onClick={onSelect}
-        title={call.tool}
-        className={cn(
-          "relative flex w-full min-w-0 items-center gap-2 text-left transition-colors",
-          selected ? "text-primary" : "text-muted-foreground hover:text-foreground",
-        )}
-        style={{ height: ROW_HEIGHT, paddingLeft: INDENT }}
-      >
-        <StepStatusIcon status={call.status} className="h-3 w-3" />
-        <code className={cn("min-w-0 flex-1 truncate font-mono text-[10.5px]", selected && "font-medium")}>{call.tool}</code>
-        {call.risk ? (
-          <ShieldAlert
-            aria-label={call.risk === "danger" ? "危险操作" : "警告操作"}
-            className={cn("h-3 w-3 shrink-0", call.risk === "danger" ? "text-negative" : "text-warning")}
-          />
-        ) : null}
-        <span className="flex shrink-0 items-center gap-1 text-[9px] text-muted-foreground/60">
-          <meta.Icon className="h-2.5 w-2.5" />
-          {meta.label}
-        </span>
-      </button>
+      <div style={contentAnimation ? { animation: contentAnimation, willChange: "opacity, filter, transform" } : undefined}>
+        <button
+          type="button"
+          aria-expanded={selected}
+          aria-controls={detailId}
+          onClick={onSelect}
+          title={call.tool}
+          className={cn(
+            "relative flex w-full min-w-0 items-center gap-2 text-left transition-colors",
+            selected ? "text-primary" : "text-muted-foreground hover:text-foreground",
+          )}
+          style={{ height: ROW_HEIGHT, paddingLeft: INDENT }}
+        >
+          <StepStatusIcon status={call.status} className="h-3 w-3" />
+          <code className={cn("min-w-0 flex-1 truncate font-mono text-[10.5px]", selected && "font-medium")}>{call.tool}</code>
+          {call.risk ? (
+            <ShieldAlert
+              aria-label={call.risk === "danger" ? "危险操作" : "警告操作"}
+              className={cn("h-3 w-3 shrink-0", call.risk === "danger" ? "text-negative" : "text-warning")}
+            />
+          ) : null}
+          <span className="flex shrink-0 items-center gap-1 text-[9px] text-muted-foreground/60">
+            <meta.Icon className="h-2.5 w-2.5" />
+            {meta.label}
+          </span>
+        </button>
 
-      <AutoHeight open={selected} duration={reduceMotion ? 0 : FOLD_MS}>
-        <div id={detailId} className="pb-2 pr-0.5" style={{ paddingLeft: INDENT }}>
-          <motion.div
-            initial={false}
-            animate={
-              selected
-                ? { opacity: 1, y: 0, scale: 1, transition: reduceMotion ? { duration: 0 } : DETAIL_SPRING }
-                : { opacity: 0, y: -4, scale: 0.96, transition: { duration: reduceMotion ? 0 : 0.14 } }
-            }
-            style={{ transformOrigin: "top left" }}
-          >
-            <button
-              ref={registerDetail}
-              type="button"
-              aria-haspopup="dialog"
-              aria-expanded={popupOpen}
-              aria-label={`查看 ${call.tool} 的完整命令`}
-              onClick={onOpenPopup}
-              className={cn(
-                DETAIL_CLASS,
-                "transition-colors hover:border-border hover:bg-foreground/[0.05] focus-visible:border-primary/50 focus-visible:outline-none",
-                lifted && "opacity-0",
-              )}
+        <AutoHeight open={selected} duration={reduceMotion ? 0 : FOLD_MS}>
+          <div id={detailId} className="pb-2 pr-0.5" style={{ paddingLeft: INDENT }}>
+            <motion.div
+              initial={false}
+              animate={
+                selected
+                  ? { opacity: 1, y: 0, scale: 1, transition: reduceMotion ? { duration: 0 } : DETAIL_SPRING }
+                  : { opacity: 0, y: -4, scale: 0.96, transition: { duration: reduceMotion ? 0 : 0.14 } }
+              }
+              style={{ transformOrigin: "top left" }}
             >
-              <CommandFace command={command} />
-            </button>
-          </motion.div>
-        </div>
-      </AutoHeight>
+              <button
+                ref={registerDetail}
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={popupOpen}
+                aria-label={`查看 ${call.tool} 的完整命令`}
+                onClick={onOpenPopup}
+                className={cn(
+                  DETAIL_CLASS,
+                  "transition-colors hover:border-border hover:bg-foreground/[0.05] focus-visible:border-primary/50 focus-visible:outline-none",
+                  lifted && "opacity-0",
+                )}
+              >
+                <CommandFace command={command} />
+              </button>
+            </motion.div>
+          </div>
+        </AutoHeight>
+      </div>
     </li>
   )
 }
@@ -294,25 +395,86 @@ function CallPopup({ call, titleId, onClose }: { call: RecentCall; titleId: stri
   )
 }
 
-export function RecentCallsBranch({ calls }: { calls: RecentCall[] }) {
+export function RecentCallsBranch({ sessionId, calls }: { sessionId: string; calls: RecentCall[] }) {
   const { reduceMotion } = useMotionPreference()
   const [listOpen, setListOpen] = useState(true)
   const [selection, setSelection] = useState<Selection>({ key: null, origin: -1 })
   const [popup, setPopup] = useState<Popup | null>(null)
+  // 列表内容与切换阶段分开：退场期间继续显示上一会话的行，等牵引线收展完再换成本会话。
+  const [scene, setScene] = useState<{ id: string; calls: RecentCall[] }>(() => ({ id: sessionId, calls }))
+  const [phase, setPhase] = useState<RecentCallsSwapPhase>("steady")
   const navRef = useRef<HTMLElement>(null)
   const detailRefs = useRef(new Map<string, HTMLButtonElement>())
   // 右栏左缘：只在首次放置或视口宽度变化时测量，形变的每一帧都复用
   const railRef = useRef<{ viewportWidth: number; left: number } | null>(null)
   const listId = useId()
   const popupTitleId = useId()
+  const sessionRef = useRef(sessionId)
+  const sceneRef = useRef(scene)
+  sceneRef.current = scene
+  const latestRef = useRef({ sessionId, calls })
+  latestRef.current = { sessionId, calls }
+
+  // 会话切换时收起上一会话的选中项与详情
+  useEffect(() => {
+    if (sessionRef.current === sessionId) return
+    sessionRef.current = sessionId
+    setSelection({ key: null, origin: -1 })
+    // 上一会话的详情锚点会随列表退场被移除，直接收起而不是留下悬空的弹层
+    setPopup(null)
+  }, [sessionId])
+
+  // 切换阶段：旧会话有行 -> 先收展牵引线；旧会话为空 -> 直接换入新会话并伸展。
+  useEffect(() => {
+    if (sessionId === sceneRef.current.id) return
+    if (reduceMotion) {
+      setScene({ id: sessionId, calls: latestRef.current.calls })
+      setPhase("steady")
+      return
+    }
+    if (sceneRef.current.calls.length === 0) {
+      setScene({ id: sessionId, calls: latestRef.current.calls })
+      setPhase(latestRef.current.calls.length > 0 ? "enter" : "steady")
+      return
+    }
+    setPhase("exit")
+  }, [sessionId, reduceMotion])
+
+  // 牵引线先收展，全部收完后才换内容；换入的行随后逐行模糊渐显。
+  useEffect(() => {
+    if (phase !== "exit") return
+    const timer = window.setTimeout(() => {
+      const target = latestRef.current
+      setScene({ id: target.sessionId, calls: target.calls })
+      setPhase(target.calls.length > 0 ? "enter" : "steady")
+    }, recentCallsSwapDuration(scene.calls.length))
+    return () => window.clearTimeout(timer)
+  }, [phase, scene.id, scene.calls.length])
+
+  useEffect(() => {
+    if (phase !== "enter") return
+    const timer = window.setTimeout(() => setPhase("steady"), recentCallsSwapDuration(scene.calls.length))
+    return () => window.clearTimeout(timer)
+  }, [phase, scene.id, scene.calls.length])
+
+  // 同一会话内新增/变化调用时直接更新，不重播整段牵引动画
+  useEffect(() => {
+    if (phase === "exit") return
+    if (sessionId !== scene.id) return
+    if (calls === scene.calls) return
+    setScene({ id: sessionId, calls })
+  }, [calls, sessionId, phase, scene.id, scene.calls])
 
   // 选中的调用被新调用挤出列表后视为未选中
-  const selectedIndex = selection.key === null ? -1 : calls.findIndex((call) => call.key === selection.key)
+  const selectedIndex = selection.key === null ? -1 : scene.calls.findIndex((call) => call.key === selection.key)
   const origin = Math.max(selection.origin, 0)
   const timing: Timing = reduceMotion
     ? { segment: 0, draw: 0, erase: 0 }
     : { segment: SEGMENT_MS, draw: DRAW_MS, erase: Math.round(DRAW_MS * 0.6) }
-  const liveCall = popup ? (calls.find((call) => call.key === popup.call.key) ?? popup.call) : null
+  const liveCall = popup ? (scene.calls.find((call) => call.key === popup.call.key) ?? popup.call) : null
+  const emptyAnimation = reduceMotion
+    ? undefined
+    : `recent-call-empty-in ${RECENT_CALLS_BLUR_MS}ms ${SWAP_EASE} both`
 
   const select = (key: string) => {
     if (popup?.open) return
@@ -343,6 +505,7 @@ export function RecentCallsBranch({ calls }: { calls: RecentCall[] }) {
   return (
     <>
       <nav ref={navRef} aria-label="最近调用" className="relative pl-3.5">
+        <style>{SWAP_STYLE}</style>
         <span
           aria-hidden="true"
           className="pointer-events-none absolute bottom-0 left-0 top-2 w-0.5 rounded-[1px]"
@@ -366,9 +529,9 @@ export function RecentCallsBranch({ calls }: { calls: RecentCall[] }) {
           )}
         >
           最近调用
-          {calls.length > 0 ? (
+          {scene.calls.length > 0 ? (
             <span className="rounded border border-border/70 px-1 font-mono text-[9px] font-normal tracking-normal text-muted-foreground">
-              {calls.length}
+              {scene.calls.length}
             </span>
           ) : null}
           <ChevronDown
@@ -377,42 +540,56 @@ export function RecentCallsBranch({ calls }: { calls: RecentCall[] }) {
         </button>
 
         <AutoHeight open={listOpen} duration={reduceMotion ? 0 : FOLD_MS}>
-          {calls.length === 0 ? (
-            <p id={listId} className="pb-2 text-[11px] text-muted-foreground/50">
-              暂无调用记录
-            </p>
-          ) : (
-            <ul id={listId} className="flex flex-col pb-1">
-              {calls.map((call, index) => {
-                const selected = index === selectedIndex
-                const delay = branchTraceDelay(index, origin, STEP_MS)
-                // 向下推进时，等主干先走到这一行再画分支；向上回收时分支与回收同时到位
-                const curveDelay = selected && index >= selection.origin ? delay + STEP_MS : delay
-                return (
-                  <RecentCallRow
-                    key={call.key}
-                    call={call}
-                    last={index === calls.length - 1}
-                    selected={selected}
-                    leadOn={selectedIndex >= 0 && index <= selectedIndex}
-                    passOn={selectedIndex >= 0 && index < selectedIndex}
-                    delay={reduceMotion ? 0 : delay}
-                    curveDelay={reduceMotion || !selected ? 0 : curveDelay}
-                    timing={timing}
-                    reduceMotion={reduceMotion}
-                    lifted={popup?.call.key === call.key}
-                    popupOpen={Boolean(popup?.open && popup.call.key === call.key)}
-                    onSelect={() => select(call.key)}
-                    onOpenPopup={() => openPopup(call)}
-                    registerDetail={(node) => {
-                      if (node) detailRefs.current.set(call.key, node)
-                      else detailRefs.current.delete(call.key)
-                    }}
-                  />
-                )
-              })}
-            </ul>
-          )}
+          <div id={listId}>
+            {scene.calls.length === 0 ? (
+              <p
+                key={scene.id}
+                className="pb-2 text-[11px] text-muted-foreground/50"
+                style={emptyAnimation ? { animation: emptyAnimation } : undefined}
+              >
+                暂无调用记录
+              </p>
+            ) : (
+              <ul
+                key={scene.id}
+                className="flex flex-col pb-1"
+                inert={phase === "exit" || undefined}
+                aria-hidden={phase === "exit" || undefined}
+              >
+                {scene.calls.map((call, index) => {
+                  const selected = index === selectedIndex
+                  const delay = branchTraceDelay(index, origin, STEP_MS)
+                  // 向下推进时，等主干先走到这一行再画分支；向上回收时分支与回收同时到位
+                  const curveDelay = selected && index >= selection.origin ? delay + STEP_MS : delay
+                  return (
+                    <RecentCallRow
+                      key={call.key}
+                      call={call}
+                      last={index === scene.calls.length - 1}
+                      index={index}
+                      count={scene.calls.length}
+                      phase={phase}
+                      selected={selected}
+                      leadOn={selectedIndex >= 0 && index <= selectedIndex}
+                      passOn={selectedIndex >= 0 && index < selectedIndex}
+                      delay={reduceMotion ? 0 : delay}
+                      curveDelay={reduceMotion || !selected ? 0 : curveDelay}
+                      timing={timing}
+                      reduceMotion={reduceMotion}
+                      lifted={popup?.call.key === call.key}
+                      popupOpen={Boolean(popup?.open && popup.call.key === call.key)}
+                      onSelect={() => select(call.key)}
+                      onOpenPopup={() => openPopup(call)}
+                      registerDetail={(node) => {
+                        if (node) detailRefs.current.set(call.key, node)
+                        else detailRefs.current.delete(call.key)
+                      }}
+                    />
+                  )
+                })}
+              </ul>
+            )}
+          </div>
         </AutoHeight>
       </nav>
 
