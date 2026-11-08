@@ -213,6 +213,9 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
     if (method === "POST" && pathname === "/tasks") {
       const body = readBody<Partial<PreviewTask>>(init)
       store.counters.task += 1
+      const enabled = body?.enabled ?? true
+      const triggerId = body?.triggerId || "daily"
+      const recurring = triggerId === "daily" || triggerId === "weekly" || triggerId === "cron"
       const task: PreviewTask = {
         id: `preview-task-new-${store.counters.task}`,
         name: body?.name || "新计划任务",
@@ -220,12 +223,17 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
         action: body?.action || "运行程序",
         program: body?.program || "",
         args: body?.args || "",
-        triggerId: body?.triggerId || "daily",
+        triggerId,
         time: body?.time || "00:00",
         interval: body?.interval ?? 1,
         cron: body?.cron || "",
+        timezone: body?.timezone || "UTC",
         clientIds: body?.clientIds ?? [],
-        enabled: body?.enabled ?? true,
+        enabled,
+        nextRunAt: enabled && recurring ? Date.now() + 3_600_000 : null,
+        lastRunAt: null,
+        lastStatus: null,
+        lastError: null,
       }
       store.tasks = [task, ...store.tasks]
       return task as T
@@ -236,7 +244,12 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
       const body = readBody<Partial<PreviewTask>>(init)
       const current = store.tasks.find((task) => task.id === id)
       if (!current) throw new Error("开发者预览模式中不存在该计划任务")
-      const updated: PreviewTask = { ...current, ...body, id: current.id }
+      const merged: PreviewTask = { ...current, ...body, id: current.id }
+      const recurring = merged.triggerId === "daily" || merged.triggerId === "weekly" || merged.triggerId === "cron"
+      const updated: PreviewTask = {
+        ...merged,
+        nextRunAt: merged.enabled && recurring ? (current.nextRunAt ?? Date.now() + 3_600_000) : null,
+      }
       store.tasks = store.tasks.map((task) => task.id === id ? updated : task)
       return updated as T
     }
@@ -251,12 +264,25 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
       const body = readBody<{ enabled?: boolean }>(init)
       const current = store.tasks.find((task) => task.id === id)
       if (!current) throw new Error("开发者预览模式中不存在该计划任务")
-      const updated = { ...current, enabled: body?.enabled ?? !current.enabled }
+      const enabled = body?.enabled ?? !current.enabled
+      const recurring = current.triggerId === "daily" || current.triggerId === "weekly" || current.triggerId === "cron"
+      const updated = {
+        ...current,
+        enabled,
+        nextRunAt: enabled && recurring ? (current.nextRunAt ?? Date.now() + 3_600_000) : null,
+      }
       store.tasks = store.tasks.map((task) => task.id === id ? updated : task)
       return updated as T
     }
     const taskDispatchMatch = /^\/tasks\/([^/]+)\/dispatch$/.exec(pathname)
-    if (method === "POST" && taskDispatchMatch) return undefined as T
+    if (method === "POST" && taskDispatchMatch) {
+      const id = decodeURIComponent(taskDispatchMatch[1])
+      const current = store.tasks.find((task) => task.id === id)
+      if (!current) throw new Error("开发者预览模式中不存在该计划任务")
+      const updated: PreviewTask = { ...current, lastRunAt: Date.now(), lastStatus: "success", lastError: null }
+      store.tasks = store.tasks.map((task) => task.id === id ? updated : task)
+      return { task: updated, commands: [] } as T
+    }
 
     /* ---------------- 插件 ---------------- */
     if (method === "POST" && pathname === "/plugins") {

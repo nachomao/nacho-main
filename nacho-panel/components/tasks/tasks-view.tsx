@@ -33,6 +33,14 @@ import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useServerData } from "@/components/server-data-context"
 import { usePanelResource } from "@/components/use-panel-resource"
 import type { Client as PanelClient } from "@/components/clients/client-data"
+import {
+  formatTaskRemaining,
+  formatTaskRunClock,
+  formatTaskRunDateTime,
+  taskRunStatusLabel,
+  taskScheduleProgress,
+  type TaskLastStatus,
+} from "@/lib/task-schedule-format"
 import { useTasks, type OSType } from "./tasks-context"
 
 /* ---------- 通用面板外壳：与脚本安装 / 客户端面板保持一致 ---------- */
@@ -58,7 +66,7 @@ function PanelShell({
         </div>
         {action}
       </div>
-      <div className="mt-5 min-h-0 flex-1">{children}</div>
+      <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
     </div>
   )
 }
@@ -188,8 +196,36 @@ type ScheduledTask = {
   time: string
   interval: number
   cron: string
+  /** IANA 时区；旧版服务端可能不返回 */
+  timezone?: string
   clientIds: string[]
   enabled: boolean
+  /* 服务端调度状态（旧版服务端可能不返回） */
+  nextRunAt?: number | null
+  lastRunAt?: number | null
+  lastStatus?: TaskLastStatus
+  lastError?: string | null
+  createdAt?: number
+}
+
+const COMMON_TIMEZONES = ["UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"]
+
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  } catch {
+    return "UTC"
+  }
+}
+
+function supportedTimezones(): string[] {
+  const intl = Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }
+  try {
+    const values = intl.supportedValuesOf?.("timeZone") ?? []
+    return Array.from(new Set(["UTC", browserTimezone(), ...COMMON_TIMEZONES, ...values])).sort()
+  } catch {
+    return Array.from(new Set(["UTC", browserTimezone(), ...COMMON_TIMEZONES]))
+  }
 }
 
 /* 由程序 + 参数拼出展示路径 */
@@ -210,6 +246,7 @@ function blankTask(os: OSType): ScheduledTask {
     time: "06:00",
     interval: 1,
     cron: "0 3 * * *",
+    timezone: browserTimezone(),
     clientIds: [],
     enabled: true,
   }
@@ -345,7 +382,7 @@ function TaskFormDialog({
 
   // 打开时（或初始任务变化时）回填草稿；关闭时保留上次草稿，让退场动画期间内容不闪烁
   useEffect(() => {
-    if (open) setDraft({ ...initial, clientIds: [...initial.clientIds] })
+    if (open) setDraft({ ...initial, timezone: initial.timezone || browserTimezone(), clientIds: [...initial.clientIds] })
   }, [open, initial])
 
   const os = draft.os
@@ -355,6 +392,7 @@ function TaskFormDialog({
   const triggers = triggersByOS[os]
   const currentTrigger = findTrigger(os, draft.triggerId)
   const isCreate = mode === "create"
+  const timezones = useMemo(() => supportedTimezones(), [])
 
   const set = (patch: Partial<ScheduledTask>) => setDraft((d) => ({ ...d, ...patch }))
   const onlineIds = clients.filter((c) => c.online).map((c) => c.id)
@@ -370,7 +408,8 @@ function TaskFormDialog({
     })
 
   const cronValid = currentTrigger.kind !== "cron" || draft.cron.trim() !== ""
-  const valid = draft.name.trim() !== "" && draft.program.trim() !== "" && draft.clientIds.length > 0 && cronValid
+  const timezoneValid = currentTrigger.kind === "event" || (draft.timezone ?? "").trim() !== ""
+  const valid = draft.name.trim() !== "" && draft.program.trim() !== "" && draft.clientIds.length > 0 && cronValid && timezoneValid
   const submit = () => {
     if (!valid) return
     onSubmit({
@@ -379,6 +418,7 @@ function TaskFormDialog({
       program: draft.program.trim(),
       args: draft.args.trim(),
       cron: draft.cron.trim(),
+      timezone: (draft.timezone || "UTC").trim(),
     })
   }
 
@@ -467,6 +507,28 @@ function TaskFormDialog({
             })}
           </div>
         </Field>
+
+        {/* 时区：服务端按任务时区解释执行时间与 Cron */}
+        <div
+          className="overflow-hidden transition-all duration-300 ease-out"
+          style={{
+            maxHeight: currentTrigger.kind === "event" ? "0px" : "110px",
+            opacity: currentTrigger.kind === "event" ? 0 : 1,
+          }}
+        >
+          <Field label="时区" icon={<Clock className="h-3.5 w-3.5" />} hint="IANA 时区名，例如 Asia/Shanghai；服务端按此时区计算下次执行。">
+            <input
+              list="nacho-task-timezones"
+              className={cn(inputCls, "font-mono")}
+              value={draft.timezone ?? ""}
+              onChange={(e) => set({ timezone: e.target.value })}
+              placeholder="Asia/Shanghai"
+            />
+          </Field>
+        </div>
+        <datalist id="nacho-task-timezones">
+          {timezones.map((timezone) => <option key={timezone} value={timezone} />)}
+        </datalist>
 
         {/* 时间 / 间隔：仅 interval 类触发器显示 */}
         <div
@@ -591,7 +653,8 @@ function TaskFormDialog({
           <span>
             将{isCreate ? "向" : "更新"} <b className="text-primary">{draft.clientIds.length}</b> 台 {meta.label} 客户端
             {isCreate ? "下发" : "的任务"}：<b>{draft.name.trim() || "未命名任务"}</b>，触发方式{" "}
-            <b>{triggerSummary(os, draft.triggerId, draft.time, draft.interval, draft.cron)}</b>。
+            <b>{triggerSummary(os, draft.triggerId, draft.time, draft.interval, draft.cron)}</b>
+            {currentTrigger.kind === "event" ? "" : <>，时区 <b>{(draft.timezone ?? "").trim() || "未填写"}</b></>}。
           </span>
         </div>
       </div>
@@ -627,6 +690,14 @@ export function TasksView() {
   // 为「新建」对话框生成稳定的空白草稿（按所选系统记忆，避免每次渲染重置）
   const createInitial = useMemo(() => blankTask(createOS ?? "windows"), [createOS])
 
+  // 自动调度会推进 nextRunAt；页面可见时定期静默刷新，避免长期停留后显示过期时间。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void reload()
+    }, 30_000)
+    return () => clearInterval(timer)
+  }, [reload])
+
   const filtered = osFilter === "all" ? tasks : tasks.filter((t) => t.os === osFilter)
   const counts = {
     all: tasks.length,
@@ -645,6 +716,7 @@ export function TasksView() {
     time: t.time,
     interval: t.interval,
     cron: t.cron,
+    timezone: t.timezone || "UTC",
     clientIds: t.clientIds,
     enabled: t.enabled,
   })
@@ -744,6 +816,7 @@ export function TasksView() {
     setActionError(null)
     try {
       await apiRequest(`/tasks/${id}/dispatch`, { method: "POST" })
+      await reload()
       flash(id)
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "下发任务失败")
@@ -759,7 +832,7 @@ export function TasksView() {
   ]
 
   return (
-    <div data-tasks-scroll className="flex min-h-0 flex-1 flex-col overflow-auto pr-1">
+    <div data-tasks-scroll className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <PanelShell
         title="计划任务"
         desc="集中管理已下发的 Windows 与 Linux 批量计划任务。点击右上角「新建任务」即可创建。"
@@ -802,37 +875,58 @@ export function TasksView() {
             </button>
           </div>
         ) : filtered.length > 0 ? (
-          <div className="flex flex-col gap-2.5">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {filtered.map((t) => {
               const isRemoving = removing.includes(t.id)
               const isFlash = flashId === t.id
               const isEditing = editing?.id === t.id
               const isBusy = busyIds.includes(t.id)
+              const timezone = t.timezone || "UTC"
+              const nextRunText = formatTaskRunDateTime(t.nextRunAt, timezone)
+              const lastRunText = formatTaskRunDateTime(t.lastRunAt, timezone)
+              const nextClock = formatTaskRunClock(t.nextRunAt, timezone)
+              const remaining = formatTaskRemaining(t.nextRunAt)
+              const progress = taskScheduleProgress({
+                enabled: t.enabled,
+                nextRunAt: t.nextRunAt,
+                lastRunAt: t.lastRunAt,
+                createdAt: t.createdAt,
+              })
+              const eventTrigger = t.triggerId === "logon" || t.triggerId === "startup" || t.triggerId === "boot"
+              const lastStatus = t.lastStatus ?? null
+              const gaugeValue = !t.enabled ? "未排期" : eventTrigger ? "事件触发" : nextClock ?? "待排期"
+              const gaugeHint = !t.enabled
+                ? "已停用"
+                : eventTrigger
+                  ? "由客户端事件驱动"
+                  : remaining
+                    ? `距下次 ${remaining}`
+                    : "暂无排期"
               return (
-                <div
+                <article
                   key={t.id}
                   className={cn(
-                    "rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
+                    "flex flex-col rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
                     isRemoving
                       ? "scale-95 opacity-0 blur-sm"
                       : isFlash || isEditing
                         ? "border-primary bg-primary/10 shadow-[0_0_0_3px_oklch(0.82_0.19_145_/_15%)]"
                         : "border-border hover:bg-surface",
                   )}
-                  style={{ maxHeight: isRemoving ? 0 : 200, marginBottom: isRemoving ? -10 : 0 }}
+                  style={{ maxHeight: isRemoving ? 0 : 1200, marginBottom: isRemoving ? -10 : 0 }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background/40">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background/40 sm:h-10 sm:w-10">
                         {(() => {
                           const OSIcon = osMeta[t.os].icon
-                          return <OSIcon className="h-5 w-5 text-primary" />
+                          return <OSIcon className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
                         })()}
                       </span>
                       <div className="min-w-0 leading-tight">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold">{t.name}</p>
-                          <span className="flex items-center gap-1 rounded-full border border-border bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                          <p className="text-[13px] font-semibold leading-tight sm:text-sm">{t.name}</p>
+                          <span className="hidden items-center gap-1 rounded-full border border-border bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:flex">
                             {osMeta[t.os].label}
                           </span>
                           {isEditing ? (
@@ -849,38 +943,115 @@ export function TasksView() {
                             )
                           )}
                         </div>
-                        <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{taskPath(t)}</p>
+                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground sm:text-xs">{taskPath(t)}</p>
                       </div>
                     </div>
                     <span
+                      title={t.enabled ? "已启用" : "已禁用"}
                       className={cn(
-                        "flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                        "flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium sm:px-2.5",
                         t.enabled ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground",
                       )}
                     >
                       <span className={cn("h-1.5 w-1.5 rounded-full", t.enabled ? "bg-primary" : "bg-muted-foreground/60")} />
-                      {t.enabled ? "已启用" : "已禁用"}
+                      <span className="hidden sm:inline">{t.enabled ? "已启用" : "已禁用"}</span>
                     </span>
                   </div>
 
-                  {/* 元信息 */}
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 pl-[3.25rem] text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Repeat className="h-3.5 w-3.5" />
-                      {triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Server className="h-3.5 w-3.5" />
-                      {t.clientIds.length} 台客户端
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Play className="h-3.5 w-3.5" />
-                      {t.action}
-                    </span>
+                  {/* 半圆仪表 + 排期信息 */}
+                  <div className="mt-3 flex flex-1 flex-col gap-4 sm:flex-row sm:items-center">
+                    <div className="relative mx-auto w-full max-w-[210px] shrink-0 pt-1 sm:mx-0 sm:w-[168px] sm:max-w-none">
+                      <svg viewBox="0 0 120 68" className="w-full overflow-visible" aria-hidden="true">
+                        <path
+                          d="M10 60 A50 50 0 0 1 110 60"
+                          fill="none"
+                          strokeWidth="9"
+                          strokeLinecap="round"
+                          style={{ stroke: "color-mix(in oklab, var(--foreground) 10%, transparent)" }}
+                        />
+                        <path
+                          d="M10 60 A50 50 0 0 1 110 60"
+                          fill="none"
+                          strokeWidth="9"
+                          strokeLinecap="round"
+                          pathLength={100}
+                          strokeDasharray={`${Math.round(progress * 100)} 100`}
+                          stroke="currentColor"
+                          className={cn(
+                            "text-primary transition-all duration-700",
+                            (!t.enabled || eventTrigger || !nextClock) && "opacity-0",
+                          )}
+                        />
+                      </svg>
+                      <div className="absolute inset-x-0 bottom-0 text-center">
+                        <div
+                          className={cn(
+                            "text-2xl font-bold leading-none tracking-[-0.04em]",
+                            t.enabled && !eventTrigger && nextClock ? "text-foreground" : "text-lg font-semibold text-muted-foreground",
+                          )}
+                        >
+                          {gaugeValue}
+                        </div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">{gaugeHint}</div>
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1 space-y-1.5 text-xs">
+                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
+                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">下次</span>
+                        <span className="truncate text-right font-medium text-foreground" title={nextRunText ?? undefined}>
+                          {eventTrigger ? "客户端事件" : nextRunText ? nextRunText.slice(0, 10) : "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
+                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">周期</span>
+                        <span className="flex min-w-0 items-center gap-1.5 text-right font-medium text-foreground">
+                          <Repeat className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                          <span className="truncate">{triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}</span>
+                        </span>
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3" title={t.lastError ?? undefined}>
+                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">最近</span>
+                        <span className="flex min-w-0 items-center justify-end gap-1.5">
+                          <span className="truncate font-medium text-foreground">{lastRunText ?? "—"}</span>
+                          <span
+                            className={cn(
+                              "shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                              lastStatus === "success"
+                                ? "bg-primary/12 text-primary"
+                                : lastStatus === "failed"
+                                  ? "bg-negative/12 text-negative"
+                                  : lastStatus === "retrying"
+                                    ? "bg-warning/12 text-warning"
+                                    : "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {taskRunStatusLabel(lastStatus)}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <Server className="h-3 w-3 text-muted-foreground/70" />
+                          {t.clientIds.length} 台客户端
+                        </span>
+                        <span className="flex min-w-0 items-center gap-1.5" title={`时区：${timezone}`}>
+                          <CalendarClock className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                          <span className="truncate">{timezone}</span>
+                        </span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <Play className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                          <span className="truncate">{t.action}</span>
+                        </span>
+                        <span className={cn("sm:hidden", t.enabled ? "text-primary" : "text-muted-foreground")}>
+                          {t.enabled ? "已启用" : "已禁用"}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* 操作 */}
-                  <div className="mt-3 flex items-center justify-end gap-2 border-t border-border/60 pt-3">
+                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
                     <button
                       type="button"
                       onClick={() => void toggleEnabled(t)}
@@ -922,7 +1093,7 @@ export function TasksView() {
                       删除
                     </button>
                   </div>
-                </div>
+                </article>
               )
             })}
           </div>

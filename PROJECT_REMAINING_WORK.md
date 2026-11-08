@@ -12,11 +12,11 @@
 
 ### P0
 
-- [ ] **TODO-01 计划任务自动调度**
-  - 现状：`cron` / `interval` / `time` / `triggerId` 仅作为字段存储；服务端只有离线扫描和 Agent 制品同步两个定时器，唯一执行入口是面板手动调用 `POST /tasks/:id/dispatch`。
-  - 证据：`nacho-server/src/services/tasks.ts:127`、`nacho-server/src/index.ts:76`、`nacho-panel/components/tasks/tasks-view.tsx:740`。
-  - 完成标准：服务端按任务配置自动触发；支持启用/停用、时区、重启恢复、防重复投递与失败重试；面板显示下次/最近执行时间；测试覆盖 cron 解析、时区、重启补齐与重复投递。
-  - 若产品决定不做自动调度：移除 UI 中的 Cron/间隔暗示，把页面改为“任务模板 / 手动任务”。
+- [x] **TODO-01 计划任务自动调度**
+  - 现状（已完成，2026-11-05）：服务端新增周期调度器，按任务 IANA 时区自动触发 `daily` / `weekly` / `cron`；任务记录返回 `nextRunAt`、`lastRunAt`、`lastStatus`、`lastError`，面板表单增加时区并显示下次/最近执行时间。启停、任务编辑会重算或清空排期；服务重启只补一次错过排期并恢复未完成运行；`task_runs(task_id, scheduled_for)` 与命令 `run_id` 唯一约束防重复投递；下发异常指数退避重试 3 次。
+  - 证据：`nacho-server/src/lib/schedule.ts`、`nacho-server/src/services/task-scheduler.ts`、`nacho-server/src/services/tasks.ts`、`nacho-server/src/db/index.ts`、`nacho-panel/components/tasks/tasks-view.tsx`、`nacho-panel/lib/task-schedule-format.ts`。
+  - 验证：服务端/Agent 已迭代到 1.1.25、面板到 0.3.22。服务端 118 项测试与 `npm run build` 通过，Agent Release 构建通过（Agent 测试受当前终端 testhost 父进程句柄拒绝访问的环境限制未完成）；面板 336 项测试、`tsc --noEmit`、`pnpm build` 通过；桌面 60 项测试与 `pnpm build` 通过，生成 `desktop/dist/NachoPanel/NachoPanel-Setup-0.3.22.exe`（SHA-256 `ec0e95149b6ba1ce821eea3a0fa093fec8edd18d6115dc156c1f2afce939c33f`）；真实浏览器与 `390x844` 视口验证任务卡片、时区字段、下次/最近执行与滚动。
+  - 残余限制：`logon` / `startup` / `boot` 属于客户端事件，当前保留配置且界面明确标注“服务端不排期”，需 Agent 侧事件上报或本机计划任务后才能闭环。
 
 - [ ] **TODO-02 系统设置持久化与生效（常规 + 通知条件）**
   - 现状：`SettingsView.handleSave()` 仅在 `security.openEnrollment` 变化时调用 `PUT /api/panel/settings`；常规设置与通知条件只存在前端 state，刷新即还原，服务端不读取。

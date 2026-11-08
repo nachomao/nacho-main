@@ -47,8 +47,13 @@ export type PreviewTask = {
   time: string
   interval: number
   cron: string
+  timezone: string
   clientIds: string[]
   enabled: boolean
+  nextRunAt: number | null
+  lastRunAt: number | null
+  lastStatus: "success" | "failed" | "retrying" | null
+  lastError: string | null
 }
 
 export type PreviewPluginStatus = "installed" | "available" | "disabled"
@@ -286,7 +291,7 @@ function createClients(now: number): PreviewClient[] {
   ]
 }
 
-function createTasks(): PreviewTask[] {
+function createTasks(now: number): PreviewTask[] {
   return [
     {
       id: "preview-task-backup",
@@ -299,8 +304,13 @@ function createTasks(): PreviewTask[] {
       time: "02:30",
       interval: 1,
       cron: "",
+      timezone: "Asia/Shanghai",
       clientIds: ["preview-client-win-001", "preview-client-win-002"],
       enabled: true,
+      nextRunAt: now + 3 * HOUR,
+      lastRunAt: now - 21 * HOUR,
+      lastStatus: "success",
+      lastError: null,
     },
     {
       id: "preview-task-logs",
@@ -313,8 +323,13 @@ function createTasks(): PreviewTask[] {
       time: "",
       interval: 0,
       cron: "0 */6 * * *",
+      timezone: "UTC",
       clientIds: ["preview-client-linux-003"],
       enabled: true,
+      nextRunAt: now + 5 * HOUR,
+      lastRunAt: now - HOUR,
+      lastStatus: "retrying",
+      lastError: "模拟下发超时，正在重试",
     },
     {
       id: "preview-task-cleanup",
@@ -327,8 +342,13 @@ function createTasks(): PreviewTask[] {
       time: "23:00",
       interval: 1,
       cron: "",
+      timezone: "Asia/Shanghai",
       clientIds: ["preview-client-win-002"],
       enabled: false,
+      nextRunAt: null,
+      lastRunAt: now - 7 * 24 * HOUR,
+      lastStatus: "failed",
+      lastError: "模拟失败：目标客户端离线",
     },
   ]
 }
@@ -690,7 +710,7 @@ export function createDeveloperPreviewStore(now = Date.now()): DeveloperPreviewS
   return {
     clients,
     groups: ["默认分组", "设计工作室", "服务器"],
-    tasks: createTasks(),
+    tasks: createTasks(now),
     plugins: createPlugins(),
     logs: createLogs(now),
     notifications: createNotifications(now),
