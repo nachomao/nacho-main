@@ -121,6 +121,7 @@ export async function executeNachoTool(input: {
   args: Record<string, unknown>
   chat: ChatSession
   settings: StoredAIConfig
+  signal?: AbortSignal
 }): Promise<{ ok: boolean; text: string }> {
   const tool = findNachoTool(input.toolName)
   if (!tool) return { ok: false, text: `未知工具：${input.toolName}` }
@@ -130,7 +131,13 @@ export async function executeNachoTool(input: {
   if (tool.plugin && !input.settings.plugins.some((plugin) => plugin.id === tool.plugin && plugin.enabled)) {
     return { ok: false, text: `插件 ${tool.plugin} 未启用，无法使用 ${tool.id}` }
   }
-  const args = input.args || {}
+  const rawArgs = input.args || {}
+  const properties = (tool.inputSchema.properties || {}) as Record<string, unknown>
+  // 部分上游模型会给零参数工具补一个 _noargs 占位符，仅在工具确实无参数时忽略它。
+  const args = Object.keys(properties).length === 0
+    && Object.keys(rawArgs).every((key) => key === "_noargs")
+    ? {}
+    : rawArgs
   const errors = validateToolArgs(tool.inputSchema, args)
   if (errors.length > 0) return { ok: false, text: `参数错误：${errors.join("；")}` }
 
@@ -159,7 +166,9 @@ export async function executeNachoTool(input: {
       detail: tool.summarize(args),
       risk: "danger",
       danger: true,
+      signal: input.signal,
     })
+    if (input.signal?.aborted) return { ok: false, text: "操作已取消（AI 调用已结束）。" }
     if (decision === "reject") return { ok: false, text: "用户拒绝执行该操作。" }
   }
 

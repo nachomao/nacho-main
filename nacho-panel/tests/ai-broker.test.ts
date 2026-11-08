@@ -117,6 +117,34 @@ test("read tool calls control server directly", async (t) => {
   assert.match(result.text, /在线客户端/)
 })
 
+test("zero-argument tools accept an upstream noargs placeholder", async (t) => {
+  const { server, baseUrl } = await startControl()
+  t.after(() => server.close())
+  const settings = defaultStoredSettings()
+  const chat = sessionFor(baseUrl, `u-noargs-${Date.now()}`)
+  const result = await executeNachoTool({
+    toolName: "list_clients",
+    args: { _noargs: "placeholder" },
+    chat,
+    settings,
+  })
+  assert.equal(result.ok, true)
+  assert.match(result.text, /在线客户端/)
+})
+
+test("parameterized tools still reject unknown arguments", async () => {
+  const settings = defaultStoredSettings()
+  const chat = sessionFor("http://127.0.0.1:1", `u-noargs-guard-${Date.now()}`)
+  const result = await executeNachoTool({
+    toolName: "get_client",
+    args: { clientId: "c1", _noargs: "placeholder" },
+    chat,
+    settings,
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.text, /不支持参数 _noargs/)
+})
+
 test("danger tool executes after broker approval", async (t) => {
   const { server, baseUrl, commands } = await startControl()
   t.after(() => server.close())

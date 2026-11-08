@@ -10,6 +10,8 @@ export type OpencodeConfigBuild = {
 const PROVIDER_ID = "nacho"
 
 export const NACHO_AGENT_ID = "nacho"
+/** 人工确认没有超时；MCP 调用需覆盖用户离开后回来确认的场景。 */
+export const NACHO_MCP_TIMEOUT_MS = 24 * 60 * 60 * 1000
 
 const NACHO_AGENT_PROMPT = `你是 Nacho AI，运行在 Windows 桌面面板中的运维与本地代码 Agent。
 
@@ -54,7 +56,7 @@ export function buildOpencodeConfig(
       headers: { Authorization: `Bearer {env:NACHO_BROKER_TOKEN}` },
       enabled: true,
       oauth: false,
-      timeout: 600_000,
+      timeout: NACHO_MCP_TIMEOUT_MS,
     },
   }
   const mcpEnv: Record<string, string> = {}

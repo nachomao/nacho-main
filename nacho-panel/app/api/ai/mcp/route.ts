@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     if (!chat) return rpcResponse(id, toolResult("当前没有进行中的 AI 会话，拒绝执行工具。", true))
     try {
       const settings = (await getAISettingsStore().read()).config
-      const result = await executeNachoTool({ toolName: name, args, chat, settings })
+      const result = await executeNachoTool({ toolName: name, args, chat, settings, signal: request.signal })
       const finalized = finalizeToolText(result.text, chat.connection.key)
       return rpcResponse(id, toolResult(finalized.text, !result.ok))
     } catch (error) {

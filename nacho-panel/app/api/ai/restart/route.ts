@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server"
 import { AIHttpError, aiError, aiJson, readJsonBody, requireDesktop, requireJsonRequest, requireSameOrigin } from "@/lib/ai/http"
-import { denyAllPending } from "@/lib/ai/approvals"
+import { clearPendingPermissions, denyAllPending } from "@/lib/ai/approvals"
 import { forgetChatSession } from "@/lib/ai/chat-sessions"
 import { getAIChatSessionMapStore } from "@/lib/ai/chat-session-map"
 import { stopEventHub } from "@/lib/ai/event-hub"
@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   denyAllPending(uiSessionId)
+  clearPendingPermissions(uiSessionId)
   forgetChatSession(uiSessionId)
   await getAIChatSessionMapStore().forget(uiSessionId).catch(() => undefined)
   stopEventHub()

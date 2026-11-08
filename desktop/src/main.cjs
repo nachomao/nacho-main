@@ -166,7 +166,7 @@ async function startPanelServer() {
   panelProcess.once("exit", (code, signal) => {
     panelProcessExited = true
     log(`面板服务退出 code=${code} signal=${signal}`, errorOutput)
-    killRuntimeProcess(aiRuntimePath)
+    killRuntimeProcess(aiRuntimePath, getOpencodeBinaryPath())
     if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
       void dialog.showMessageBox(mainWindow, {
         type: "error",
@@ -326,7 +326,7 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     updates.unsubscribe()
-    killRuntimeProcess(aiRuntimePath)
+    killRuntimeProcess(aiRuntimePath, getOpencodeBinaryPath())
     if (isQuitting) return
     isQuitting = true
     if (panelProcess && !panelProcessExited) {

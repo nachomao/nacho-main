@@ -46,7 +46,6 @@ test("approval merges into an existing running step and resolves", () => {
     detail: "执行 echo",
     danger: true,
     risk: "danger",
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(message.steps[0].status, "waiting-confirm")
   assert.equal(message.steps[0].approvalId, "nacho:1")
@@ -66,7 +65,6 @@ test("a late tool step replaces a synthetic broker approval step", () => {
     detail: "执行",
     danger: true,
     risk: "danger",
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(message.steps[0].id, "nacho:2")
   message = applyAIEvent(message, { type: "step", step: { ...step, id: "prt_2" } })
@@ -85,7 +83,6 @@ test("running tool snapshots do not hide a pending approval", () => {
     detail: "echo hello",
     danger: true,
     risk: "danger",
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(message.steps[0].status, "waiting-confirm")
 
@@ -166,7 +163,6 @@ test("pre-approval planning text stays in the answer body", () => {
     detail: "重启服务",
     danger: true,
     risk: "danger",
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(message.text, "先确认目标客户端。")
   assert.equal(message.reasoning, undefined)
@@ -185,7 +181,6 @@ test("the pre-tool paragraph is kept as the approval ask", () => {
     tool: step.tool,
     detail: "echo hello",
     danger: true,
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(message.steps[0].status, "waiting-confirm")
   assert.equal(message.steps[0].ask, ask)
@@ -202,7 +197,6 @@ test("the pre-tool paragraph is kept as the approval ask", () => {
     tool: "nacho_run_shell",
     detail: "执行",
     danger: true,
-    expiresAt: Date.now() + 1000,
   })
   assert.equal(approvalFirst.steps[0].ask, ask)
 })

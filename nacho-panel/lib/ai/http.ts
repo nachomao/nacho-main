@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import { NextResponse, type NextRequest } from "next/server"
 import { isSameOriginRequest } from "@/lib/same-origin"
+import { isLoopbackHostname } from "./loopback"
 
 const noStoreHeaders = { "Cache-Control": "no-store" }
 
@@ -22,7 +23,17 @@ export function aiError(message: string, status: number, code?: string) {
   return aiJson({ ok: false, message, ...(code ? { code } : {}) }, { status })
 }
 
+/** AI 接口只服务本机桌面面板；非 loopback Host 一律拒绝，避免 DNS rebinding 通过同源校验。 */
+export function requireLoopbackHost(request: NextRequest) {
+  const hostname = request.nextUrl.hostname
+  const hostHeader = request.headers.get("host")
+  if (isLoopbackHostname(hostname) && (!hostHeader || isLoopbackHostname(hostHeader))) return null
+  return aiError("仅允许本机面板访问", 403, "non-loopback")
+}
+
 export function requireSameOrigin(request: NextRequest) {
+  const loopback = requireLoopbackHost(request)
+  if (loopback) return loopback
   if (!isSameOriginRequest(request.headers, request.nextUrl.origin)) {
     return aiError("仅允许面板同源请求", 403, "cross-origin")
   }
@@ -37,6 +48,8 @@ export function requireDesktop() {
 }
 
 export function rejectBrowserOrigin(request: NextRequest) {
+  const loopback = requireLoopbackHost(request)
+  if (loopback) return loopback
   if (request.headers.get("origin") || request.headers.get("sec-fetch-site")) {
     return aiError("该接口仅供本地 AI 运行时调用", 403, "runtime-only")
   }

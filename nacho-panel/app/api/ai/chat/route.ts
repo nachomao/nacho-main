@@ -5,7 +5,11 @@ import { AIHttpError, aiError, readJsonBody, requireDesktop, requireJsonRequest,
 import { buildSystemPrompt } from "@/lib/ai/system-prompt"
 import { ensureEventHub, subscribeEvents, waitForEventHub } from "@/lib/ai/event-hub"
 import { isSessionIdleEvent, isUserMessageEvent, SessionEventMapper } from "@/lib/ai/event-map"
-import { denyAllPending } from "@/lib/ai/approvals"
+import {
+  denyAllPending,
+  forgetPendingPermission,
+  registerPendingPermission,
+} from "@/lib/ai/approvals"
 import { subscribeApprovals } from "@/lib/ai/approval-bus"
 import {
   clearActiveChat,
@@ -245,6 +249,7 @@ export async function POST(request: NextRequest) {
         finished = true
         closed = true
         phase = "finished"
+        rejectPermissions()
         if (ping) clearInterval(ping)
         if (idle) clearTimeout(idle)
         if (ticker) clearInterval(ticker)
@@ -339,7 +344,10 @@ export async function POST(request: NextRequest) {
         if (finished) return
         const wasEmpty = pendingApprovals.size === 0
         pendingApprovals.add(event.approvalId)
-        if (event.approvalId.startsWith("oc:")) pendingOcPermissions.add(event.approvalId.slice(3))
+        if (event.approvalId.startsWith("oc:")) {
+          pendingOcPermissions.add(event.approvalId.slice(3))
+          registerPendingPermission(parsed.uiSessionId, event.approvalId)
+        }
         if (wasEmpty) pauseForApproval(Date.now())
         if (phase !== "summarizing") send(event)
       }
@@ -347,17 +355,21 @@ export async function POST(request: NextRequest) {
       const handleResolved = (event: Extract<AIChatEvent, { type: "approval-resolved" }>) => {
         if (finished) return
         pendingApprovals.delete(event.approvalId)
-        if (event.approvalId.startsWith("oc:")) pendingOcPermissions.delete(event.approvalId.slice(3))
+        if (event.approvalId.startsWith("oc:")) {
+          pendingOcPermissions.delete(event.approvalId.slice(3))
+          forgetPendingPermission(parsed.uiSessionId, event.approvalId)
+        }
         if (pendingApprovals.size === 0) resumeFromApproval(Date.now())
         if (phase !== "summarizing") send(event)
       }
 
-      const rejectPermissions = () => {
+      function rejectPermissions() {
         for (const id of [...pendingOcPermissions]) {
+          forgetPendingPermission(parsed.uiSessionId, `oc:${id}`)
           void client.replyPermission(session.opencodeSessionId, id, "reject").catch(() => undefined)
         }
         pendingOcPermissions.clear()
-        denyAllPending(parsed.uiSessionId)
+        denyAllPending(parsed.uiSessionId, parsed.turnId)
         pendingApprovals.clear()
       }
 

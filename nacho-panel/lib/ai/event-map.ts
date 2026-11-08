@@ -173,7 +173,6 @@ export class SessionEventMapper {
         detail,
         danger: toolDanger(tool),
         risk: toolRisk(tool),
-        expiresAt: Date.now() + 300_000,
       }]
     }
     if (event.type === "permission.replied") {

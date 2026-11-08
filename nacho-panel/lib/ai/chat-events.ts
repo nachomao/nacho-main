@@ -37,7 +37,7 @@ export type AIChatEvent =
   | { type: "reasoning-done" }
   | { type: "step"; step: AIChatStep }
   | { type: "step-update"; id: string; patch: Partial<Pick<AIChatStep, "detail" | "output" | "status" | "danger" | "risk" | "approvalId">> }
-  | { type: "approval"; id: string; approvalId: string; tool: string; detail: string; risk?: "warn" | "danger"; danger?: boolean; expiresAt: number }
+  | { type: "approval"; id: string; approvalId: string; tool: string; detail: string; risk?: "warn" | "danger"; danger?: boolean }
   | { type: "approval-resolved"; approvalId: string; decision: "once" | "always" | "reject" }
   | { type: "timer-set"; afterSeconds: number; reminder: string; label?: string; onExpire: "wait" | "interrupt" }
   | { type: "timer-cancel"; reason?: string }

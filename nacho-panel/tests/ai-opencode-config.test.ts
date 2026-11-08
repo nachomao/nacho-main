@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { buildOpencodeConfig } from "../lib/ai/opencode-config"
+import { buildOpencodeConfig, NACHO_MCP_TIMEOUT_MS } from "../lib/ai/opencode-config"
 import { defaultStoredSettings } from "../lib/ai/settings-schema"
 
 test("opencode config contains no secrets and points at panel proxies", () => {
@@ -27,6 +27,7 @@ test("opencode config contains no secrets and points at panel proxies", () => {
   const nacho = provider.nacho as Record<string, unknown>
   assert.equal((nacho.options as Record<string, unknown>).baseURL, "http://127.0.0.1:3100/api/ai/provider/v1")
   assert.equal((nacho.options as Record<string, unknown>).apiKey, "{env:NACHO_PROXY_TOKEN}")
+  assert.equal((nacho.options as Record<string, unknown>).timeout, 600_000)
   assert.equal(Boolean((nacho.models as Record<string, unknown>)["my-model"]), true)
   assert.equal(Boolean((nacho.models as Record<string, unknown>)["gpt-5.2"]), true)
   const customModel = (nacho.models as Record<string, Record<string, unknown>>)["my-model"]
@@ -37,6 +38,7 @@ test("opencode config contains no secrets and points at panel proxies", () => {
   assert.deepEqual(customModel.modalities, { input: ["text", "image"], output: ["text"] })
   const mcp = built.config.mcp as Record<string, Record<string, unknown>>
   assert.equal(mcp.nacho.url, "http://127.0.0.1:3100/api/ai/mcp")
+  assert.equal(mcp.nacho.timeout, NACHO_MCP_TIMEOUT_MS)
   assert.equal((mcp.nacho.headers as Record<string, string>).Authorization, "Bearer {env:NACHO_BROKER_TOKEN}")
   assert.equal((mcp.m1.headers as Record<string, string>).Authorization, "Bearer {env:NACHO_MCP_0_TOKEN}")
   assert.equal(built.mcpEnv.NACHO_MCP_0_TOKEN, "mcp-secret-token")

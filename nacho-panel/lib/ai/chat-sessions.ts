@@ -27,6 +27,8 @@ export function buildPermissionRules(confirmDanger: boolean): OpenCodePermission
   for (const readTool of ["read", "glob", "grep", "list", "todowrite"]) {
     rules.push({ permission: readTool, pattern: "*", action: "allow" })
   }
+  // 工作区外的路径（read/edit/glob/grep 与路径型 bash）必须人工确认；opencode 默认就是 ask，这里显式固定。
+  rules.push({ permission: "external_directory", pattern: "*", action: "ask" })
   rules.push({ permission: "bash", pattern: "*", action: confirmDanger ? "ask" : "allow" })
   rules.push({ permission: "edit", pattern: "*", action: confirmDanger ? "ask" : "allow" })
   rules.push({ permission: "write", pattern: "*", action: confirmDanger ? "ask" : "allow" })
@@ -41,7 +43,8 @@ export function buildPermissionRules(confirmDanger: boolean): OpenCodePermission
 }
 
 function permissionKey(confirmDanger: boolean) {
-  return confirmDanger ? "ask" : "allow"
+  // 规则内容变化时提升版本，让已存在的内存会话在下一轮重新应用权限。
+  return confirmDanger ? "ask:2" : "allow:2"
 }
 
 export async function ensureChatSession(
@@ -174,6 +177,10 @@ export function clearActiveChat(turnId?: string | null) {
 
 export function getActiveChat() {
   return active
+}
+
+export function getActiveTurnId() {
+  return activeTurnId
 }
 
 export function pruneChatSessions(maxAgeMs = 8 * 60 * 60 * 1000) {

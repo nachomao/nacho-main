@@ -25,6 +25,8 @@ import {
   isDesktopEnvironment,
 } from "./runtime-paths"
 import { redactSecrets } from "./redact"
+import { imageNameMatches, parseTasklistCsv, runtimeImageName } from "./process-identity"
+import { RuntimeLifecycle, RuntimeStartCancelledError } from "./runtime-lifecycle"
 import { getAISettingsStore } from "./settings-store"
 import type { StoredAIConfig } from "./settings-schema"
 
@@ -46,6 +48,7 @@ export type RuntimeHandle = {
   proxyToken: string
   brokerToken: string
   version: string
+  binaryName: string
   startedAt: number
   mcpEnv: Record<string, string>
 }
@@ -57,10 +60,7 @@ export class AIRuntimeError extends Error {
   }
 }
 
-let current: RuntimeHandle | null = null
-let starting: Promise<RuntimeHandle> | null = null
-let stale = false
-let lastError: string | null = null
+const spawnedChildren = new Set<ChildProcess>()
 
 function basicHeader(username: string, password: string) {
   return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`
@@ -92,6 +92,24 @@ function killTree(pid: number) {
   }
 }
 
+function processImageName(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  if (process.platform !== "win32") {
+    try {
+      return fs.readlinkSync(`/proc/${pid}/exe`).split(/[\\/]/).pop() || null
+    } catch {
+      return null
+    }
+  }
+  const result = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], {
+    windowsHide: true,
+    encoding: "utf8",
+    timeout: 5_000,
+  })
+  if (result.status !== 0 || !result.stdout) return null
+  return parseTasklistCsv(result.stdout).find((row) => row.pid === pid)?.imageName ?? null
+}
+
 function runtimeFile() {
   return getAIRuntimePath()
 }
@@ -111,6 +129,7 @@ async function writeRuntimeState(handle: RuntimeHandle | null, error?: string) {
     url: handle.url,
     engineVersion: handle.version,
     startedAt: handle.startedAt,
+    binaryName: handle.binaryName,
     state: error ? "error" : "ready",
     ...(error ? { error } : {}),
   })}\n`, { encoding: "utf8", mode: 0o600 })
@@ -120,12 +139,18 @@ async function writeRuntimeState(handle: RuntimeHandle | null, error?: string) {
 
 async function cleanupStaleRuntime() {
   const file = runtimeFile()
+  let state: { pid?: unknown; binaryName?: unknown } | null = null
   try {
     const raw = await fsp.readFile(file, "utf8")
-    const state = JSON.parse(raw) as { pid?: unknown }
-    if (typeof state.pid === "number" && Number.isInteger(state.pid)) killTree(state.pid)
+    state = JSON.parse(raw) as { pid?: unknown; binaryName?: unknown }
   } catch {
     // missing or corrupt
+  }
+  if (state && typeof state.pid === "number" && Number.isInteger(state.pid) && state.pid > 0) {
+    const expected = runtimeImageName(state, getOpencodeBinary())
+    if (expected && imageNameMatches(processImageName(state.pid), expected)) {
+      killTree(state.pid)
+    }
   }
   await fsp.unlink(file).catch(() => undefined)
 }
@@ -161,10 +186,22 @@ function childEnvironment(settings: StoredAIConfig, handle: Pick<RuntimeHandle, 
   return env
 }
 
-async function waitForHealth(url: string, username: string, password: string, child: ChildProcess, timeoutMs = 30_000) {
+async function waitForHealth(
+  url: string,
+  username: string,
+  password: string,
+  child: ChildProcess,
+  signal: AbortSignal,
+  spawnError: () => Error | null,
+  timeoutMs = 30_000,
+) {
   const deadline = Date.now() + timeoutMs
   let lastError = "AI 引擎未就绪"
   while (Date.now() < deadline) {
+    if (signal.aborted) throw new RuntimeStartCancelledError()
+    const failure = spawnError()
+    if (failure) throw failure
+    if (!child.pid) throw new Error("AI 引擎无法启动")
     if (child.exitCode !== null) throw new Error(`AI 引擎提前退出（code=${child.exitCode}）`)
     try {
       const response = await fetch(`${url}/global/health`, {
@@ -177,10 +214,12 @@ async function waitForHealth(url: string, username: string, password: string, ch
       }
       lastError = `AI 引擎健康检查失败（HTTP ${response.status}）`
     } catch (error) {
+      if (signal.aborted) throw new RuntimeStartCancelledError()
       lastError = error instanceof Error ? error.message : "AI 引擎健康检查失败"
     }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
+  if (signal.aborted) throw new RuntimeStartCancelledError()
   throw new Error(lastError)
 }
 
@@ -193,7 +232,8 @@ function logTail(secrets: string[]) {
   }
 }
 
-async function startRuntime(): Promise<RuntimeHandle> {
+async function startRuntime(signal: AbortSignal): Promise<RuntimeHandle> {
+  if (signal.aborted) throw new RuntimeStartCancelledError()
   if (!isDesktopEnvironment()) throw new AIRuntimeError("AI Mode 仅支持 Windows 桌面版", "desktop-only")
   if (!hasOpencodeBinary()) throw new AIRuntimeError("未找到 AI 引擎", "not-installed")
   if (!getCredentialProtectorPath()) throw new AIRuntimeError("缺少 Windows 凭据保护组件", "desktop-only")
@@ -203,8 +243,10 @@ async function startRuntime(): Promise<RuntimeHandle> {
   if (!settings.enabled) throw new AIRuntimeError("AI Mode 已在设置中停用", "not-configured")
   if (!settings.baseUrl || !settings.apiKey) throw new AIRuntimeError("请先配置 API 地址与 API Key", "not-configured")
   if (!model) throw new AIRuntimeError("请先选择模型", "not-configured")
+  if (signal.aborted) throw new RuntimeStartCancelledError()
 
   await cleanupStaleRuntime()
+  if (signal.aborted) throw new RuntimeStartCancelledError()
   ensureAIDirectories()
   const workspace = getAIWorkspacePath()
   const port = await freePort()
@@ -213,6 +255,7 @@ async function startRuntime(): Promise<RuntimeHandle> {
   const proxyToken = randomBytes(24).toString("hex")
   const brokerToken = randomBytes(24).toString("hex")
   const url = `http://127.0.0.1:${port}`
+  const binaryName = path.basename(getOpencodeBinary()) || "opencode.exe"
 
   const built = buildOpencodeConfig(settings, {
     panelBaseUrl: getPanelLocalBaseUrl(),
@@ -233,64 +276,75 @@ async function startRuntime(): Promise<RuntimeHandle> {
     // no log yet
   }
   const logStream = fs.createWriteStream(logPath, { flags: "a", mode: 0o600 })
+  logStream.on("error", () => undefined)
   logStream.write(`\n=== ${new Date().toISOString()} AI engine (${built.model}) ===\n`)
 
-  const handleBase = {
-    proxyToken,
-    brokerToken,
-    mcpEnv: built.mcpEnv,
-  }
-  const child = spawn(getOpencodeBinary(), [
-    "serve",
-    "--pure",
-    "--hostname", "127.0.0.1",
-    "--port", String(port),
-  ], {
-    cwd: workspace,
-    env: childEnvironment(settings, handleBase, password) as NodeJS.ProcessEnv,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-  child.stdout?.pipe(logStream, { end: false })
-  child.stderr?.pipe(logStream, { end: false })
-
   const secrets = [settings.apiKey, proxyToken, brokerToken, ...Object.values(built.mcpEnv)]
-  const startingHandle: RuntimeHandle = {
-    child,
-    pid: child.pid || 0,
-    port,
-    url,
-    username,
-    password,
-    proxyToken,
-    brokerToken,
-    version: "starting",
-    startedAt: Date.now(),
-    mcpEnv: built.mcpEnv,
-  }
-  await writeRuntimeState(startingHandle)
+  let child: ChildProcess | null = null
   try {
-    const health = await waitForHealth(url, username, password, child)
+    if (signal.aborted) throw new RuntimeStartCancelledError()
+    child = spawn(getOpencodeBinary(), [
+      "serve",
+      "--pure",
+      "--hostname", "127.0.0.1",
+      "--port", String(port),
+    ], {
+      cwd: workspace,
+      env: childEnvironment(settings, { proxyToken, brokerToken, mcpEnv: built.mcpEnv }, password) as NodeJS.ProcessEnv,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    spawnedChildren.add(child)
+    let spawnError: Error | null = null
+    child.once("error", (error) => {
+      spawnError = error
+      logStream.write(`\n=== AI engine spawn error: ${error.message} ===\n`)
+    })
+    child.stdout?.on("error", () => undefined)
+    child.stderr?.on("error", () => undefined)
+    child.stdout?.pipe(logStream, { end: false })
+    child.stderr?.pipe(logStream, { end: false })
+
+    const startingHandle: RuntimeHandle = {
+      child,
+      pid: child.pid || 0,
+      port,
+      url,
+      username,
+      password,
+      proxyToken,
+      brokerToken,
+      version: "starting",
+      binaryName,
+      startedAt: Date.now(),
+      mcpEnv: built.mcpEnv,
+    }
+    await writeRuntimeState(startingHandle)
+    const health = await waitForHealth(url, username, password, child, signal, () => spawnError)
+    if (signal.aborted) throw new RuntimeStartCancelledError()
+    if (child.exitCode !== null) throw new Error(`AI 引擎提前退出（code=${child.exitCode}）`)
     const handle: RuntimeHandle = { ...startingHandle, version: health.version }
-    child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-      logStream.write(`\n=== AI engine exited code=${code} signal=${signal} ===\n`)
+    const spawned = child
+    spawned.once("exit", (code: number | null, exitSignal: NodeJS.Signals | null) => {
+      logStream.write(`\n=== AI engine exited code=${code} signal=${exitSignal} ===\n`)
       logStream.end()
-      if (current?.child === child) {
-        current = null
-        lastError = `AI 引擎已退出（${code ?? signal ?? "unknown"}）`
-        void writeRuntimeState(null)
+      spawnedChildren.delete(spawned)
+      if (runtimeLifecycle.getCurrent()?.child === spawned) {
+        runtimeLifecycle.invalidate(`AI 引擎已退出（${code ?? exitSignal ?? "unknown"}）`)
+        void writeRuntimeState(null).catch(() => undefined)
       }
     })
     await writeRuntimeState(handle)
-    current = handle
-    lastError = null
-    stale = false
     return handle
   } catch (error) {
-    killTree(child.pid || 0)
+    if (child) {
+      spawnedChildren.delete(child)
+      killTree(child.pid || 0)
+    }
     logStream.write(`\n=== AI engine start failed: ${error instanceof Error ? error.message : "unknown"} ===\n`)
     logStream.end()
-    await writeRuntimeState(null)
+    await writeRuntimeState(null).catch(() => undefined)
+    if (signal.aborted || error instanceof RuntimeStartCancelledError) throw new RuntimeStartCancelledError()
     const tail = logTail(secrets)
     throw new AIRuntimeError(
       `AI 引擎启动失败：${redactSecrets(error instanceof Error ? error.message : "未知错误", secrets)}${tail ? `\n${tail}` : ""}`,
@@ -299,52 +353,49 @@ async function startRuntime(): Promise<RuntimeHandle> {
   }
 }
 
+const runtimeLifecycle = new RuntimeLifecycle<RuntimeHandle>({
+  start: (signal) => startRuntime(signal),
+  terminate: async (handle) => {
+    killTree(handle.pid)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  },
+})
+
 export async function ensureRuntime(): Promise<RuntimeHandle> {
-  if (current && !stale) return current
-  if (starting) return starting
-  starting = (async () => {
-    if (current) await stopRuntime()
-    const handle = await startRuntime()
-    starting = null
-    return handle
-  })()
   try {
-    return await starting
+    return await runtimeLifecycle.ensure()
   } catch (error) {
-    starting = null
-    lastError = error instanceof Error ? error.message : "AI 引擎启动失败"
+    if (error instanceof RuntimeStartCancelledError) {
+      throw new AIRuntimeError("AI 引擎启动已取消", "start-failed")
+    }
     throw error
   }
 }
 
 export async function stopRuntime() {
-  const handle = current
-  current = null
-  starting = null
-  if (handle) {
-    killTree(handle.pid)
-    await new Promise((resolve) => setTimeout(resolve, 200))
-  }
-  await writeRuntimeState(null)
+  await runtimeLifecycle.stop(() => writeRuntimeState(null).catch(() => undefined))
 }
 
 export function markRuntimeStale() {
-  stale = true
+  runtimeLifecycle.markStale()
 }
 
 export function getRuntimeStatus(): AIRuntimeStatus {
+  const current = runtimeLifecycle.getCurrent()
   if (current) return { state: "ready", version: current.version }
-  if (starting) return { state: "starting" }
-  if (lastError) return { state: "error", error: lastError }
+  if (runtimeLifecycle.isStarting()) return { state: "starting" }
+  const failure = runtimeLifecycle.getFailure()
+  if (failure) return { state: "error", error: failure }
   return { state: "stopped" }
 }
 
 export function getRuntimeTokens(): { proxyToken: string; brokerToken: string } | null {
+  const current = runtimeLifecycle.getCurrent()
   return current ? { proxyToken: current.proxyToken, brokerToken: current.brokerToken } : null
 }
 
 export function getRuntimeHandle() {
-  return current
+  return runtimeLifecycle.getCurrent()
 }
 
 export function getRuntimeDataDirectory() {
@@ -352,5 +403,7 @@ export function getRuntimeDataDirectory() {
 }
 
 process.once("exit", () => {
+  const current = runtimeLifecycle.getCurrent()
   if (current) killTree(current.pid)
+  for (const child of spawnedChildren) killTree(child.pid || 0)
 })

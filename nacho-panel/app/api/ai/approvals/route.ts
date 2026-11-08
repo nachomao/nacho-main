@@ -1,8 +1,13 @@
 import type { NextRequest } from "next/server"
 import { AIHttpError, aiError, aiJson, readJsonBody, requireDesktop, requireJsonRequest, requireSameOrigin } from "@/lib/ai/http"
-import { resolveBrokerApproval, type ApprovalDecision } from "@/lib/ai/approvals"
+import {
+  forgetPendingPermission,
+  hasPendingPermission,
+  resolveBrokerApproval,
+  type ApprovalDecision,
+} from "@/lib/ai/approvals"
 import { getChatSession } from "@/lib/ai/chat-sessions"
-import { createOpencodeClient } from "@/lib/ai/opencode-client"
+import { createOpencodeClient, OpenCodeError } from "@/lib/ai/opencode-client"
 import { getRuntimeHandle } from "@/lib/ai/runtime"
 
 export const runtime = "nodejs"
@@ -28,10 +33,21 @@ export async function POST(request: NextRequest) {
   if (!session) return aiError("AI 会话不存在或已结束", 409, "session-gone")
 
   if (approvalId.startsWith("oc:")) {
+    if (!hasPendingPermission(uiSessionId, approvalId)) {
+      return aiError("审批已过期或不存在", 409, "approval-gone")
+    }
     const runtime = getRuntimeHandle()
     if (!runtime) return aiError("AI 引擎未运行", 409, "runtime-gone")
+    forgetPendingPermission(uiSessionId, approvalId)
     const client = createOpencodeClient(runtime)
-    await client.replyPermission(session.opencodeSessionId, approvalId.slice(3), decision)
+    try {
+      await client.replyPermission(session.opencodeSessionId, approvalId.slice(3), decision)
+    } catch (error) {
+      if (error instanceof OpenCodeError && error.status === 404) {
+        return aiError("审批已过期或不存在", 409, "approval-gone")
+      }
+      return aiError("提交审批结果失败", 502, "approval-failed")
+    }
     return aiJson({ ok: true, data: { resolved: true } })
   }
   const resolved = resolveBrokerApproval(uiSessionId, approvalId, decision as ApprovalDecision)

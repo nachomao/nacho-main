@@ -37,8 +37,14 @@ test("permission rules default to ask, allow reads and let the broker own Nacho 
   assert.equal(last("bash")?.action, "ask")
   assert.equal(last("webfetch")?.action, "deny")
   assert.equal(last("nacho_run_shell")?.action, "allow")
+  assert.equal(last("external_directory")?.action, "ask")
+  const externalIndex = askRules.findIndex((rule) => rule.permission === "external_directory")
+  const lastReadIndex = askRules.map((rule) => rule.permission).lastIndexOf("read")
+  assert.ok(externalIndex > lastReadIndex, "external_directory ask must follow read allow")
+
   const allowRules = buildPermissionRules(false)
   assert.equal([...allowRules].reverse().find((rule) => rule.permission === "bash")?.action, "allow")
+  assert.equal([...allowRules].reverse().find((rule) => rule.permission === "external_directory")?.action, "ask")
 })
 
 test("old turn abort/cleanup cannot clear a new active turn", () => {
@@ -105,7 +111,7 @@ test("chat session is reused and permission rules are updated when confirmDanger
       confirmDanger: false,
     }, mapStore)
     assert.equal(updated, 1)
-    assert.equal(getChatSession(uiSessionId)?.permissionKey, "allow")
+    assert.equal(getChatSession(uiSessionId)?.permissionKey, "allow:2")
     forgetChatSession(uiSessionId)
     assert.equal(getChatSession(uiSessionId), null)
   })
@@ -134,7 +140,7 @@ test("persisted mapping is adopted after a restart and permission rules are re-a
       confirmDanger: true,
     }, mapStore)
     assert.equal(session.opencodeSessionId, "ses_saved")
-    assert.equal(session.permissionKey, "ask")
+    assert.equal(session.permissionKey, "ask:2")
     assert.equal(updated, 1)
     assert.equal((await mapStore.get(uiSessionId))?.opencodeSessionId, "ses_saved")
     forgetChatSession(uiSessionId)

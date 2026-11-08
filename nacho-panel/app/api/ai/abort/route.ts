@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server"
 import { AIHttpError, aiError, aiJson, readJsonBody, requireDesktop, requireJsonRequest, requireSameOrigin } from "@/lib/ai/http"
-import { denyAllPending } from "@/lib/ai/approvals"
+import { clearPendingPermissions, denyAllPending } from "@/lib/ai/approvals"
 import { clearActiveChat, getActiveChat, getChatSession, isActiveTurn } from "@/lib/ai/chat-sessions"
 import { createOpencodeClient } from "@/lib/ai/opencode-client"
 import { getRuntimeHandle } from "@/lib/ai/runtime"
@@ -27,7 +27,8 @@ export async function POST(request: NextRequest) {
   // 带 turnId 时只允许中止仍属于该回合的请求，避免“停止后立即重发”时旧 abort 杀掉新回合。
   const shouldAbort = turnId ? isActiveTurn(uiSessionId, turnId) : Boolean(session)
   if (!shouldAbort) return aiJson({ ok: true, data: { aborted: false } })
-  denyAllPending(uiSessionId)
+  denyAllPending(uiSessionId, turnId || undefined)
+  clearPendingPermissions(uiSessionId)
   const runtime = getRuntimeHandle()
   if (runtime && session) {
     const client = createOpencodeClient(runtime)
