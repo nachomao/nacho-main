@@ -42,7 +42,7 @@ export function TaskTimeline({
   })
 
   return (
-    <section aria-label="未来 24 小时执行计划" className="mb-4 rounded-2xl border border-task-line bg-task-tile p-4">
+    <section aria-label="未来 24 小时执行计划" className="mb-4 rounded-2xl border border-task-line bg-task-tile px-4 pb-3 pt-3.5">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h3 className="text-sm font-semibold">未来 24 小时</h3>
         <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -73,7 +73,7 @@ export function TaskTimeline({
         </ul>
       </div>
 
-      <div className="relative mt-2 h-16 sm:h-24">
+      <div className="relative mt-1 h-14 sm:h-[4.5rem]">
         {/* 基线与刻度 */}
         <div className="absolute inset-x-0 bottom-6 h-px bg-border" aria-hidden="true" />
         {TICKS.map((h) => (
@@ -110,7 +110,7 @@ export function TaskTimeline({
         {markers.map(({ task, pct, lane, imminent }) => {
           const alignRight = pct > 82
           const alignLeft = pct < 8
-          const stem = 14 + lane * 24
+            const stem = 10 + lane * 20
           const clock = formatTaskRunClock(task.nextRunAt, task.timezone || "UTC")
           return (
             <button

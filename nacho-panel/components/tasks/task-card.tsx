@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, Loader2, Pencil, Play, Repeat, Server, Sparkles, Trash2, Zap } from "lucide-react"
+import { AlertTriangle, Loader2, Pencil, Play, Repeat, Server, Sparkles, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   formatTaskRemaining,
@@ -9,6 +9,7 @@ import {
   taskRunStatusLabel,
   taskScheduleProgress,
 } from "@/lib/task-schedule-format"
+import { TaskDial } from "./task-dial"
 import { isEventTrigger, osMeta, taskPath, triggerSummary, type ScheduledTask } from "./task-model"
 
 const IMMINENT_MS = 60 * 60 * 1000
@@ -142,112 +143,75 @@ export function TaskCard({
         </button>
       </header>
 
-      {/* 下次执行：时间 + 倒计时 + 周期进度 */}
-      <div className="mx-4 mt-4 rounded-xl border border-task-line bg-background/40 p-3.5">
-        {scheduled ? (
-          <>
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
-              <div className="flex items-baseline gap-2 whitespace-nowrap">
-                <span
-                  className={cn(
-                    "font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums sm:text-3xl",
-                    imminent ? "text-warning" : "text-foreground",
-                  )}
-                >
-                  {nextClock}
-                </span>
-                <span className="font-mono text-xs text-muted-foreground" title={nextRunText ?? undefined}>
-                  {nextRunText?.slice(5, 10)}
-                </span>
-              </div>
-              <div className="whitespace-nowrap leading-tight sm:text-right">
-                <p className="text-[11px] text-muted-foreground">距下次执行</p>
-                <p className={cn("mt-0.5 text-sm font-medium tabular-nums", imminent ? "text-warning" : "text-foreground")}>
-                  {remaining}
-                </p>
-              </div>
-            </div>
-            <div
-              className="mt-3 h-1.5 overflow-hidden rounded-full bg-foreground/10"
-              role="progressbar"
-              aria-label="当前周期进度"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(progress * 100)}
-            >
-              <div
-                className={cn(
-                  "h-full rounded-full transition-[width] duration-700 ease-out",
-                  imminent ? "bg-warning" : "bg-primary",
-                )}
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-          </>
-        ) : (
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-foreground/5 text-muted-foreground">
-              {task.enabled && eventTrigger ? <Zap className="h-4 w-4" aria-hidden="true" /> : <Repeat className="h-4 w-4" aria-hidden="true" />}
-            </span>
-            <div className="min-w-0 leading-tight">
-              <p className="text-base font-semibold text-foreground">
-                {!task.enabled ? "已停用" : eventTrigger ? "事件触发" : "待排期"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {!task.enabled
-                  ? "启用后由服务端重新计算下次执行"
-                  : eventTrigger
-                    ? `由客户端事件驱动 · ${schedule}`
-                    : "等待服务端计算下次执行时间"}
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* 计时表盘 + 排期明细 */}
+      <div className="flex flex-col gap-4 px-4 pb-3 pt-3 sm:flex-row sm:items-center sm:gap-5">
+        <TaskDial
+          progress={progress}
+          tone={scheduled ? (imminent ? "warning" : "primary") : "idle"}
+          label={scheduled ? "下次执行" : "任务状态"}
+          value={scheduled ? (nextClock as string) : !task.enabled ? "已停用" : eventTrigger ? "事件触发" : "未排期"}
+          caption={
+            scheduled
+              ? remaining === "已到期"
+                ? "已到期，等待下发"
+                : `还有 ${remaining}`
+              : !task.enabled
+                ? "启用后重新排期"
+                : eventTrigger
+                  ? schedule
+                  : "等待服务端计算"
+          }
+        />
 
-      {/* 排期明细 */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 pt-3.5 sm:grid-cols-3">
-        <div className="min-w-0">
-          <dt className="text-[11px] text-muted-foreground">周期</dt>
-          <dd className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] font-medium">
-            <Repeat className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="truncate" title={schedule}>
-              {schedule}
-            </span>
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-[11px] text-muted-foreground">最近执行</dt>
-          <dd className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] font-medium">
-            <span className="font-mono tabular-nums" title={lastRunText ?? undefined}>
-              {lastRunText ? lastRunText.slice(5) : "—"}
-            </span>
-            <span
-              className={cn(
-                "whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium",
-                statusTone[lastStatus ?? "none"],
-              )}
-            >
-              {taskRunStatusLabel(lastStatus)}
-            </span>
-          </dd>
-        </div>
-        <div className="col-span-2 min-w-0 sm:col-span-1">
-          <dt className="text-[11px] text-muted-foreground">目标</dt>
-          <dd className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] font-medium">
-            <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="shrink-0">{task.clientIds.length} 台</span>
-            <span className="truncate font-normal text-muted-foreground" title={`时区：${timezone}`}>
-              · {timezone}
-            </span>
-          </dd>
-        </div>
-      </dl>
+        <dl className="flex min-w-0 flex-1 flex-col text-[13px]">
+          <div className="flex items-center justify-between gap-3 border-b border-task-line py-2">
+            <dt className="shrink-0 text-xs text-muted-foreground">下次</dt>
+            <dd className="truncate font-mono font-medium tabular-nums" title={nextRunText ?? undefined}>
+              {scheduled ? nextRunText : "—"}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-task-line py-2">
+            <dt className="shrink-0 text-xs text-muted-foreground">周期</dt>
+            <dd className="flex min-w-0 items-center gap-1.5 font-medium">
+              <Repeat className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate" title={schedule}>
+                {schedule}
+              </span>
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-b border-task-line py-2">
+            <dt className="shrink-0 text-xs text-muted-foreground">最近</dt>
+            <dd className="flex min-w-0 items-center gap-1.5 font-medium">
+              <span className="truncate font-mono tabular-nums" title={lastRunText ?? undefined}>
+                {lastRunText ? lastRunText.slice(5) : "—"}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium",
+                  statusTone[lastStatus ?? "none"],
+                )}
+              >
+                {taskRunStatusLabel(lastStatus)}
+              </span>
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-3 py-2">
+            <dt className="shrink-0 text-xs text-muted-foreground">目标</dt>
+            <dd className="flex min-w-0 items-center gap-1.5 font-medium">
+              <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="shrink-0">{task.clientIds.length} 台</span>
+              <span className="truncate font-normal text-muted-foreground" title={`时区：${timezone}`}>
+                · {timezone}
+              </span>
+            </dd>
+          </div>
+        </dl>
+      </div>
 
       {showError && (
         <p
           className={cn(
-            "mx-4 mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed",
+            "mx-4 mb-3 mt-1 flex items-start gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed",
             lastStatus === "failed" ? "bg-negative/10 text-negative" : "bg-warning/10 text-warning",
           )}
           title={task.lastError ?? undefined}
@@ -258,7 +222,7 @@ export function TaskCard({
       )}
 
       {/* 操作 */}
-      <footer className="mt-auto flex items-center justify-between gap-2 p-4 pt-4">
+      <footer className="mt-auto flex items-center justify-between gap-2 border-t border-task-line p-4 pt-3.5">
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <Play className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span className="truncate">{task.action}</span>
