@@ -78,6 +78,8 @@
   --color-negative: var(--negative);
   --color-warning: var(--warning);
   --color-surface: var(--surface);
+  --color-task-tile: var(--task-tile);
+  --color-task-line: var(--task-line);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -106,6 +108,9 @@
   --negative: oklch(0.65 0.2 25);
   --warning: oklch(0.8 0.15 75);
   --radius: 0.75rem;
+  /* 计划任务页：卡片底色随主题的 --card 与 --background 混合，切换主题时自动跟随 */
+  --task-tile: color-mix(in oklch, var(--card) 55%, var(--background));
+  --task-line: oklch(1 0 0 / 7%);
 }
 
 /* ---------- 涓婚鑹诧細閫氳繃 <html data-theme="..."> 鍒囨崲 ----------

@@ -10,22 +10,18 @@ import {
   Clock,
   RotateCw,
   FileTerminal,
-  ListChecks,
   Loader2,
   LogIn,
   Monitor,
   MonitorCheck,
   Pencil,
-  Play,
   Plus,
   Power,
   Repeat,
   Server,
   Settings2,
-  Sparkles,
   Tag,
   Terminal,
-  Trash2,
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -33,15 +29,10 @@ import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useServerData } from "@/components/server-data-context"
 import { usePanelResource } from "@/components/use-panel-resource"
 import type { Client as PanelClient } from "@/components/clients/client-data"
-import {
-  formatTaskRemaining,
-  formatTaskRunClock,
-  formatTaskRunDateTime,
-  taskRunStatusLabel,
-  taskScheduleProgress,
-  type TaskLastStatus,
-} from "@/lib/task-schedule-format"
 import { useTasks, type OSType } from "./tasks-context"
+import { osMeta, triggerSummary, type ScheduledTask, type TriggerId } from "./task-model"
+import { TaskCard } from "./task-card"
+import { TaskTimeline } from "./task-timeline"
 
 /* ---------- 通用面板外壳：与脚本安装 / 客户端面板保持一致 ---------- */
 function PanelShell({
@@ -123,21 +114,7 @@ function groupClientsByOS(clients: PanelClient[]): Record<OSType, TaskClient[]> 
   return grouped
 }
 
-/* ---------- 操作系统展示元数据 ---------- */
-export const osMeta: Record<OSType, { label: string; icon: typeof Monitor; pathHint: string; pathPlaceholder: string }> = {
-  windows: {
-    label: "Windows",
-    icon: Monitor,
-    pathHint: "目标客户端上的绝对路径，例如 C:\\Scripts\\backup.bat",
-    pathPlaceholder: "C:\\Scripts\\backup.bat",
-  },
-  linux: {
-    label: "Linux",
-    icon: Terminal,
-    pathHint: "目标主机上的绝对路径，例如 /opt/scripts/backup.sh",
-    pathPlaceholder: "/opt/scripts/backup.sh",
-  },
-}
+export { osMeta }
 
 /* ---------- 触发器类型（按操作系统区分） ---------- */
 type TriggerKind = "interval" | "event" | "cron"
@@ -158,54 +135,8 @@ const triggersByOS: Record<OSType, readonly TriggerDef[]> = {
   ],
 }
 
-type TriggerId = "daily" | "weekly" | "logon" | "startup" | "boot" | "cron"
-
 function findTrigger(os: OSType, id: TriggerId): TriggerDef {
   return triggersByOS[os].find((t) => t.id === id) ?? triggersByOS[os][0]
-}
-
-function triggerSummary(os: OSType, id: TriggerId, time: string, interval: number, cron: string) {
-  switch (id) {
-    case "daily":
-      return `每 ${interval} 天 · ${time}`
-    case "weekly":
-      return `每 ${interval} 周 · ${time}`
-    case "logon":
-      return "用户登录时"
-    case "startup":
-      return "系统启动时"
-    case "boot":
-      return "开机时（@reboot）"
-    case "cron":
-      return `Cron · ${cron}`
-    default:
-      return time
-  }
-}
-
-/* ---------- 已有任务 ---------- */
-type ScheduledTask = {
-  id: string
-  name: string
-  os: OSType
-  action: string
-  /* 原始字段，便于编辑时精确回填 */
-  program: string
-  args: string
-  triggerId: TriggerId
-  time: string
-  interval: number
-  cron: string
-  /** IANA 时区；旧版服务端可能不返回 */
-  timezone?: string
-  clientIds: string[]
-  enabled: boolean
-  /* 服务端调度状态（旧版服务端可能不返回） */
-  nextRunAt?: number | null
-  lastRunAt?: number | null
-  lastStatus?: TaskLastStatus
-  lastError?: string | null
-  createdAt?: number
 }
 
 const COMMON_TIMEZONES = ["UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"]
@@ -226,11 +157,6 @@ function supportedTimezones(): string[] {
   } catch {
     return Array.from(new Set(["UTC", browserTimezone(), ...COMMON_TIMEZONES]))
   }
-}
-
-/* 由程序 + 参数拼出展示路径 */
-function taskPath(t: Pick<ScheduledTask, "program" | "args">) {
-  return t.args.trim() ? `${t.program} ${t.args}`.trim() : t.program
 }
 
 /* 为指定系统生成空白任务草稿 */
@@ -610,7 +536,7 @@ function TaskFormDialog({
                   className={cn(
                     "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all duration-200",
                     checked
-                      ? "border-primary bg-primary/12 shadow-[0_0_0_3px_oklch(0.82_0.19_145_/_12%)]"
+                      ? "border-primary bg-primary/12 shadow-[0_0_0_3px_color-mix(in_oklch,var(--primary)_12%,transparent)]"
                       : "border-border bg-surface/60 hover:bg-surface",
                   )}
                 >
@@ -691,12 +617,16 @@ export function TasksView() {
   const createInitial = useMemo(() => blankTask(createOS ?? "windows"), [createOS])
 
   // 自动调度会推进 nextRunAt；页面可见时定期静默刷新，避免长期停留后显示过期时间。
+  // now 同步推进，让倒计时、周期进度与 24 小时时间轴在两次刷新之间也保持准确。
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timer = setInterval(() => {
+      setNow(Date.now())
       if (document.visibilityState === "visible") void reload()
     }, 30_000)
     return () => clearInterval(timer)
   }, [reload])
+  useEffect(() => setNow(Date.now()), [tasks])
 
   const filtered = osFilter === "all" ? tasks : tasks.filter((t) => t.os === osFilter)
   const counts = {
@@ -764,6 +694,12 @@ export function TasksView() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /* 时间轴点击：滚动到对应任务卡片并短暂高亮 */
+  const focusTask = (id: string) => {
+    document.getElementById(`task-${id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    flash(id)
   }
 
   const startEdit = (t: ScheduledTask) => {
@@ -875,228 +811,26 @@ export function TasksView() {
             </button>
           </div>
         ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {filtered.map((t) => {
-              const isRemoving = removing.includes(t.id)
-              const isFlash = flashId === t.id
-              const isEditing = editing?.id === t.id
-              const isBusy = busyIds.includes(t.id)
-              const timezone = t.timezone || "UTC"
-              const nextRunText = formatTaskRunDateTime(t.nextRunAt, timezone)
-              const lastRunText = formatTaskRunDateTime(t.lastRunAt, timezone)
-              const nextClock = formatTaskRunClock(t.nextRunAt, timezone)
-              const remaining = formatTaskRemaining(t.nextRunAt)
-              const progress = taskScheduleProgress({
-                enabled: t.enabled,
-                nextRunAt: t.nextRunAt,
-                lastRunAt: t.lastRunAt,
-                createdAt: t.createdAt,
-              })
-              const eventTrigger = t.triggerId === "logon" || t.triggerId === "startup" || t.triggerId === "boot"
-              const lastStatus = t.lastStatus ?? null
-              const gaugeValue = !t.enabled ? "未排期" : eventTrigger ? "事件触发" : nextClock ?? "待排期"
-              const gaugeHint = !t.enabled
-                ? "已停用"
-                : eventTrigger
-                  ? "由客户端事件驱动"
-                  : remaining
-                    ? `距下次 ${remaining}`
-                    : "暂无排期"
-              return (
-                <article
+          <>
+            <TaskTimeline tasks={filtered} now={now} onPick={focusTask} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {filtered.map((t) => (
+                <TaskCard
                   key={t.id}
-                  className={cn(
-                    "flex flex-col rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
-                    isRemoving
-                      ? "scale-95 opacity-0 blur-sm"
-                      : isFlash || isEditing
-                        ? "border-primary bg-primary/10 shadow-[0_0_0_3px_oklch(0.82_0.19_145_/_15%)]"
-                        : "border-border hover:bg-surface",
-                  )}
-                  style={{ maxHeight: isRemoving ? 0 : 1200, marginBottom: isRemoving ? -10 : 0 }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background/40 sm:h-10 sm:w-10">
-                        {(() => {
-                          const OSIcon = osMeta[t.os].icon
-                          return <OSIcon className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                        })()}
-                      </span>
-                      <div className="min-w-0 leading-tight">
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                          <p className="text-[13px] font-semibold leading-tight sm:text-sm">{t.name}</p>
-                          <span className="hidden items-center gap-1 rounded-full border border-border bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:flex">
-                            {osMeta[t.os].label}
-                          </span>
-                          {isEditing ? (
-                            <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
-                              <Pencil className="h-3 w-3" />
-                              编辑中
-                            </span>
-                          ) : (
-                            isFlash && (
-                              <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
-                                <Sparkles className="h-3 w-3" />
-                                已更新
-                              </span>
-                            )
-                          )}
-                        </div>
-                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground sm:text-xs">{taskPath(t)}</p>
-                      </div>
-                    </div>
-                    <span
-                      title={t.enabled ? "已启用" : "已禁用"}
-                      className={cn(
-                        "flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium sm:px-2.5",
-                        t.enabled ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground",
-                      )}
-                    >
-                      <span className={cn("h-1.5 w-1.5 rounded-full", t.enabled ? "bg-primary" : "bg-muted-foreground/60")} />
-                      <span className="hidden sm:inline">{t.enabled ? "已启用" : "已禁用"}</span>
-                    </span>
-                  </div>
-
-                  {/* 半圆仪表 + 排期信息 */}
-                  <div className="mt-3 flex flex-1 flex-col gap-4 sm:flex-row sm:items-center">
-                    <div className="relative mx-auto w-full max-w-[210px] shrink-0 pt-1 sm:mx-0 sm:w-[168px] sm:max-w-none">
-                      <svg viewBox="0 0 120 68" className="w-full overflow-visible" aria-hidden="true">
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          style={{ stroke: "color-mix(in oklab, var(--foreground) 10%, transparent)" }}
-                        />
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          pathLength={100}
-                          strokeDasharray={`${Math.round(progress * 100)} 100`}
-                          stroke="currentColor"
-                          className={cn(
-                            "text-primary transition-all duration-700",
-                            (!t.enabled || eventTrigger || !nextClock) && "opacity-0",
-                          )}
-                        />
-                      </svg>
-                      <div className="absolute inset-x-0 bottom-0 text-center">
-                        <div
-                          className={cn(
-                            "text-2xl font-bold leading-none tracking-[-0.04em]",
-                            t.enabled && !eventTrigger && nextClock ? "text-foreground" : "text-lg font-semibold text-muted-foreground",
-                          )}
-                        >
-                          {gaugeValue}
-                        </div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">{gaugeHint}</div>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 flex-1 space-y-1.5 text-xs">
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">下次</span>
-                        <span className="truncate text-right font-medium text-foreground" title={nextRunText ?? undefined}>
-                          {eventTrigger ? "客户端事件" : nextRunText ? nextRunText.slice(0, 10) : "—"}
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">周期</span>
-                        <span className="flex min-w-0 items-center gap-1.5 text-right font-medium text-foreground">
-                          <Repeat className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}</span>
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3" title={t.lastError ?? undefined}>
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">最近</span>
-                        <span className="flex min-w-0 items-center justify-end gap-1.5">
-                          <span className="truncate font-medium text-foreground">{lastRunText ?? "—"}</span>
-                          <span
-                            className={cn(
-                              "shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                              lastStatus === "success"
-                                ? "bg-primary/12 text-primary"
-                                : lastStatus === "failed"
-                                  ? "bg-negative/12 text-negative"
-                                  : lastStatus === "retrying"
-                                    ? "bg-warning/12 text-warning"
-                                    : "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            {taskRunStatusLabel(lastStatus)}
-                          </span>
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[10px] text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Server className="h-3 w-3 text-muted-foreground/70" />
-                          {t.clientIds.length} 台客户端
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5" title={`时区：${timezone}`}>
-                          <CalendarClock className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{timezone}</span>
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <Play className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{t.action}</span>
-                        </span>
-                        <span className={cn("sm:hidden", t.enabled ? "text-primary" : "text-muted-foreground")}>
-                          {t.enabled ? "已启用" : "已禁用"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 操作 */}
-                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
-                    <button
-                      type="button"
-                      onClick={() => void toggleEnabled(t)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
-                      {t.enabled ? "禁用" : "启用"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(t)}
-                      className={cn(
-                        "flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors",
-                        isEditing
-                          ? "border-primary bg-primary/12 text-primary"
-                          : "border-border bg-background/40 text-foreground hover:bg-surface",
-                      )}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void runNow(t.id)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      运行
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(t.id)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-negative transition-colors hover:bg-negative/10 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      删除
-                    </button>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
+                  task={t}
+                  now={now}
+                  isRemoving={removing.includes(t.id)}
+                  isFlash={flashId === t.id}
+                  isEditing={editing?.id === t.id}
+                  isBusy={busyIds.includes(t.id)}
+                  onToggle={() => void toggleEnabled(t)}
+                  onEdit={() => startEdit(t)}
+                  onRun={() => void runNow(t.id)}
+                  onDelete={() => void handleDelete(t.id)}
+                />
+              ))}
+            </div>
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
             <CalendarClock className="h-8 w-8" />
