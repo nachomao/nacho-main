@@ -1072,3 +1072,64 @@ html[data-reduce-motion='true'] .meter-indeterminate {
   animation: none !important;
   transform: none !important;
 }
+
+/* ---------- 计划任务卡片入场：卡片错峰浮现 → 仪表弧线走到目标 → 排期行依次滑入 ---------- */
+/* 仅使用 backwards 填充：动画结束后释放 transform/opacity/filter，删除卡片时的缩放模糊过渡仍可生效 */
+@keyframes task-enter-card {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+@keyframes task-enter-row {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes task-enter-value {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+.task-enter-card {
+  animation: task-enter-card 640ms cubic-bezier(0.22, 1, 0.36, 1) var(--enter-delay, 0ms) backwards;
+}
+
+.task-enter-row {
+  animation: task-enter-row 520ms cubic-bezier(0.22, 1, 0.36, 1) var(--enter-delay, 0ms) backwards;
+}
+
+.task-enter-value {
+  animation: task-enter-value 560ms cubic-bezier(0.22, 1, 0.36, 1) var(--enter-delay, 0ms) backwards;
+}
+
+html[data-reduce-motion='true'] .task-enter-card,
+html[data-reduce-motion='true'] .task-enter-row,
+html[data-reduce-motion='true'] .task-enter-value {
+  animation: none !important;
+}
+
+html[data-reduce-motion='true'] .task-gauge-arc {
+  transition: none !important;
+}

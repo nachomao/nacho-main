@@ -42,6 +42,12 @@ import {
   type TaskLastStatus,
 } from "@/lib/task-schedule-format"
 import { useTasks, type OSType } from "./tasks-context"
+import { TaskGaugeArc } from "./task-gauge-arc"
+
+/* 入场错峰延迟：交给 globals.css 中 task-enter-* 动画读取 */
+function enterDelay(ms: number): React.CSSProperties {
+  return { "--enter-delay": `${ms}ms` } as React.CSSProperties
+}
 
 /* ---------- 通用面板外壳：与脚本安装 / 客户端面板保持一致 ---------- */
 function PanelShell({
@@ -876,7 +882,8 @@ export function TasksView() {
           </div>
         ) : filtered.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {filtered.map((t) => {
+            {filtered.map((t, index) => {
+              const enterBase = Math.min(index, 8) * 90
               const isRemoving = removing.includes(t.id)
               const isFlash = flashId === t.id
               const isEditing = editing?.id === t.id
@@ -906,14 +913,14 @@ export function TasksView() {
                 <article
                   key={t.id}
                   className={cn(
-                    "flex flex-col rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
+                    "task-enter-card flex flex-col rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
                     isRemoving
                       ? "scale-95 opacity-0 blur-sm"
                       : isFlash || isEditing
                         ? "border-primary bg-primary/10 shadow-[0_0_0_3px_oklch(0.82_0.19_145_/_15%)]"
                         : "border-border hover:bg-surface",
                   )}
-                  style={{ maxHeight: isRemoving ? 0 : 1200, marginBottom: isRemoving ? -10 : 0 }}
+                  style={{ ...enterDelay(enterBase), maxHeight: isRemoving ? 0 : 1200, marginBottom: isRemoving ? -10 : 0 }}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
@@ -961,29 +968,12 @@ export function TasksView() {
                   {/* 半圆仪表 + 排期信息 */}
                   <div className="mt-3 flex flex-1 flex-col gap-4 sm:flex-row sm:items-center">
                     <div className="relative mx-auto w-full max-w-[210px] shrink-0 pt-1 sm:mx-0 sm:w-[168px] sm:max-w-none">
-                      <svg viewBox="0 0 120 68" className="w-full overflow-visible" aria-hidden="true">
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          style={{ stroke: "color-mix(in oklab, var(--foreground) 10%, transparent)" }}
-                        />
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          pathLength={100}
-                          strokeDasharray={`${Math.round(progress * 100)} 100`}
-                          stroke="currentColor"
-                          className={cn(
-                            "text-primary transition-all duration-700",
-                            (!t.enabled || eventTrigger || !nextClock) && "opacity-0",
-                          )}
-                        />
-                      </svg>
-                      <div className="absolute inset-x-0 bottom-0 text-center">
+                      <TaskGaugeArc
+                        progress={progress}
+                        hidden={!t.enabled || eventTrigger || !nextClock}
+                        delayMs={enterBase + 160}
+                      />
+                      <div className="task-enter-value absolute inset-x-0 bottom-0 text-center" style={enterDelay(enterBase + 300)}>
                         <div
                           className={cn(
                             "text-2xl font-bold leading-none tracking-[-0.04em]",
@@ -997,20 +987,30 @@ export function TasksView() {
                     </div>
 
                     <div className="min-w-0 flex-1 space-y-1.5 text-xs">
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
+                      <div
+                        className="task-enter-row flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5"
+                        style={enterDelay(enterBase + 200)}
+                      >
                         <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">下次</span>
                         <span className="truncate text-right font-medium text-foreground" title={nextRunText ?? undefined}>
                           {eventTrigger ? "客户端事件" : nextRunText ? nextRunText.slice(0, 10) : "—"}
                         </span>
                       </div>
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
+                      <div
+                        className="task-enter-row flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5"
+                        style={enterDelay(enterBase + 260)}
+                      >
                         <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">周期</span>
                         <span className="flex min-w-0 items-center gap-1.5 text-right font-medium text-foreground">
                           <Repeat className="h-3 w-3 shrink-0 text-muted-foreground/70" />
                           <span className="truncate">{triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}</span>
                         </span>
                       </div>
-                      <div className="flex items-baseline justify-between gap-3" title={t.lastError ?? undefined}>
+                      <div
+                        className="task-enter-row flex items-baseline justify-between gap-3"
+                        title={t.lastError ?? undefined}
+                        style={enterDelay(enterBase + 320)}
+                      >
                         <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">最近</span>
                         <span className="flex min-w-0 items-center justify-end gap-1.5">
                           <span className="truncate font-medium text-foreground">{lastRunText ?? "—"}</span>
@@ -1030,7 +1030,10 @@ export function TasksView() {
                           </span>
                         </span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[10px] text-muted-foreground">
+                      <div
+                        className="task-enter-row flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[10px] text-muted-foreground"
+                        style={enterDelay(enterBase + 380)}
+                      >
                         <span className="flex items-center gap-1.5">
                           <Server className="h-3 w-3 text-muted-foreground/70" />
                           {t.clientIds.length} 台客户端
@@ -1051,7 +1054,10 @@ export function TasksView() {
                   </div>
 
                   {/* 操作 */}
-                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
+                  <div
+                    className="task-enter-value mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3"
+                    style={enterDelay(enterBase + 420)}
+                  >
                     <button
                       type="button"
                       onClick={() => void toggleEnabled(t)}
