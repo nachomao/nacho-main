@@ -3,14 +3,16 @@
 import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import {
+  Activity,
   AlertTriangle,
   CalendarClock,
   CalendarDays,
   CalendarPlus,
+  CheckCircle2,
   Clock,
-  RotateCw,
+  Eye,
+  EyeOff,
   FileTerminal,
-  ListChecks,
   Loader2,
   LogIn,
   Monitor,
@@ -20,6 +22,7 @@ import {
   Plus,
   Power,
   Repeat,
+  RotateCw,
   Server,
   Settings2,
   Sparkles,
@@ -58,15 +61,15 @@ function PanelShell({
   className?: string
 }) {
   return (
-    <div className={cn("card-glow flex w-full flex-col overflow-hidden rounded-3xl bg-card p-6", className)}>
+    <div className={cn("card-glow flex w-full min-w-0 flex-col overflow-hidden rounded-3xl bg-card p-4 sm:p-6", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold">{title}</h2>
-          {desc && <p className="mt-1 text-sm text-muted-foreground">{desc}</p>}
+          {desc && <p className="mt-1 text-xs text-muted-foreground sm:text-sm">{desc}</p>}
         </div>
         {action}
       </div>
-      <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+      <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
     </div>
   )
 }
@@ -206,6 +209,31 @@ type ScheduledTask = {
   lastStatus?: TaskLastStatus
   lastError?: string | null
   createdAt?: number
+}
+
+const PREVIEW_TASK_ID = "local-ui-preview-task"
+
+function createInitialPreviewTask(now = Date.now()): ScheduledTask {
+  return {
+    id: PREVIEW_TASK_ID,
+    name: "核心服务基线巡检与快照",
+    os: "windows",
+    action: "执行巡检脚本",
+    program: "C:\\Nacho\\Scripts\\Invoke-BaselineAudit.ps1",
+    args: "-Profile Production -ExportReport",
+    triggerId: "daily",
+    time: "04:00",
+    interval: 1,
+    cron: "",
+    timezone: "Asia/Shanghai",
+    clientIds: ["preview-client-win-001", "preview-client-win-002", "preview-client-win-004"],
+    enabled: true,
+    nextRunAt: now + (2 * 60 + 18) * 60_000,
+    lastRunAt: now - (21 * 60 + 42) * 60_000,
+    lastStatus: "success",
+    lastError: null,
+    createdAt: now - 7 * 24 * 3_600_000,
+  }
 }
 
 const COMMON_TIMEZONES = ["UTC", "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"]
@@ -392,6 +420,7 @@ function TaskFormDialog({
   const triggers = triggersByOS[os]
   const currentTrigger = findTrigger(os, draft.triggerId)
   const isCreate = mode === "create"
+  const isPreviewEdit = draft.id === PREVIEW_TASK_ID
   const timezones = useMemo(() => supportedTimezones(), [])
 
   const set = (patch: Partial<ScheduledTask>) => setDraft((d) => ({ ...d, ...patch }))
@@ -409,7 +438,12 @@ function TaskFormDialog({
 
   const cronValid = currentTrigger.kind !== "cron" || draft.cron.trim() !== ""
   const timezoneValid = currentTrigger.kind === "event" || (draft.timezone ?? "").trim() !== ""
-  const valid = draft.name.trim() !== "" && draft.program.trim() !== "" && draft.clientIds.length > 0 && cronValid && timezoneValid
+  const valid =
+    draft.name.trim() !== "" &&
+    draft.program.trim() !== "" &&
+    (draft.clientIds.length > 0 || isPreviewEdit) &&
+    cronValid &&
+    timezoneValid
   const submit = () => {
     if (!valid) return
     onSubmit({
@@ -675,6 +709,10 @@ export function TasksView() {
   // 正在执行行内操作的任务 id，用于禁用重复点击
   const [busyIds, setBusyIds] = useState<string[]>([])
 
+  /* 本地 UI 预览项：默认开启，支持就地交互（启停、编辑、运行、移除与恢复），不写入真实服务端 */
+  const [showPreviewItem, setShowPreviewItem] = useState(true)
+  const [previewTask, setPreviewTask] = useState<ScheduledTask>(() => createInitialPreviewTask())
+
   /* 目标客户端来自真实客户端列表，不再使用演示常量 */
   const clientsByOS = useMemo(() => groupClientsByOS(clients), [clients])
 
@@ -698,12 +736,29 @@ export function TasksView() {
     return () => clearInterval(timer)
   }, [reload])
 
-  const filtered = osFilter === "all" ? tasks : tasks.filter((t) => t.os === osFilter)
+  const allDisplayTasks = useMemo(
+    () => (showPreviewItem ? [previewTask, ...tasks] : tasks),
+    [showPreviewItem, previewTask, tasks],
+  )
+
+  const filtered = osFilter === "all" ? allDisplayTasks : allDisplayTasks.filter((t) => t.os === osFilter)
   const counts = {
-    all: tasks.length,
-    windows: tasks.filter((t) => t.os === "windows").length,
-    linux: tasks.filter((t) => t.os === "linux").length,
+    all: allDisplayTasks.length,
+    windows: allDisplayTasks.filter((t) => t.os === "windows").length,
+    linux: allDisplayTasks.filter((t) => t.os === "linux").length,
   }
+
+  const enabledCount = allDisplayTasks.filter((t) => t.enabled).length
+  const issueCount = allDisplayTasks.filter((t) => t.lastStatus === "failed" || t.lastStatus === "retrying").length
+  const coveredClientCount = useMemo(() => {
+    const ids = new Set<string>()
+    for (const t of allDisplayTasks) {
+      if (t.enabled) {
+        for (const cid of t.clientIds) ids.add(cid)
+      }
+    }
+    return ids.size
+  }, [allDisplayTasks])
 
   /* 提交给服务端的任务载荷：id/时间戳由服务端生成，这里只发协议约定的字段 */
   const taskPayload = (t: ScheduledTask) => ({
@@ -746,9 +801,19 @@ export function TasksView() {
     }
   }
 
-  /* 保存编辑：PATCH /tasks/:id */
+  /* 保存编辑：PATCH /tasks/:id（预览项在本地内存中更新） */
   const saveEdit = async (updated: ScheduledTask) => {
     if (submitting) return
+    if (updated.id === PREVIEW_TASK_ID) {
+      const recurring = updated.triggerId === "daily" || updated.triggerId === "weekly" || updated.triggerId === "cron"
+      setPreviewTask({
+        ...updated,
+        nextRunAt: updated.enabled && recurring ? (updated.nextRunAt ?? Date.now() + 2 * 3_600_000) : null,
+      })
+      flash(PREVIEW_TASK_ID)
+      setEditing(null)
+      return
+    }
     setSubmitting(true)
     setActionError(null)
     try {
@@ -774,6 +839,15 @@ export function TasksView() {
   /* 删除：先等服务端确认，再播放移除动画，避免失败后条目已消失 */
   const handleDelete = async (id: string) => {
     if (busyIds.includes(id)) return
+    if (id === PREVIEW_TASK_ID) {
+      if (editing?.id === id) setEditing(null)
+      setRemoving((r) => [...r, id])
+      setTimeout(() => {
+        setShowPreviewItem(false)
+        setRemoving((r) => r.filter((x) => x !== id))
+      }, 360)
+      return
+    }
     setBusyIds((b) => [...b, id])
     setActionError(null)
     try {
@@ -794,6 +868,17 @@ export function TasksView() {
   /* 启停：POST /tasks/:id/enabled，以服务端返回的记录为准 */
   const toggleEnabled = async (task: ScheduledTask) => {
     if (busyIds.includes(task.id)) return
+    if (task.id === PREVIEW_TASK_ID) {
+      const nextEnabled = !task.enabled
+      const recurring = task.triggerId === "daily" || task.triggerId === "weekly" || task.triggerId === "cron"
+      setPreviewTask((prev) => ({
+        ...prev,
+        enabled: nextEnabled,
+        nextRunAt: nextEnabled && recurring ? Date.now() + (2 * 60 + 18) * 60_000 : null,
+      }))
+      flash(PREVIEW_TASK_ID)
+      return
+    }
     setBusyIds((b) => [...b, task.id])
     setActionError(null)
     try {
@@ -812,6 +897,22 @@ export function TasksView() {
   /* 立即运行：POST /tasks/:id/dispatch，走真实命令下发链路 */
   const runNow = async (id: string) => {
     if (busyIds.includes(id)) return
+    if (id === PREVIEW_TASK_ID) {
+      setBusyIds((b) => [...b, id])
+      setTimeout(() => {
+        const now = Date.now()
+        setPreviewTask((prev) => ({
+          ...prev,
+          lastRunAt: now,
+          lastStatus: "success",
+          lastError: null,
+          nextRunAt: prev.enabled ? now + 24 * 3_600_000 : prev.nextRunAt,
+        }))
+        setBusyIds((b) => b.filter((x) => x !== id))
+        flash(id)
+      }, 280)
+      return
+    }
     setBusyIds((b) => [...b, id])
     setActionError(null)
     try {
@@ -822,6 +923,16 @@ export function TasksView() {
       setActionError(caught instanceof Error ? caught.message : "下发任务失败")
     } finally {
       setBusyIds((b) => b.filter((x) => x !== id))
+    }
+  }
+
+  const togglePreviewItem = () => {
+    if (showPreviewItem) {
+      setShowPreviewItem(false)
+    } else {
+      setPreviewTask(createInitialPreviewTask())
+      setShowPreviewItem(true)
+      flash(PREVIEW_TASK_ID)
     }
   }
 
@@ -838,14 +949,84 @@ export function TasksView() {
         desc="集中管理已下发的 Windows 与 Linux 批量计划任务。点击右上角「新建任务」即可创建。"
         className="min-h-0 flex-1"
         action={
-          <SegmentedControl
-            variant="pill"
-            value={osFilter}
-            onChange={setOsFilter}
-            options={filterChips.map((c) => ({ id: c.id, label: c.label, badge: c.count }))}
-          />
+          <div className="flex max-w-full flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={togglePreviewItem}
+              title={showPreviewItem ? "隐藏本地 UI 预览项" : "显示本地 UI 预览项"}
+              className={cn(
+                "flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-medium transition-all duration-200",
+                showPreviewItem
+                  ? "border-primary/40 bg-primary/12 text-primary shadow-sm"
+                  : "border-border bg-surface/60 text-muted-foreground hover:bg-surface hover:text-foreground",
+              )}
+            >
+              {showPreviewItem ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+              <span>{showPreviewItem ? "预览项已开启" : "显示预览项"}</span>
+            </button>
+            <SegmentedControl
+              variant="pill"
+              className="max-w-full shrink-0"
+              value={osFilter}
+              onChange={setOsFilter}
+              options={filterChips.map((c) => ({ id: c.id, label: c.label, badge: c.count }))}
+            />
+          </div>
         }
       >
+        {/* 顶部紧凑概览胶囊栏 */}
+        <div className="mb-3.5 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-surface/35 px-3.5 py-2.5 text-xs">
+          <div className="flex items-center gap-2 pr-1">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <CalendarClock className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-muted-foreground">总任务</span>
+            <span className="font-mono text-sm font-bold tabular-nums text-foreground">{counts.all}</span>
+            <span className="text-[11px] text-muted-foreground">
+              (Win {counts.windows} / Linux {counts.linux})
+            </span>
+          </div>
+
+          <span aria-hidden="true" className="hidden h-3.5 w-px bg-border sm:inline-block" />
+
+          <div className="flex items-center gap-1.5">
+            <Activity className="h-3.5 w-3.5 text-positive" />
+            <span className="text-muted-foreground">已启用</span>
+            <span className="font-mono text-sm font-bold tabular-nums text-foreground">{enabledCount}</span>
+            <span className="rounded-full bg-positive/12 px-2 py-0.5 font-mono text-[10px] font-medium text-positive">
+              {counts.all > 0 ? `${Math.round((enabledCount / counts.all) * 100)}%` : "0%"}
+            </span>
+          </div>
+
+          <span aria-hidden="true" className="hidden h-3.5 w-px bg-border sm:inline-block" />
+
+          <div className="flex items-center gap-1.5">
+            {issueCount > 0 ? (
+              <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+            )}
+            <span className="text-muted-foreground">执行状态</span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                issueCount > 0 ? "bg-warning/15 text-warning" : "bg-primary/12 text-primary",
+              )}
+            >
+              {issueCount > 0 ? `${issueCount} 项需关注` : "全部正常"}
+            </span>
+          </div>
+
+          <span aria-hidden="true" className="hidden h-3.5 w-px bg-border sm:inline-block" />
+
+          <div className="flex items-center gap-1.5">
+            <Server className="h-3.5 w-3.5 text-primary/80" />
+            <span className="text-muted-foreground">启用覆盖</span>
+            <span className="font-mono text-sm font-bold tabular-nums text-foreground">{coveredClientCount}</span>
+            <span className="text-muted-foreground">台终端</span>
+          </div>
+        </div>
+
         {actionError && (
           <div className="mb-3 flex items-start gap-2.5 rounded-2xl border border-negative/30 bg-negative/10 px-4 py-3 text-xs leading-relaxed text-negative">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -856,12 +1037,29 @@ export function TasksView() {
           </div>
         )}
 
-        {loading ? (
+        {error && showPreviewItem && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-xs text-warning">
+            <div className="flex min-w-0 items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span className="truncate">服务端任务未就绪（{error}），当前展示本地 UI 预览项。</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void reload()}
+              className="flex h-7 shrink-0 items-center gap-1 rounded-lg border border-warning/30 bg-background/40 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface"
+            >
+              <RotateCw className="h-3 w-3" />
+              重试连接
+            </button>
+          </div>
+        )}
+
+        {loading && !showPreviewItem ? (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
             <Loader2 className="h-6 w-6 animate-spin" />
             <p className="text-sm">正在从服务端加载计划任务…</p>
           </div>
-        ) : error ? (
+        ) : error && !showPreviewItem ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
             <AlertTriangle className="h-8 w-8 text-negative" />
             <p className="max-w-sm text-sm text-muted-foreground">{error}</p>
@@ -875,8 +1073,9 @@ export function TasksView() {
             </button>
           </div>
         ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
             {filtered.map((t) => {
+              const isPreview = t.id === PREVIEW_TASK_ID
               const isRemoving = removing.includes(t.id)
               const isFlash = flashId === t.id
               const isEditing = editing?.id === t.id
@@ -892,65 +1091,117 @@ export function TasksView() {
                 lastRunAt: t.lastRunAt,
                 createdAt: t.createdAt,
               })
+              const progressPct = Math.round(progress * 100)
               const eventTrigger = t.triggerId === "logon" || t.triggerId === "startup" || t.triggerId === "boot"
+              const triggerDef = findTrigger(t.os, t.triggerId)
+              const TriggerIcon = triggerDef.icon
               const lastStatus = t.lastStatus ?? null
-              const gaugeValue = !t.enabled ? "未排期" : eventTrigger ? "事件触发" : nextClock ?? "待排期"
-              const gaugeHint = !t.enabled
+              const nextHeadline = !t.enabled ? "未排期" : eventTrigger ? "事件触发" : nextClock ?? "待排期"
+              const nextSubline = !t.enabled
                 ? "已停用"
                 : eventTrigger
-                  ? "由客户端事件驱动"
+                  ? "客户端事件驱动"
+                  : nextRunText
+                    ? nextRunText.slice(0, 10)
+                    : "等待排期"
+              const remainingBadge = !t.enabled
+                ? "已停用"
+                : eventTrigger
+                  ? "客户端事件"
                   : remaining
                     ? `距下次 ${remaining}`
                     : "暂无排期"
+
               return (
                 <article
                   key={t.id}
+                  data-task-card={isPreview ? "preview" : "real"}
                   className={cn(
-                    "flex flex-col rounded-2xl border bg-surface/60 p-4 transition-all duration-300 ease-out",
+                    "group relative flex min-w-0 flex-col rounded-2xl border bg-surface/55 p-4 transition-all duration-300 ease-out",
                     isRemoving
                       ? "scale-95 opacity-0 blur-sm"
                       : isFlash || isEditing
                         ? "border-primary bg-primary/10 shadow-[0_0_0_3px_oklch(0.82_0.19_145_/_15%)]"
-                        : "border-border hover:bg-surface",
+                        : isPreview
+                          ? "border-primary/35 bg-surface/70 hover:border-primary/55 hover:bg-surface"
+                          : "border-border hover:border-border/90 hover:bg-surface",
                   )}
                   style={{ maxHeight: isRemoving ? 0 : 1200, marginBottom: isRemoving ? -10 : 0 }}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  {/* 顶部：系统标识 + 任务标题 + 状态徽标 */}
+                  <div className="flex items-start justify-between gap-2.5">
                     <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background/40 sm:h-10 sm:w-10">
+                      <span
+                        className={cn(
+                          "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-transform duration-300 group-hover:scale-105",
+                          t.enabled
+                            ? "border-primary/30 bg-primary/12 text-primary"
+                            : "border-border bg-background/40 text-muted-foreground",
+                        )}
+                      >
                         {(() => {
                           const OSIcon = osMeta[t.os].icon
-                          return <OSIcon className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+                          return <OSIcon className="h-5 w-5" />
                         })()}
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card",
+                            t.enabled ? "bg-primary" : "bg-muted-foreground/50",
+                          )}
+                        />
                       </span>
+
                       <div className="min-w-0 leading-tight">
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                          <p className="text-[13px] font-semibold leading-tight sm:text-sm">{t.name}</p>
-                          <span className="hidden items-center gap-1 rounded-full border border-border bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:flex">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">{t.name}</h3>
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background/45 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                             {osMeta[t.os].label}
                           </span>
+                          <span className="hidden shrink-0 items-center gap-1 rounded-full bg-background/35 px-2 py-0.5 text-[10px] text-muted-foreground sm:inline-flex">
+                            {t.action}
+                          </span>
+                          {isPreview && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary ring-1 ring-primary/30">
+                              <Sparkles className="h-2.5 w-2.5" />
+                              预览项
+                            </span>
+                          )}
                           {isEditing ? (
-                            <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
-                              <Pencil className="h-3 w-3" />
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
+                              <Pencil className="h-2.5 w-2.5" />
                               编辑中
                             </span>
                           ) : (
                             isFlash && (
-                              <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
-                                <Sparkles className="h-3 w-3" />
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                <Sparkles className="h-2.5 w-2.5" />
                                 已更新
                               </span>
                             )
                           )}
                         </div>
-                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground sm:text-xs">{taskPath(t)}</p>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1 font-medium text-foreground/85">
+                            <TriggerIcon className="h-3 w-3 text-primary/80" />
+                            {triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}
+                          </span>
+                          <span aria-hidden="true" className="text-border">·</span>
+                          <span className="inline-flex items-center gap-1 font-mono text-[11px]" title={`时区：${timezone}`}>
+                            {timezone}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
                     <span
                       title={t.enabled ? "已启用" : "已禁用"}
                       className={cn(
-                        "flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium sm:px-2.5",
-                        t.enabled ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground",
+                        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ring-1",
+                        t.enabled
+                          ? "bg-primary/12 text-primary ring-primary/25"
+                          : "bg-muted/70 text-muted-foreground ring-border",
                       )}
                     >
                       <span className={cn("h-1.5 w-1.5 rounded-full", t.enabled ? "bg-primary" : "bg-muted-foreground/60")} />
@@ -958,152 +1209,229 @@ export function TasksView() {
                     </span>
                   </div>
 
-                  {/* 半圆仪表 + 排期信息 */}
-                  <div className="mt-3 flex flex-1 flex-col gap-4 sm:flex-row sm:items-center">
-                    <div className="relative mx-auto w-full max-w-[210px] shrink-0 pt-1 sm:mx-0 sm:w-[168px] sm:max-w-none">
-                      <svg viewBox="0 0 120 68" className="w-full overflow-visible" aria-hidden="true">
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          style={{ stroke: "color-mix(in oklab, var(--foreground) 10%, transparent)" }}
-                        />
-                        <path
-                          d="M10 60 A50 50 0 0 1 110 60"
-                          fill="none"
-                          strokeWidth="9"
-                          strokeLinecap="round"
-                          pathLength={100}
-                          strokeDasharray={`${Math.round(progress * 100)} 100`}
-                          stroke="currentColor"
-                          className={cn(
-                            "text-primary transition-all duration-700",
-                            (!t.enabled || eventTrigger || !nextClock) && "opacity-0",
-                          )}
-                        />
-                      </svg>
-                      <div className="absolute inset-x-0 bottom-0 text-center">
-                        <div
-                          className={cn(
-                            "text-2xl font-bold leading-none tracking-[-0.04em]",
-                            t.enabled && !eventTrigger && nextClock ? "text-foreground" : "text-lg font-semibold text-muted-foreground",
-                          )}
-                        >
-                          {gaugeValue}
-                        </div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">{gaugeHint}</div>
-                      </div>
+                  {/* 命令终端回显条 */}
+                  <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-border bg-background/50 px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 select-none rounded bg-surface px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
+                        {t.os === "windows" ? "PS>" : "$"}
+                      </span>
+                      <code
+                        className="truncate font-mono text-xs text-foreground/90"
+                        title={taskPath(t)}
+                      >
+                        {taskPath(t)}
+                      </code>
                     </div>
+                    <span className="hidden shrink-0 rounded-md border border-border bg-surface/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline-block">
+                      {triggerDef.label}
+                    </span>
+                  </div>
 
-                    <div className="min-w-0 flex-1 space-y-1.5 text-xs">
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">下次</span>
-                        <span className="truncate text-right font-medium text-foreground" title={nextRunText ?? undefined}>
-                          {eventTrigger ? "客户端事件" : nextRunText ? nextRunText.slice(0, 10) : "—"}
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-1.5">
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">周期</span>
-                        <span className="flex min-w-0 items-center gap-1.5 text-right font-medium text-foreground">
-                          <Repeat className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{triggerSummary(t.os, t.triggerId, t.time, t.interval, t.cron)}</span>
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between gap-3" title={t.lastError ?? undefined}>
-                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">最近</span>
-                        <span className="flex min-w-0 items-center justify-end gap-1.5">
-                          <span className="truncate font-medium text-foreground">{lastRunText ?? "—"}</span>
+                  {/* 排期与执行遥测面板 */}
+                  <div className="mt-2.5 flex flex-col gap-2.5 rounded-2xl border border-border/80 bg-background/35 p-3">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {/* 左栏：下次调度 */}
+                      <div className="flex min-w-0 flex-col justify-between rounded-xl border border-border/60 bg-surface/35 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">下次执行</span>
                           <span
                             className={cn(
-                              "shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                              "truncate rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              !t.enabled
+                                ? "bg-muted text-muted-foreground"
+                                : eventTrigger
+                                  ? "bg-surface text-muted-foreground"
+                                  : "bg-primary/12 text-primary",
+                            )}
+                          >
+                            {remainingBadge}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-baseline justify-between gap-2">
+                          <span
+                            className={cn(
+                              "font-mono text-lg font-bold leading-none tracking-tight tabular-nums",
+                              t.enabled && !eventTrigger && nextClock ? "text-foreground" : "text-sm font-semibold text-muted-foreground",
+                            )}
+                          >
+                            {nextHeadline}
+                          </span>
+                          <span
+                            className="truncate font-mono text-[11px] tabular-nums text-muted-foreground"
+                            title={nextRunText ?? undefined}
+                          >
+                            {nextSubline}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 右栏：最近执行 */}
+                      <div
+                        className="flex min-w-0 flex-col justify-between rounded-xl border border-border/60 bg-surface/35 px-3 py-2"
+                        title={t.lastError ?? undefined}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">最近执行</span>
+                          <span
+                            className={cn(
+                              "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium",
                               lastStatus === "success"
                                 ? "bg-primary/12 text-primary"
                                 : lastStatus === "failed"
-                                  ? "bg-negative/12 text-negative"
+                                  ? "bg-negative/15 text-negative"
                                   : lastStatus === "retrying"
-                                    ? "bg-warning/12 text-warning"
+                                    ? "bg-warning/15 text-warning"
                                     : "bg-muted text-muted-foreground",
                             )}
                           >
                             {taskRunStatusLabel(lastStatus)}
                           </span>
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[10px] text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Server className="h-3 w-3 text-muted-foreground/70" />
-                          {t.clientIds.length} 台客户端
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5" title={`时区：${timezone}`}>
-                          <CalendarClock className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{timezone}</span>
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <Play className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                          <span className="truncate">{t.action}</span>
-                        </span>
-                        <span className={cn("sm:hidden", t.enabled ? "text-primary" : "text-muted-foreground")}>
-                          {t.enabled ? "已启用" : "已禁用"}
-                        </span>
+                        </div>
+                        <div className="mt-1 flex items-baseline justify-between gap-2">
+                          <span className="truncate font-mono text-xs font-semibold tabular-nums text-foreground sm:text-sm">
+                            {lastRunText ?? "—"}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {lastStatus === "success"
+                              ? "命令已投递"
+                              : lastStatus === "retrying"
+                                ? "退避重试"
+                                : lastStatus === "failed"
+                                  ? "投递异常"
+                                  : "等待首轮"}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
+                    {/* 周期进度轨道 */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>调度周期进度</span>
+                        <span className="font-mono tabular-nums">
+                          {!t.enabled
+                            ? "未激活"
+                            : eventTrigger
+                              ? "事件监听中"
+                              : nextClock
+                                ? `${progressPct}%`
+                                : "计算中"}
+                        </span>
+                      </div>
+                      <div
+                        className="meter-track"
+                        data-tone={
+                          !t.enabled
+                            ? undefined
+                            : lastStatus === "failed"
+                              ? "negative"
+                              : lastStatus === "retrying"
+                                ? "warning"
+                                : "primary"
+                        }
+                        aria-hidden="true"
+                      >
+                        {t.enabled && !eventTrigger && nextClock && (
+                          <div className="meter-fill" style={{ width: `${Math.max(6, progressPct)}%` }}>
+                            <span className="meter-head" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 失败 / 重试原因直出提示 */}
+                    {t.lastError && (
+                      <div
+                        className={cn(
+                          "flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs",
+                          lastStatus === "failed"
+                            ? "border-negative/30 bg-negative/10 text-negative"
+                            : "border-warning/30 bg-warning/10 text-warning",
+                        )}
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{t.lastError}</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* 操作 */}
-                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
-                    <button
-                      type="button"
-                      onClick={() => void toggleEnabled(t)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
-                      {t.enabled ? "禁用" : "启用"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(t)}
-                      className={cn(
-                        "flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors",
-                        isEditing
-                          ? "border-primary bg-primary/12 text-primary"
-                          : "border-border bg-background/40 text-foreground hover:bg-surface",
-                      )}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void runNow(t.id)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      运行
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(t.id)}
-                      disabled={isBusy}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-3 text-xs font-medium text-negative transition-colors hover:bg-negative/10 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      删除
-                    </button>
+                  {/* 底部：目标客户端统计 + 操作按钮 */}
+                  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground/85">
+                        <Server className="h-3.5 w-3.5 text-primary/80" />
+                        {t.clientIds.length} 台客户端
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        <Play className="h-3 w-3 text-muted-foreground/70" />
+                        {t.action}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void toggleEnabled(t)}
+                        disabled={isBusy}
+                        className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
+                        {t.enabled ? "禁用" : "启用"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(t)}
+                        className={cn(
+                          "flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors",
+                          isEditing
+                            ? "border-primary bg-primary/12 text-primary"
+                            : "border-border bg-background/40 text-foreground hover:bg-surface",
+                        )}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runNow(t.id)}
+                        disabled={isBusy}
+                        className="flex h-8 items-center gap-1.5 rounded-lg border border-primary/35 bg-primary/15 px-2.5 text-xs font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                        运行
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(t.id)}
+                        disabled={isBusy}
+                        className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background/40 px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-negative/40 hover:bg-negative/10 hover:text-negative disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        删除
+                      </button>
+                    </div>
                   </div>
                 </article>
               )
             })}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+          <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
             <CalendarClock className="h-8 w-8" />
             <p className="text-sm">
               {osFilter === "all" ? "暂无计划任务。" : `暂无 ${osMeta[osFilter].label} 任务。`}
               点击右上角「新建任务」创建。
             </p>
+            {!showPreviewItem && (
+              <button
+                type="button"
+                onClick={togglePreviewItem}
+                className="flex h-9 items-center gap-1.5 rounded-full border border-primary/35 bg-primary/12 px-4 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                显示 UI 预览项
+              </button>
+            )}
           </div>
         )}
       </PanelShell>

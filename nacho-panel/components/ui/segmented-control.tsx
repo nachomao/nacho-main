@@ -112,9 +112,9 @@ export function SegmentedControl<T extends string>({
             type="button"
             onClick={() => onChange(o.id)}
             className={cn(
-              "relative z-10 flex items-center justify-center font-medium transition-colors duration-200",
+              "relative z-10 flex items-center justify-center whitespace-nowrap font-medium transition-colors duration-200",
               isPill
-                ? "h-8 gap-1.5 rounded-full px-3 text-xs"
+                ? "h-8 gap-1.5 rounded-full px-2.5 text-xs sm:px-3"
                 : "gap-2 rounded-xl px-5 py-2 text-sm",
               !isPill && (fill ? "flex-1" : "flex-1 sm:flex-none"),
               active ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
