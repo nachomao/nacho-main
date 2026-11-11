@@ -11,6 +11,7 @@ import { AIPanel } from "./ai-panel"
 import { ConnectionPanel } from "./connection-panel"
 import { UpdatesPanel } from "./updates-panel"
 import { defaultSettings, type SettingsState } from "./settings-data"
+import { applyRemoteSettings } from "./settings-remote"
 import { cn } from "@/lib/utils"
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { useServerData } from "@/components/server-data-context"
@@ -59,17 +60,15 @@ export function SettingsView() {
 
   useEffect(() => {
     let active = true
-    void apiRequest<Record<string, unknown>>("/settings")
+    void apiRequest<unknown>("/settings")
       .then((remote) => {
-        const security = remote.security
-        if (!security || typeof security !== "object" || Array.isArray(security)) return
-        const openEnrollment = (security as Record<string, unknown>).openEnrollment
-        if (typeof openEnrollment !== "boolean" || !active) return
-        setSettings((current) => ({ ...current, security: { ...current.security, openEnrollment } }))
-        setSaved((current) => ({ ...current, security: { ...current.security, openEnrollment } }))
+        if (!active) return
+        // 整包读取：常规、邮件、通知条件与安全设置都以服务端为准。
+        setSettings((current) => applyRemoteSettings(remote, current))
+        setSaved((current) => applyRemoteSettings(remote, current))
       })
       .catch(() => {
-        // 服务端尚未连接时保留初始显示值，连接恢复后会再次加载实际策略。
+        // 服务端尚未连接时保留初始显示值，连接恢复后会再次加载实际设置。
       })
     return () => { active = false }
   }, [apiRequest])
@@ -83,13 +82,14 @@ export function SettingsView() {
     setSaveError(null)
     setSaving(true)
     try {
-      if (settings.security.openEnrollment !== saved.security.openEnrollment) {
-        await apiRequest("/settings", {
-          method: "PUT",
-          body: JSON.stringify({ security: { openEnrollment: settings.security.openEnrollment } }),
-        })
-      }
-      setSaved(settings)
+      // 整包保存：服务端按分组浅合并，不会清空未提交或未知字段。
+      const remote = await apiRequest<unknown>("/settings", {
+        method: "PUT",
+        body: JSON.stringify(settings),
+      })
+      const effective = applyRemoteSettings(remote, settings)
+      setSettings(effective)
+      setSaved(effective)
       setJustSaved(true)
       setTimeout(() => setJustSaved(false), 2000)
     } catch (caught) {
