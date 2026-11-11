@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { usePathname } from "next/navigation"
+import { animate, motion, useMotionValue, useTransform } from "motion/react"
 import { cn } from "@/lib/utils"
+import { useMotionPreference } from "@/lib/motion-preference"
 import {
   Plus,
   X,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react"
 import { clientTabs, useClientTabs } from "./clients/clients-context"
 import { useTopbarActions } from "./topbar/topbar-actions-context"
+import { FilterMenu } from "./topbar/filter-menu"
 import { usePlugins } from "./plugins/plugins-context"
 import { useTasks } from "./tasks/tasks-context"
 import { useLogs } from "./logs/logs-context"
@@ -107,18 +109,64 @@ function PluginsActions({ active }: { active: boolean }) {
   )
 }
 
+/* ---------- 顶栏「新建任务」：胶囊原位向下展开 ---------- */
+
+const TASK_MENU_WIDTH = 208
+const TASK_MENU_RADIUS = 24
+const TASK_MENU_OPEN = { type: "spring", visualDuration: 0.42, bounce: 0 } as const
+// 收回略快，末端带一点弹簧余韵后平滑落回胶囊
+const TASK_MENU_CLOSE = { type: "spring", visualDuration: 0.36, bounce: 0.18 } as const
+const TASK_MENU_REDUCED = { duration: 0.16, ease: "easeOut" } as const
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+
 /**
- * 顶栏计划任务功能区：「新建任务」下拉按钮（仅在计划任务页常驻，主色高亮）。
- * 与安装/插件功能区一致——始终挂载，由 active 驱动整体展开/收起（切入切出），
- * 内部按钮叠加从左揭示动效（模糊渐显 + 轻移就位）；离开时反向收起。
- * 点击展开菜单可选择创建 Windows 任务或 Linux 任务（菜单项错峰模糊渐显）。
+ * 顶栏计划任务功能区：「新建任务」胶囊（仅在计划任务页常驻，主色高亮）。
+ * 点击后胶囊本体向下长成同一张卡片：顶部仍是蓝色胶囊作为标题行，
+ * 下方直接衔接系统选项，不再另起一张浮层子卡片；收回时整卡缩回胶囊。
+ * 展开用无回弹弹簧，收回用更短时长的弹簧平滑归位；尺寸变化不推动同一行其它控件。
  */
 function TasksActions({ active }: { active: boolean }) {
   const ctx = useTasks()
+  const { reduceMotion } = useMotionPreference()
+  // shown 负责顶栏入场揭示；engaged 覆盖展开与收起动画的整个生命周期
   const [shown, setShown] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+  const [engaged, setEngaged] = useState(false)
+  // 胶囊自然宽度：展开期间锁进根节点宽度，卡片向右生长但不引发顶栏重排
+  const [pillWidth, setPillWidth] = useState(0)
+
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const pillWidthRef = useRef(0)
+  const panelHeightRef = useRef(0)
+  const controlRef = useRef<ReturnType<typeof animate> | null>(null)
+  const generationRef = useRef(0)
+
+  const progress = useMotionValue(0)
+  // 参与几何计算的 ref 变化后递增，迫使派生尺寸重算
+  const tick = useMotionValue(0)
+  const bump = useCallback(() => tick.set(tick.get() + 1), [tick])
+
+  // 收起时胶囊宽度为自身自然宽度，展开后由弹簧从该宽度长到面板宽度
+  const width = useTransform(() => {
+    tick.get()
+    const t = clamp01(progress.get())
+    const from = pillWidthRef.current
+    return from + (TASK_MENU_WIDTH - from) * t
+  })
+  // 胶囊底部圆角随展开进度拉平，与下方卡片无缝衔接
+  const bottomRadius = useTransform(() => {
+    tick.get()
+    return TASK_MENU_RADIUS * (1 - Math.min(1, clamp01(progress.get()) / 0.18))
+  })
+  const panelHeight = useTransform(() => {
+    tick.get()
+    return panelHeightRef.current * clamp01(progress.get())
+  })
+  // 0 高度时不绘制阴影 / 边框，避免初始帧闪出一条细线
+  const panelOpacity = useTransform(progress, [0, 0.04], [0, 1])
 
   useEffect(() => {
     if (active) {
@@ -129,47 +177,109 @@ function TasksActions({ active }: { active: boolean }) {
     setMenuOpen(false)
   }, [active])
 
-  // 菜单打开时，基于按钮位置计算 Portal 菜单坐标（fixed，脱离 overflow-hidden 裁剪）
+  // 未展开时跟踪胶囊自然宽度（字体加载、缩放、标签变化都会重新同步）
   useLayoutEffect(() => {
-    if (!menuOpen || !btnRef.current) return
-    const update = () => {
-      const r = btnRef.current!.getBoundingClientRect()
-      setPos({ top: r.bottom + 8, right: window.innerWidth - r.right })
+    if (engaged) return
+    const el = triggerRef.current
+    if (!el) return
+    const sync = () => {
+      pillWidthRef.current = el.offsetWidth
+      setPillWidth(el.offsetWidth)
+      bump()
     }
-    update()
-    window.addEventListener("resize", update)
-    window.addEventListener("scroll", update, true)
-    return () => {
-      window.removeEventListener("resize", update)
-      window.removeEventListener("scroll", update, true)
-    }
-  }, [menuOpen])
+    sync()
+    const observer = new ResizeObserver(sync)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [engaged, bump])
 
-  // 离开页面或失活时关闭菜单
+  // 开合动画：展开平滑落位；收回轻微过冲后归位，结束时卸载面板
+  useLayoutEffect(() => {
+    if (!engaged) return
+    const generation = ++generationRef.current
+    const reduced = reduceMotion
+    controlRef.current?.stop()
+
+    if (menuOpen) {
+      panelHeightRef.current = contentRef.current?.offsetHeight ?? 0
+      bump()
+      controlRef.current = animate(progress, 1, reduced ? TASK_MENU_REDUCED : TASK_MENU_OPEN)
+      return
+    }
+
+    const collapse = animate(progress, 0, reduced ? TASK_MENU_REDUCED : TASK_MENU_CLOSE)
+    controlRef.current = collapse
+    void collapse.then(() => {
+      if (generationRef.current === generation) setEngaged(false)
+    })
+  }, [engaged, menuOpen, reduceMotion, progress, bump])
+
+  useEffect(
+    () => () => {
+      generationRef.current += 1
+      controlRef.current?.stop()
+    },
+    [],
+  )
+
+  // 点击卡片外部关闭；Esc 收起并把焦点交还胶囊
   useEffect(() => {
     if (!menuOpen) return
-    const onClick = () => setMenuOpen(false)
-    window.addEventListener("click", onClick)
-    return () => window.removeEventListener("click", onClick)
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return
+      event.preventDefault()
+      event.stopPropagation()
+      setMenuOpen(false)
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    window.addEventListener("keydown", onKey, true)
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true)
+      window.removeEventListener("keydown", onKey, true)
+    }
   }, [menuOpen])
 
+  const toggleMenu = () => {
+    if (!menuOpen) {
+      if (!pillWidthRef.current) {
+        const measured = triggerRef.current?.offsetWidth ?? 0
+        pillWidthRef.current = measured
+        setPillWidth(measured)
+      }
+      setEngaged(true)
+    }
+    setMenuOpen((open) => !open)
+  }
+
   const options = [
-    { os: "windows" as const, label: "Windows 任务", icon: <Monitor className="h-4 w-4" /> },
-    { os: "linux" as const, label: "Linux 任务", icon: <Terminal className="h-4 w-4" /> },
+    { os: "windows" as const, label: "Windows 任务", icon: Monitor },
+    { os: "linux" as const, label: "Linux 任务", icon: Terminal },
   ]
 
   return (
     <span
-      className="inline-flex overflow-hidden rounded-full"
+      className={cn("relative inline-flex rounded-full", !engaged && "overflow-hidden")}
       style={{
-        maxWidth: shown ? "200px" : "0px",
+        maxWidth: shown ? "300px" : "0px",
         marginRight: shown ? undefined : "-1rem", // 抵消父级 gap-4，未展开时不占位
         transition: "max-width 520ms cubic-bezier(0.22,1,0.36,1), margin-right 520ms cubic-bezier(0.22,1,0.36,1)",
       }}
     >
-      <span style={revealStyle(shown, 80)}>
-        <button
-          ref={btnRef}
+      <span
+        ref={rootRef}
+        className={cn("relative inline-flex h-12 rounded-full", engaged && "z-[60]")}
+        style={{
+          ...revealStyle(shown, 80),
+          // 展开时锁定为胶囊宽度，蓝色标题行与深色选项卡向右溢出但不参与布局
+          width: engaged && pillWidth ? `${pillWidth}px` : undefined,
+        }}
+      >
+        <motion.button
+          ref={triggerRef}
           type="button"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
@@ -177,62 +287,75 @@ function TasksActions({ active }: { active: boolean }) {
           tabIndex={active ? 0 : -1}
           onClick={(e) => {
             e.stopPropagation()
-            setMenuOpen((v) => !v)
+            toggleMenu()
           }}
-          className="flex h-12 items-center gap-2 whitespace-nowrap rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-300 ease-out hover:scale-[1.02] active:scale-95"
+          className={cn(
+            // 必须用显式 24px 圆角：rounded-full 的超大圆角与内联底部圆角混用会被浏览器整体缩放，产生蛋形变形
+            "flex h-12 items-center gap-2 whitespace-nowrap rounded-[24px] bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 outline-none transition-[background-color,box-shadow,transform] duration-300 ease-out focus-visible:ring-2 focus-visible:ring-ring/50",
+            engaged ? "absolute left-0 top-0 z-10" : "relative",
+            !menuOpen && "hover:scale-[1.02] active:scale-95",
+          )}
+          style={
+            engaged
+              ? { width, borderBottomLeftRadius: bottomRadius, borderBottomRightRadius: bottomRadius }
+              // 收起完成后交还自然宽度，字体或文案变化仍能重新测量
+              : { width: "auto" }
+          }
         >
-          <CalendarPlus className="h-5 w-5" />
+          <CalendarPlus className="h-5 w-5 shrink-0" />
           <span className="leading-none">新建任务</span>
-          <ChevronDown className={cn("h-4 w-4 transition-transform duration-300", menuOpen && "rotate-180")} />
-        </button>
-      </span>
+          <ChevronDown
+            className={cn("ml-auto h-4 w-4 shrink-0 transition-transform duration-300", menuOpen && "rotate-180")}
+          />
+        </motion.button>
 
-      {/* 下拉菜单：Portal 到 body，避免被工具栏 overflow-hidden 裁剪；错峰模糊渐显揭示 */}
-      {typeof document !== "undefined" &&
-        pos &&
-        createPortal(
-          <div
+        {/* 与标题行共用同一张卡片的选项区：高度、宽度、圆角全部由同一开合进度驱动 */}
+        {engaged && (
+          <motion.div
             role="menu"
-            onClick={(e) => e.stopPropagation()}
-            className="fixed z-[60] w-48 origin-top-right overflow-hidden rounded-2xl border border-border bg-card p-1.5 shadow-xl"
+            aria-label="选择任务系统"
+            aria-hidden={!menuOpen}
+            inert={!menuOpen}
+            className="absolute left-0 top-[calc(100%-1px)] z-0 overflow-hidden rounded-b-[24px] border-x border-b border-border/70 bg-card"
             style={{
-              top: pos.top,
-              right: pos.right,
-              opacity: menuOpen ? 1 : 0,
-              transform: menuOpen ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
-              filter: menuOpen ? "blur(0px)" : "blur(6px)",
-              pointerEvents: menuOpen ? "auto" : "none",
-              transition: "opacity 240ms ease-out, transform 240ms cubic-bezier(0.22,1,0.36,1), filter 240ms ease-out",
+              width,
+              height: panelHeight,
+              opacity: panelOpacity,
+              boxShadow: "inset 0 1px 0 oklch(1 0 0 / 6%), 0 22px 48px -18px oklch(0 0 0 / 85%)",
             }}
           >
-            {options.map((o, i) => (
-              <button
-                key={o.os}
-                role="menuitem"
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  ctx?.openCreate(o.os)
-                  setMenuOpen(false)
-                }}
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface"
-                style={{
-                  opacity: menuOpen ? 1 : 0,
-                  transform: menuOpen ? "translateX(0)" : "translateX(-6px)",
-                  filter: menuOpen ? "blur(0px)" : "blur(4px)",
-                  transition: "opacity 260ms ease-out, transform 260ms ease-out, filter 260ms ease-out",
-                  transitionDelay: menuOpen ? `${80 + i * 70}ms` : "0ms",
-                }}
-              >
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/12 text-primary">
-                  {o.icon}
-                </span>
-                {o.label}
-              </button>
-            ))}
-          </div>,
-          document.body,
+            <div ref={contentRef} className="flex flex-col gap-0.5 p-1.5">
+              {options.map((o, i) => {
+                const OptionIcon = o.icon
+                return (
+                  <motion.button
+                    key={o.os}
+                    role="menuitem"
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      ctx?.openCreate(o.os)
+                    }}
+                    initial={reduceMotion ? false : { opacity: 0, y: -6 }}
+                    animate={{ opacity: menuOpen ? 1 : 0, y: menuOpen ? 0 : -6 }}
+                    transition={{
+                      duration: reduceMotion ? 0.12 : 0.24,
+                      ease: [0.22, 1, 0.36, 1],
+                      delay: menuOpen ? 0.06 + i * 0.05 : 0,
+                    }}
+                    className="flex w-full items-center gap-2.5 whitespace-nowrap rounded-xl px-3 py-2.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none"
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+                      <OptionIcon className="h-4 w-4" />
+                    </span>
+                    {o.label}
+                  </motion.button>
+                )
+              })}
+            </div>
+          </motion.div>
         )}
+      </span>
     </span>
   )
 }
@@ -784,15 +907,9 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
       </Reveal>
 
       <div className="flex items-center gap-3">
-        <Reveal show={keysIn} delay={70}>
-          <IconButton
-            label="仪表盘筛选"
-            expandLabel="筛选"
-            badge={(actions?.filterCount ?? 0) > 0}
-            onClick={(e) => actions?.openFilter(e.currentTarget)}
-          >
-            <SlidersHorizontal className="h-5 w-5" />
-          </IconButton>
+        {/* 筛选按钮本体会原位长成筛选卡片；提升 Reveal 层级，避免被同排按钮的 transform 叠在后面 */}
+        <Reveal show={keysIn} delay={70} className="relative z-20">
+          <FilterMenu />
         </Reveal>
         <Reveal show={keysIn} delay={140}>
           <IconButton label="数据库管理" expandLabel="数据库管理">

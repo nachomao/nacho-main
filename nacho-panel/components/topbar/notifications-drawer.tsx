@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Bell, Check, ChevronDown, Clock3, Copy, FileText, MoreHorizontal, Trash2, TriangleAlert, WifiOff, CircleAlert } from "lucide-react"
 import { DrawerShell, OverlayHeader } from "./overlay"
+import { InlineExpandMenu } from "@/components/ui/inline-expand-menu"
 import { cn } from "@/lib/utils"
 import { nextNotificationDayNine, notificationCopyText } from "@/lib/notification-state"
 import { playNotificationAnimation } from "@/lib/notification-animation"
@@ -121,36 +122,57 @@ function ItemActions({ notice, openMenu, pending, onOpenMenu, onRead, onSnooze }
           >
             <Copy className="size-3.5" />
           </button>
-          <button
-            type="button"
-            onClick={() => onOpenMenu(openMenu === notice.id ? null : notice.id)}
-            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label={`打开“${notice.title}”稍后提醒菜单`}
-            aria-expanded={openMenu === notice.id}
+          <InlineExpandMenu
+            open={openMenu === notice.id}
+            onOpenChange={(next) => onOpenMenu(next ? notice.id : null)}
+            trigger={<MoreHorizontal className="size-4" />}
+            triggerLabel={`打开“${notice.title}”稍后提醒菜单`}
+            panelLabel="稍后提醒"
+            panelWidth={176}
+            triggerHeight={32}
+            radius={16}
+            align="end"
+            placement="top"
+            panelRole="menu"
+            triggerClassName="h-8 w-8 rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            expandedTriggerClassName="bg-transparent text-foreground"
+            skinClassName="border border-border bg-card shadow-xl"
+            header={<span className="truncate text-xs font-medium text-muted-foreground">稍后提醒</span>}
           >
-            <MoreHorizontal className="size-4" />
-          </button>
+            <div className="flex flex-col p-1 text-xs text-foreground">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => snooze(Date.now() + 3_600_000)}
+                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-muted"
+              >
+                <Clock3 className="size-3.5" />
+                {snoozePending ? "处理中" : "1 小时后提醒"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => snooze(nextNotificationDayNine(Date.now()))}
+                className="rounded-lg px-2.5 py-2 text-left hover:bg-muted"
+              >
+                明天 09:00
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const raw = window.prompt("输入提醒时间（ISO）")
+                  const value = raw ? Date.parse(raw) : Number.NaN
+                  if (Number.isFinite(value)) snooze(value)
+                }}
+                className="rounded-lg px-2.5 py-2 text-left hover:bg-muted"
+              >
+                自定义时间
+              </button>
+            </div>
+          </InlineExpandMenu>
         </div>
       </div>
-      {openMenu === notice.id ? (
-        <div className="absolute right-3 top-10 z-50 flex min-w-40 flex-col rounded-xl border border-border bg-popover p-1 text-xs text-popover-foreground shadow-xl">
-          <button type="button" onClick={() => snooze(Date.now() + 3_600_000)} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-muted">
-            <Clock3 className="size-3.5" />{snoozePending ? "处理中" : "1 小时后提醒"}
-          </button>
-          <button type="button" onClick={() => snooze(nextNotificationDayNine(Date.now()))} className="rounded-lg px-2.5 py-2 text-left hover:bg-muted">明天 09:00</button>
-          <button
-            type="button"
-            onClick={() => {
-              const raw = window.prompt("输入提醒时间（ISO）")
-              const value = raw ? Date.parse(raw) : Number.NaN
-              if (Number.isFinite(value)) snooze(value)
-            }}
-            className="rounded-lg px-2.5 py-2 text-left hover:bg-muted"
-          >
-            自定义时间
-          </button>
-        </div>
-      ) : null}
     </div>
   )
 }

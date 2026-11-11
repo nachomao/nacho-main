@@ -1743,7 +1743,7 @@ export function AIWorkspace() {
               <TelemetryStat label="会话数" value={sessions.length} Icon={History} />
             </div>
 
-            {/* 最近调用：分支菜单串起各次调用，点选看命令，再点命令块弹出详情 */}
+            {/* 最近调用：分支菜单串起各次调用，点选看结果，再点结果块弹出详情 */}
             <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t border-border px-3 pt-1.5">
               {/* 会话切换时由组件内部先收展牵引线，再逐行模糊切换调用记录，并收起上一会话的选中项与详情 */}
               <RecentCallsBranch sessionId={active?.id ?? "no-session"} calls={recentCalls} />

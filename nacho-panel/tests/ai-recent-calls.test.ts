@@ -3,7 +3,8 @@ import test from "node:test"
 import {
   branchTraceDelay,
   collectRecentCalls,
-  recentCallCommand,
+  recentCallEmptyOutput,
+  recentCallOutput,
   recentCallsContentDelay,
   recentCallsLeadDelay,
   recentCallsSwapDuration,
@@ -47,20 +48,29 @@ test("新建会话从空记录开始，切回旧会话恢复其自己的调用",
   assert.deepEqual(collectRecentCalls(previous).map((call) => call.tool), ["p2", "p1"])
 })
 
-test("最近调用保留来源、状态、命令与风险等级", () => {
+test("最近调用保留来源、状态、结果与风险等级", () => {
   const [call] = collectRecentCalls(
-    session("s", 1, [step("x", "bash", "systemctl restart nginx", { source: "skill", status: "running", risk: "warn" })]),
+    session("s", 1, [step("x", "bash", "systemctl restart nginx", {
+      source: "skill",
+      status: "running",
+      risk: "warn",
+      output: "nginx restarted",
+    })]),
   )
   assert.equal(call.source, "skill")
   assert.equal(call.status, "running")
   assert.equal(call.detail, "systemctl restart nginx")
+  assert.equal(call.output, "nginx restarted")
   assert.equal(call.risk, "warn")
 })
 
-test("命令文本：与工具名相同或为空时视为没有参数", () => {
-  assert.equal(recentCallCommand({ tool: "bash", detail: "  ls -la  " }), "ls -la")
-  assert.equal(recentCallCommand({ tool: "nacho_overview", detail: "nacho_overview" }), "")
-  assert.equal(recentCallCommand({ tool: "bash", detail: "   " }), "")
+test("结果文本：优先使用输出，没有输出时按状态说明", () => {
+  assert.equal(recentCallOutput({ output: "  {\"ok\":true}  " }), "{\"ok\":true}")
+  assert.equal(recentCallOutput({}), "")
+  assert.equal(recentCallEmptyOutput("running"), "执行中，暂无结果")
+  assert.equal(recentCallEmptyOutput("waiting-confirm"), "等待确认，尚未执行")
+  assert.equal(recentCallEmptyOutput("error"), "调用失败，无输出")
+  assert.equal(recentCallEmptyOutput("done"), "无输出")
 })
 
 test("分支描线从上一次选中位置沿主干逐段推进", () => {

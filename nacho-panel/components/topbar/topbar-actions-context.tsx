@@ -7,7 +7,7 @@ import { WebSSHDialog } from "./webssh-dialog"
 import { useAIMode } from "@/components/ai-mode/ai-mode-context"
 import { CommandPalette } from "./command-palette"
 import { NotificationsDrawer, type NoticePending } from "./notifications-drawer"
-import { FilterPopover, countActiveFilters, defaultFilters, type HomeFilters } from "./filter-popover"
+import { countActiveFilters, defaultFilters, type HomeFilters } from "./filter-state"
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { notificationUnreadCount } from "@/lib/notification-state"
 
@@ -20,10 +20,9 @@ type TopbarActionsContextValue = {
   openNotices: () => void
   /** 打开全局搜索（Ctrl+K） */
   openSearch: () => void
-  /** 打开仪表盘筛选浮层（锚定到触发按钮下方） */
-  openFilter: (el: HTMLElement) => void
-  /** 当前筛选条件与已激活条数 */
+  /** 当前筛选条件与已激活条数；筛选按钮本体会原位展开成卡片 */
   filters: HomeFilters
+  setFilters: React.Dispatch<React.SetStateAction<HomeFilters>>
   filterCount: number
   /** 未读通知数 */
   unread: number
@@ -51,8 +50,6 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
   const [noticePending, setNoticePending] = useState<NoticePending>(null)
   const [noticeError, setNoticeError] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [filterAnchor, setFilterAnchor] = useState<{ top: number; left: number } | null>(null)
-  const [filterOpen, setFilterOpen] = useState(false)
   const [filters, setFilters] = useState<HomeFilters>(defaultFilters)
   const aiMode = useAIMode()
   const { settings: localSettings } = useLocalSettings()
@@ -68,12 +65,6 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
-
-  const openFilter = useCallback((el: HTMLElement) => {
-    const r = el.getBoundingClientRect()
-    setFilterAnchor({ top: r.bottom + 10, left: r.left })
-    setFilterOpen(true)
   }, [])
 
   const unread = notificationUnreadCount(notifications)
@@ -99,8 +90,8 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
       openTerminal: () => setTerminalOpen(true),
       openNotices: () => setNoticesOpen(true),
       openSearch: () => setSearchOpen(true),
-      openFilter,
       filters,
+      setFilters,
       filterCount: countActiveFilters(filters),
       unread,
       criticalAttention,
@@ -108,7 +99,7 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
       onlineCount,
       totalCount: clients.length,
     }),
-    [openFilter, filters, unread, criticalAttention, onlineCount, clients.length, aiMode.enter],
+    [filters, unread, criticalAttention, onlineCount, clients.length, aiMode.enter],
   )
 
   return (
@@ -132,13 +123,6 @@ export function TopbarActionsProvider({ children }: { children: React.ReactNode 
         onSnooze={(id, until) => void runNoticeAction({ action: "snooze", id }, () => snoozeNotification(id, until))}
         onSnoozeGroup={(groupKey, until) => void runNoticeAction({ action: "snoozeGroup", groupKey }, () => snoozeNotificationGroup(groupKey, until))}
         onReadGroup={(groupKey) => void runNoticeAction({ action: "readGroup", groupKey }, () => markNotificationGroupRead(groupKey))}
-      />
-      <FilterPopover
-        open={filterOpen}
-        onClose={() => setFilterOpen(false)}
-        anchor={filterAnchor}
-        filters={filters}
-        onChange={setFilters}
       />
     </TopbarActionsContext.Provider>
   )

@@ -3,9 +3,9 @@
 /* 最近调用分支：改编自 React Bits BranchedMenu
  * https://reactbits.dev/micro/branched-menu
  * MIT + Commons Clause，Copyright (c) 2026 David Haz。
- * 一条主干把最近的工具调用串起来；点选某次调用时描线沿主干逐段推进到它的分支，并在分支下方平滑展开命令；
- * 再点展开的命令块，它会从原位形变成贴着右栏的详情弹窗（只看命令，不含输出）。
- * 每行自带一段主干，所以展开命令撑高某一行时，主干与后续分支会自然跟随。
+ * 一条主干把最近的工具调用串起来；点选某次调用时描线沿主干逐段推进到它的分支，并在分支下方平滑展开调用结果；
+ * 再点展开的结果块，它会从原位形变成贴着右栏的详情弹窗（展示完整结果）。
+ * 每行自带一段主干，所以展开结果撑高某一行时，主干与后续分支会自然跟随。
  * 会话切换时主干先逐行延伸/收展，工具行随后才模糊渐显/渐隐；牵引线始终先动。 */
 
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react"
@@ -16,7 +16,8 @@ import { useMotionPreference } from "@/lib/motion-preference"
 import { besideRailPlacement, type MorphRect, type MorphSize, type MorphViewport } from "@/lib/morph-geometry"
 import {
   branchTraceDelay,
-  recentCallCommand,
+  recentCallEmptyOutput,
+  recentCallOutput,
   recentCallsContentDelay,
   recentCallsLeadDelay,
   recentCallsSwapDuration,
@@ -94,24 +95,25 @@ type Selection = { key: string | null; origin: number }
 type Popup = { call: RecentCall; open: boolean }
 type Timing = { segment: number; draw: number; erase: number }
 
-function CommandFace({ command }: { command: string }) {
+function ResultFace({ call }: { call: RecentCall }) {
+  const output = recentCallOutput(call)
   return (
     <>
       <span className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
-        <span>命令</span>
+        <span>结果</span>
         <span className="flex items-center gap-1">
           详情
           <Maximize2 className="h-2.5 w-2.5" />
         </span>
       </span>
-      <code
+      <div
         className={cn(
-          "mt-1 line-clamp-3 block break-all font-mono text-[10.5px] leading-relaxed",
-          command ? "text-foreground/85" : "text-muted-foreground/60",
+          "mt-1 line-clamp-3 break-all whitespace-pre-wrap font-mono text-[10.5px] leading-relaxed",
+          output ? "text-foreground/85" : "text-muted-foreground/60",
         )}
       >
-        {command || "无命令参数"}
-      </code>
+        {output || recentCallEmptyOutput(call.status)}
+      </div>
     </>
   )
 }
@@ -154,7 +156,6 @@ function RecentCallRow({
   registerDetail: (node: HTMLButtonElement | null) => void
 }) {
   const meta = sourceMeta[call.source]
-  const command = recentCallCommand(call)
   const detailId = useId()
   const trunkStyle = { left: TRUNK - LINE / 2, width: LINE }
   const fill = (on: boolean) => ({
@@ -290,7 +291,7 @@ function RecentCallRow({
                 type="button"
                 aria-haspopup="dialog"
                 aria-expanded={popupOpen}
-                aria-label={`查看 ${call.tool} 的完整命令`}
+                aria-label={`查看 ${call.tool} 的完整结果`}
                 onClick={onOpenPopup}
                 className={cn(
                   DETAIL_CLASS,
@@ -298,7 +299,7 @@ function RecentCallRow({
                   lifted && "opacity-0",
                 )}
               >
-                <CommandFace command={command} />
+                <ResultFace call={call} />
               </button>
             </motion.div>
           </div>
@@ -310,7 +311,7 @@ function RecentCallRow({
 
 function CallPopup({ call, titleId, onClose }: { call: RecentCall; titleId: string; onClose: () => void }) {
   const meta = sourceMeta[call.source]
-  const command = recentCallCommand(call)
+  const output = recentCallOutput(call)
   const [copy, setCopy] = useState<"idle" | "done" | "failed">("idle")
   const resetTimer = useRef<number | null>(null)
 
@@ -318,9 +319,9 @@ function CallPopup({ call, titleId, onClose }: { call: RecentCall; titleId: stri
     if (resetTimer.current !== null) window.clearTimeout(resetTimer.current)
   }, [])
 
-  const copyCommand = async () => {
+  const copyOutput = async () => {
     try {
-      await navigator.clipboard.writeText(command)
+      await navigator.clipboard.writeText(output)
       setCopy("done")
     } catch {
       setCopy("failed")
@@ -373,11 +374,11 @@ function CallPopup({ call, titleId, onClose }: { call: RecentCall; titleId: stri
 
       <div>
         <div className="flex h-6 items-center justify-between">
-          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">命令</span>
-          {command ? (
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">结果</span>
+          {output ? (
             <button
               type="button"
-              onClick={() => void copyCommand()}
+              onClick={() => void copyOutput()}
               className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               {copy === "done" ? <Check className="h-3 w-3 text-positive" /> : <Copy className="h-3 w-3" />}
@@ -386,7 +387,7 @@ function CallPopup({ call, titleId, onClose }: { call: RecentCall; titleId: stri
           ) : null}
         </div>
         <pre className="mt-1.5 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border/60 bg-background/60 p-2.5 font-mono text-[11px] leading-relaxed text-foreground/90">
-          {command || "该调用没有命令参数"}
+          {output || recentCallEmptyOutput(call.status)}
         </pre>
       </div>
 
@@ -478,7 +479,7 @@ export function RecentCallsBranch({ sessionId, calls }: { sessionId: string; cal
 
   const select = (key: string) => {
     if (popup?.open) return
-    // 收回的回弹尾段里换选：直接结束收回，旧命令卡随所在行一起折叠退场，不在原位留下残影
+    // 收回的回弹尾段里换选：直接结束收回，旧结果卡随所在行一起折叠退场，不在原位留下残影
     if (popup) setPopup(null)
     setSelection({ key: key === selection.key && selectedIndex >= 0 ? null : key, origin: selectedIndex })
   }
@@ -606,7 +607,7 @@ export function RecentCallsBranch({ sessionId, calls }: { sessionId: string; cal
           toRadius={POPUP_RADIUS}
           face={
             <div className={cn(DETAIL_CLASS, "h-full w-full")}>
-              <CommandFace command={recentCallCommand(popup.call)} />
+              <ResultFace call={liveCall} />
             </div>
           }
           backdrop="clear"

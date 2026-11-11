@@ -7,6 +7,7 @@ export type RecentCall = {
   source: ToolStep["source"]
   status: StepStatus
   detail: string
+  output?: string
   risk?: ToolStep["risk"]
   sessionTitle: string
 }
@@ -27,6 +28,7 @@ export function collectRecentCalls(session: Session | null | undefined, limit = 
         source: step.source,
         status: step.status,
         detail: step.detail,
+        ...(step.output ? { output: step.output } : {}),
         ...(step.risk ? { risk: step.risk } : {}),
         sessionTitle: session.title,
       })
@@ -35,10 +37,17 @@ export function collectRecentCalls(session: Session | null | undefined, limit = 
   return calls.slice(-limit).reverse()
 }
 
-/** 调用的命令文本；detail 为空或与工具名相同表示没有参数。 */
-export function recentCallCommand(call: Pick<RecentCall, "tool" | "detail">) {
-  const detail = call.detail.trim()
-  return detail && detail !== call.tool ? detail : ""
+/** 调用的结果文本；尚未产生输出时为空字符串。 */
+export function recentCallOutput(call: Pick<RecentCall, "output">) {
+  return call.output?.trim() ?? ""
+}
+
+/** 没有输出时按状态说明，避免详情卡空着。 */
+export function recentCallEmptyOutput(status: StepStatus) {
+  if (status === "running") return "执行中，暂无结果"
+  if (status === "waiting-confirm") return "等待确认，尚未执行"
+  if (status === "error") return "调用失败，无输出"
+  return "无输出"
 }
 
 /** 分支描线错峰：从上一次选中的位置出发，沿主干逐段推进（或回收）到新位置。 */

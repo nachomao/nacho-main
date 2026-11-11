@@ -29,6 +29,7 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { AnimatedRollingText } from "@/components/animated-rolling-text"
 import { SegmentedControl } from "@/components/ui/segmented-control"
 import { useServerData } from "@/components/server-data-context"
 import { usePanelResource } from "@/components/use-panel-resource"
@@ -990,9 +991,11 @@ export function TasksView() {
                             t.enabled && !eventTrigger && nextClock ? "text-foreground" : "text-lg font-semibold text-muted-foreground",
                           )}
                         >
-                          {gaugeValue}
+                          <AnimatedRollingText text={gaugeValue} className="justify-center" />
                         </div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">{gaugeHint}</div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">
+                          <AnimatedRollingText text={gaugeHint} className="justify-center" />
+                        </div>
                       </div>
                     </div>
 

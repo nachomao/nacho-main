@@ -8,12 +8,47 @@ type ToolState = {
   status?: string
   input?: Record<string, unknown>
   output?: unknown
+  error?: unknown
   title?: string
   metadata?: Record<string, unknown>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
+}
+
+function safeJsonStringify(value: unknown): string {
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  try {
+    return JSON.stringify(value, null, 2) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function extractToolOutput(state: ToolState): string | undefined {
+  const rawOutput = typeof state.output === "string"
+    ? state.output
+    : state.output !== undefined && state.output !== null
+      ? safeJsonStringify(state.output)
+      : ""
+  if (rawOutput.trim()) {
+    return truncateMiddle(redactSecrets(rawOutput), 2_048).text
+  }
+  if (state.status === "error" || state.error !== undefined) {
+    const errorRecord = asRecord(state.error)
+    const rawError = typeof state.error === "string"
+      ? state.error
+      : typeof errorRecord.message === "string"
+        ? errorRecord.message
+        : state.error !== undefined && state.error !== null
+          ? safeJsonStringify(state.error)
+          : ""
+    if (rawError.trim()) {
+      return truncateMiddle(redactSecrets(rawError), 2_048).text
+    }
+  }
+  return undefined
 }
 
 export function isSessionIdleEvent(event: OpenCodeEvent): boolean {
@@ -235,9 +270,7 @@ export class SessionEventMapper {
     const input = asRecord(state.input)
     const status = toolStatus(state.status)
     const detail = describeTool(tool, input, typeof state.title === "string" ? state.title : undefined)
-    const output = typeof state.output === "string" && state.output
-      ? truncateMiddle(redactSecrets(state.output), 2_048).text
-      : undefined
+    const output = extractToolOutput(state)
     const danger = toolDanger(tool)
     const risk = toolRisk(tool)
     if (!this.seenSteps.has(id)) {

@@ -104,6 +104,52 @@ test("tool parts map to steps and updates with source classification", () => {
   }
 })
 
+test("tool error state and structured output fall back cleanly into step output", () => {
+  const mapper = mapperWithMessages()
+  const failed = mapper.map({
+    type: "message.part.updated",
+    properties: {
+      sessionID: SESSION,
+      part: {
+        id: "prt_err",
+        messageID: ASSISTANT,
+        type: "tool",
+        callID: "call_err",
+        tool: "nacho_list_clients",
+        state: { status: "error", input: {}, error: "连接控制服务端失败 sk-abcdefghijklmnop" },
+      },
+    },
+  })
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0].type, "step")
+  if (failed[0].type === "step") {
+    assert.equal(failed[0].step.status, "error")
+    assert.ok(failed[0].step.output?.includes("连接控制服务端失败"))
+    assert.equal(failed[0].step.output?.includes("sk-abcdefghijklmnop"), false)
+  }
+
+  const structured = mapper.map({
+    type: "message.part.updated",
+    properties: {
+      sessionID: SESSION,
+      part: {
+        id: "prt_obj",
+        messageID: ASSISTANT,
+        type: "tool",
+        callID: "call_obj",
+        tool: "nacho_overview",
+        state: { status: "completed", input: {}, output: { clients: { total: 1 } } },
+      },
+    },
+  })
+  assert.equal(structured.length, 1)
+  assert.equal(structured[0].type, "step")
+  if (structured[0].type === "step") {
+    assert.equal(structured[0].step.status, "done")
+    assert.equal(structured[0].step.output, JSON.stringify({ clients: { total: 1 } }, null, 2))
+  }
+})
+
 test("permission events correlate to tool call and resolve", () => {
   const mapper = mapperWithMessages()
   mapper.map({
