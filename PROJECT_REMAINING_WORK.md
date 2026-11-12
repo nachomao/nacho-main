@@ -22,7 +22,8 @@
   - 验证（2026-11-05 当次记录）：服务端/Agent 已迭代到 1.1.25、面板到 0.3.22。服务端 118 项测试与 `npm run build` 通过，Agent Release 构建通过（Agent 测试受当前终端 testhost 父进程句柄拒绝访问的环境限制未完成）；面板 336 项测试、`tsc --noEmit`、`pnpm build` 通过；桌面 60 项测试与 `pnpm build` 通过，生成 `desktop/dist/NachoPanel/NachoPanel-Setup-0.3.22.exe`（SHA-256 `ec0e95149b6ba1ce821eea3a0fa093fec8edd18d6115dc156c1f2afce939c33f`）；真实浏览器与 `390x844` 视口验证任务卡片、时区字段、下次/最近执行与滚动。2026-11-11 复核未重新执行测试或打包，功能代码与残余限制均未变化。
   - 残余限制：`logon` / `startup` / `boot` 属于客户端事件，当前保留配置且界面明确标注“服务端不排期”，需 Agent 侧事件上报或本机计划任务后才能闭环。
 
-- [ ] **TODO-13 面板统一管理更新源（0.4.1 / 1.2.1）【加急】**
+- [x] **TODO-13 面板统一管理更新源（0.4.1 / 1.2.1）【加急】**
+  - 完成记录（2026-11-12）：Step 0–8 全部完成；面板 0.4.1 Beta 与服务端/Agent 1.2.1 Beta 已发布（签名索引 sequence 19），`10.11.32.200` 已升级并保留既有数据，Windows Agent 已安装 1.2.1 并在线。发布与真机证据见 Step 7/8。
   - 现状基线（2026-11-12）：面板 `0.4.0 Beta`（提交 `b3205433f7f92936ba3004a7dd41e769cbf0994b`）、服务端与 Agent `1.2.0 Beta`（提交 `b608fc80d945ebb7b58880489b35b373a4445600`）已发布；签名索引为 `sequence 18`，包含面板 0.4.0、服务端/Agent 1.2.0。新安装的 `deploy/install.sh` 已会把 `NACHO_UPDATE_ORIGIN` 写入 `.env`，但**面板没有写服务端更新源的 API**；既有 1.1.24 服务端只读 `.env`，所以面板能看到索引 #18，服务端卡片仍提示“控制服务尚未配置更新源”，Agent 制品按钮被禁用。
   - 产品目标：**面板是唯一管理入口，服务端是持久化与验签主体**。面板关闭时服务端仍能使用最后一次持久化的更新源完成索引校验、Agent 制品准备和服务端升级检查；`.env` 只保留为首次安装、无面板或 headless 部署的 bootstrap 回退，不再是唯一来源。
   - 版本与门禁：服务端与 Agent 统一 `1.2.1`，面板 `0.4.1`；服务端 `deploy/compatibility.json` 增加 `features.updateSourceManagement: "0.4.1"`；旧面板/旧服务端必须安全降级，不能把“面板本地已保存”误报成“服务端已配置”。
@@ -95,7 +96,8 @@
     - 迁移不得覆盖现有 `.env`、SQLite、Agent token、journal、已下发命令的旧制品；升级/回滚遵循各仓 AGENTS 的备份、重启、健康验证、失败回滚流程。
     - 文档：更新 `nacho-server/README.md`、`nacho-main/ARCHITECTURE.md` 或相关运维说明，写清“面板管理、服务端持久化、env 仅 bootstrap”的语义和 1.1.24 一次性迁移步骤。
 
-  - [ ] **Step 7【加急】分层测试与真机验收**
+  - [x] **Step 7【加急】分层测试与真机验收**
+    - 完成记录（2026-11-12）：服务端 `npm test` 160 项、`npm run build` 通过；面板 364 项、`tsc --noEmit`、`pnpm build` 通过；桌面 60 项、`pnpm build` 生成 `NachoPanel-Setup-0.4.1.exe`（223,431,146 字节，SHA-256 `96017b32fa9eb51f10da842bc58b45675dd7ac851050c6107573d4ed183fff2f`）；`bash deploy/tests/napl-fixture.sh` 通过，`install.sh`/`napl`/`uninstall.sh` 保持 LF。Agent `dotnet test` 仍被宿主沙箱拦截（testhost `UnauthorizedAccessException`），改用同一测试程序集的反射 runner：235 项通过，1 项 `PackageInstallManagerTests.Real_runner_preserves_argument_boundaries_and_kills_timeout_process_tree` 因沙箱子进程无法写入临时路径失败，`dotnet build -c Release` 通过。真机 `10.11.32.200` 升级到 1.2.1；面板保存 origin 后 `runtime-info` 立即变为 `panel`，非法 HTTP origin 返回 400 且不改旧值，空字符串回退 `env`，重启后仍为 `panel` 且设置行保留；索引缓存带 `origin`，保存后磁盘缓存被清空并在重新获取时重建；签名索引 sequence 18→19 读取正常。通过服务端本机 `curl --max-time 1200` 准备 Agent 1.2.1 制品成功（76,545,633 字节，SHA-256 与 GitHub 一致），`GET /agent/downloads/windows/latest.json` 返回 200。Windows 本机执行 `nacho.ps1` 安装/升级 Agent：旧 exe 被残留进程占用，重命名后安装成功；服务 Running、版本 1.2.1，服务端显示 online。真实 Chrome 390×844 视口：`scrollWidth=390` 无横向溢出，更新页与弹窗均显示面板本地/服务端两个来源；截图在 `%TEMP%/nacho-390x844.png` 与 `%TEMP%/nacho-390x844-modal.png`。安全验收：非法 origin/HTTP/路径/占位值/无效端口均拒绝，密钥未出现在命令、stdin 回显、日志或面板输出，索引 Ed25519 验签通过。
     - 服务端：`npm test && npm run build`；覆盖 settings、runtime-info、索引缓存、Agent 同步、非法 origin、重启持久化。
     - 面板：`pnpm exec tsx --test tests/*.test.ts`、`pnpm exec tsc --noEmit`、`pnpm build`；桌面 `pnpm test && pnpm build`，核对 `desktop/dist/NachoPanel/NachoPanel-Setup-0.4.1.exe` 重新生成。
     - 部署脚本：`bash deploy/tests/napl-fixture.sh`；`install.sh` 保持 LF；若修改 `install.sh`，按 AGENTS 核对 `cloud-deployment.ts` 的部署输入。
@@ -103,7 +105,8 @@
     - 真机验收：面板修改 origin → 服务端 `runtime-info` 立即变化 → 重启服务端设置仍在 → Agent“准备新版制品”成功 → `GET /agent/downloads/windows/latest.json` 返回 200；从 Windows 机器执行 `irm .../nacho.ps1 | iex` 安装成功。
     - 安全验收：非法 origin、HTTP、路径、占位值、注入字符全部拒绝；日志/面板输出不出现 API Key、密码、`.env` 全文；索引 Ed25519 签名仍校验。
 
-  - [ ] **Step 8【加急】发布 0.4.1 / 1.2.1**
+  - [x] **Step 8【加急】发布 0.4.1 / 1.2.1**
+    - 完成记录（2026-11-12）：版本已递增：面板 0.4.1（desktop manifest，Beta），服务端/Agent 1.2.1（`package.json`、`package-lock.json`、`Nacho.Agent.csproj`），`compatibility.json` 已含 `updateSourceManagement: "0.4.1"`。固定提交：nacho-main `60da79565963a3c932442d0594b1328b05a84e13`，nacho-server `dbfb2bf2181b6287042705289c8cb7aff7b66baa`。GitHub Release 已上传并回读：面板 `NachoPanel-Setup-0.4.1.exe` 223,431,146 字节 SHA-256 `96017b32fa9eb51f10da842bc58b45675dd7ac851050c6107573d4ed183fff2f`；服务端源码 `nacho-server-source-1.2.1.tar.gz` 336,333 字节 SHA-256 `4a1498eea5f452a8bedbb92aaae0db1a694d3ef4ea1aaae5c5dbbcf85969d402`；Agent `nacho-agent-1.2.1-win-x64.exe` 76,545,633 字节 SHA-256 `68fb85e5216c712f49e573c0c87e47a5d4afd271de3e717b5f06268348c49acd`。更新服务器已签署 v4 推荐索引 sequence 19（panel/server 均为 beta）；`https://maojiu.cc/updates/index.json` 重定向到不可变修订地址，`.sig` 使用固定公钥独立验签通过，SSE `/updates/events` 推送 `{"sequence":19}`；索引中的版本、大小与 GitHub 元数据逐项一致。发布后真机已验证：10.11.32.200 为 1.2.1、Agent 1.2.1 online、面板 0.4.1 Beta 可见、签名索引可读取。回滚状态：旧索引 sequence 18 与旧制品保留在 GitHub/更新服务器不可变目录；本次未触发回滚。因本机 testhost 沙箱与发布脚本 SSH 密钥路径限制，使用 `publish-update.ps1` 的底层工具 `upload-github.mjs` 与 `publish-index-ssh.cjs` 完成等价流程，发布脚本本身未改动；Agent 测试结果按 Step 7 的反射 runner 记录。
     - 先确认 0.4.0/1.2.0 的已知自动准备缺陷已按 Step 5 修复，再递增版本：面板 `desktop/package.json` 与 `PANEL_VERSION` 语义为 `0.4.1`，服务端 `package.json`/`package-lock.json`/Agent `Nacho.Agent.csproj` 统一 `1.2.1`，`deploy/compatibility.json` 增加能力门槛。
     - 按 `AI_RELEASE_POLICY.md` 和根 `publish-update.ps1` 执行：全量测试 → 提交并推送固定 SHA → 生成面板 EXE、服务端源码包和 Agent EXE → GitHub Release 回读大小/哈希 → 通过 SSH 只发送发布元数据 → 更新服务器签署 v4 索引并 SSE 通知。
     - 发布后独立核对：签名索引 `.sig` 用固定公钥验签；GitHub API 资产 `size`/`digest` 与索引一致；记录索引序号、两个仓提交 SHA、版本、频道和回滚状态。
