@@ -14,7 +14,16 @@ const MOTION = "duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:tr
  * 更新说明胶囊：以原位置为中心向上下两侧展开并浮于卡片内容之上，
  * 即将被遮挡的文字边缘与正文滚动边缘均做渐进式模糊。
  */
-export function ReleaseNotesCapsule({ title, notes }: { title?: string; notes?: string }) {
+export function ReleaseNotesCapsule({
+  title,
+  notes,
+  bodyMaxHeightClass = "max-h-36",
+}: {
+  title?: string
+  notes?: string
+  /** 正文最大高度；长说明页面可传入更高的上限，减少内层滚动。 */
+  bodyMaxHeightClass?: string
+}) {
   const [open, setOpen] = useState(false)
   const [edges, setEdges] = useState({ top: false, bottom: false })
   const rootRef = useRef<HTMLDivElement>(null)
@@ -120,7 +129,8 @@ export function ReleaseNotesCapsule({ title, notes }: { title?: string; notes?: 
                     ref={scrollRef}
                     onScroll={syncEdges}
                     className={cn(
-                      "max-h-36 overflow-y-auto overscroll-contain px-3.5 py-3 transition-opacity",
+                      "overflow-y-auto overscroll-contain px-3.5 py-3 transition-opacity",
+                      bodyMaxHeightClass,
                       MOTION,
                       open ? "opacity-100" : "opacity-0",
                     )}

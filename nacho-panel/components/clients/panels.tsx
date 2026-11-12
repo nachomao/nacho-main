@@ -20,12 +20,14 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ClientCard } from "./client-card"
-import type { Client } from "./client-data"
+import { formatMetricPercent, statusMeta, type Client } from "./client-data"
+import { OsLogo, resolveOsBrand } from "./os-logos"
 import { ClientManagementPanel } from "./extensions-panel"
 import { useServerData } from "@/components/server-data-context"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { defaultServerBaseUrl } from "@/lib/server-connection"
 import { useConfirm } from "@/components/ui/confirm-dialog"
+import { ReleaseNotesCapsule } from "@/components/settings/release-notes-capsule"
 import { installCommands, installScriptUrl } from "@/lib/install-profiles"
 
 /* 通用面板外壳：标题 + 描述 + 内容 */
@@ -508,15 +510,14 @@ export function AddGroupPanel() {
   )
 }
 
-/* ---------- 面板四：客户端更新 ---------- */
-/* ---------- 面板四：客户端更新 ---------- */
-type UpdateCommand = {
+/* ---------- 面板四：客户端更新（左侧发版制品与覆盖率看板 + 右侧升级进度圆环卡片） ---------- */
+export type UpdateCommand = {
   id: string
   status: "pending" | "sent" | "running" | "success" | "failed" | "canceled"
   result: string | null
 }
 
-type UpdateClient = Client & {
+export type UpdateClient = Client & {
   connected: boolean
   currentVersion: string
   targetVersion: string
@@ -525,8 +526,8 @@ type UpdateClient = Client & {
   skipReason: "not-windows" | "already-current" | "newer-than-release" | "invalid-version" | "active-update" | null
 }
 
-type AgentUpdates = {
-  release: { version: string; fileName: string; sha256: string; rid: "win-x64"; sizeBytes: number; publishedAt: string }
+export type AgentUpdates = {
+  release: { version: string; fileName: string; sha256: string; rid: "win-x64"; sizeBytes: number; publishedAt: string; title?: string; notes?: string }
   clients: UpdateClient[]
 }
 
@@ -535,6 +536,8 @@ type QueueResult = {
   queued: UpdateCommand[]
   skipped: Array<{ clientId: string; reason: string }>
 }
+
+type UpdateFilter = "all" | "active" | "available" | "current"
 
 const activePhases = new Set(["pending", "sent", "running", "downloading", "verified", "applying"])
 const phaseLabels: Record<string, string> = {
@@ -555,6 +558,23 @@ function humanBytes(bytes: number) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${Math.ceil(bytes / 1024)} KiB`
 }
 
+function shortenSha256(hash: string) {
+  if (!hash || hash.length <= 16) return hash || "—"
+  return `${hash.slice(0, 8)}...${hash.slice(-6)}`
+}
+
+function formatRelativeSeen(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "未知"
+  const diffMs = Math.max(0, Date.now() - timestamp)
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return "刚刚"
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  return `${days} 天前`
+}
+
 function parseUpdateResult(command: UpdateCommand | null) {
   try {
     return command?.result ? JSON.parse(command.result) as { fromVersion?: string; targetVersion?: string; error?: string; rollbackReason?: string } : null
@@ -563,40 +583,401 @@ function parseUpdateResult(command: UpdateCommand | null) {
   }
 }
 
-function UpdateBadge({ client, onUpdate }: { client: UpdateClient; onUpdate: () => void }) {
-  const phase = client.phase ?? (client.skipReason === "already-current" ? "already-current" : null)
-  const active = phase ? activePhases.has(phase) : false
-  if (phase === "healthy" || phase === "already-current") return (
-    <span className="flex items-center gap-1.5 rounded-full bg-primary/12 px-3 py-1 text-xs font-medium text-primary">
-      <CheckCircle2 className="h-3.5 w-3.5" />{phaseLabels[phase]}
-    </span>
-  )
-  if (active) return (
-    <span className="flex items-center gap-1.5 rounded-full bg-[#dce02d]/15 px-3 py-1 text-xs font-medium text-[#dce02d]">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" />{phaseLabels[phase!] ?? phase}
-    </span>
-  )
-  if (phase === "rolled-back" || phase === "failed") return (
-    <span className="flex items-center gap-1.5 rounded-full bg-destructive/12 px-3 py-1 text-xs font-medium text-destructive">
-      <AlertCircle className="h-3.5 w-3.5" />{phaseLabels[phase]}
-    </span>
-  )
-  if (client.skipReason === "newer-than-release") return <span className="text-xs text-muted-foreground">高于发布版</span>
-  if (client.skipReason === "invalid-version") return <span className="text-xs text-destructive">版本异常</span>
+export type AgentReleaseNotes = { version: string; title?: string; notes?: string }
+
+/** 服务端清单优先；缺失时回退到签名发布索引中同版本的 Agent 说明。 */
+export function resolveAgentReleaseNotes(
+  release: AgentReleaseNotes,
+  signed: AgentReleaseNotes | null,
+): { title?: string; notes?: string } {
+  const matched = signed?.version === release.version ? signed : null
+  return {
+    title: release.title?.trim() || matched?.title?.trim() || undefined,
+    notes: release.notes?.trim() || matched?.notes?.trim() || undefined,
+  }
+}
+
+function resolveClientEffectivePhase(client: UpdateClient): string | null {
+  return client.phase ?? (client.skipReason === "already-current" ? "already-current" : null)
+}
+
+function isClientUpToDate(client: UpdateClient): boolean {
+  const phase = resolveClientEffectivePhase(client)
+  return phase === "healthy" || phase === "already-current" || client.skipReason === "newer-than-release"
+}
+
+function isClientUpdateActive(client: UpdateClient): boolean {
+  const phase = resolveClientEffectivePhase(client)
+  return Boolean(phase && activePhases.has(phase)) || client.skipReason === "active-update"
+}
+
+type StepTone = "done" | "active" | "error" | "ready" | "idle"
+
+function buildPipelineSteps(client: UpdateClient): Array<{ label: string; tone: StepTone }> {
+  const phase = resolveClientEffectivePhase(client)
+  const isCompleted = phase === "healthy" || phase === "already-current" || client.skipReason === "newer-than-release"
+  if (isCompleted) {
+    return [
+      { label: "1. 版本比对 ✓", tone: "done" },
+      { label: "2. 制品下载 ✓", tone: "done" },
+      { label: "3. SHA256 校验 ✓", tone: "done" },
+      { label: "4. 服务替换 ✓", tone: "done" },
+      { label: "5. 健康确认 ✓", tone: "done" },
+    ]
+  }
+
+  if (phase === "pending" || phase === "sent" || phase === "running") {
+    const queueLabel = client.status === "offline"
+      ? "1. 离线排队中 ⋯"
+      : phase === "pending"
+        ? "1. 队列挂起中 ⋯"
+        : "1. 指令下发中 ⋯"
+    return [
+      { label: queueLabel, tone: "active" },
+      { label: "2. 制品下载", tone: "idle" },
+      { label: "3. SHA256 校验", tone: "idle" },
+      { label: "4. 服务替换", tone: "idle" },
+      { label: "5. 健康确认", tone: "idle" },
+    ]
+  }
+
+  if (phase === "downloading") {
+    return [
+      { label: "1. 版本比对 ✓", tone: "done" },
+      { label: "2. 制品下载中 ⋯", tone: "active" },
+      { label: "3. SHA256 校验", tone: "idle" },
+      { label: "4. 服务替换", tone: "idle" },
+      { label: "5. 健康确认", tone: "idle" },
+    ]
+  }
+
+  if (phase === "verified") {
+    return [
+      { label: "1. 版本比对 ✓", tone: "done" },
+      { label: "2. 制品下载 ✓", tone: "done" },
+      { label: "3. SHA256 校验 ✓", tone: "active" },
+      { label: "4. 服务替换", tone: "idle" },
+      { label: "5. 健康确认", tone: "idle" },
+    ]
+  }
+
+  if (phase === "applying") {
+    return [
+      { label: "1. 版本比对 ✓", tone: "done" },
+      { label: "2. 制品下载 ✓", tone: "done" },
+      { label: "3. SHA256 校验 ✓", tone: "done" },
+      { label: "4. 服务替换中 ⋯", tone: "active" },
+      { label: "5. 健康确认", tone: "idle" },
+    ]
+  }
+
+  if (phase === "rolled-back" || phase === "failed") {
+    return [
+      { label: "1. 版本比对 ✓", tone: "done" },
+      { label: "2. 制品下载 ✓", tone: "done" },
+      { label: "3. SHA256 校验 ✓", tone: "done" },
+      { label: phase === "rolled-back" ? "4. 已触发回滚 !" : "4. 服务替换 !", tone: "error" },
+      { label: "5. 升级未完成 ✕", tone: "error" },
+    ]
+  }
+
+  // 待更新或版本异常
+  if (client.skipReason === "invalid-version") {
+    return [
+      { label: "1. 版本号异常 !", tone: "error" },
+      { label: "2. 制品下载", tone: "idle" },
+      { label: "3. SHA256 校验", tone: "idle" },
+      { label: "4. 服务替换", tone: "idle" },
+      { label: "5. 健康确认", tone: "idle" },
+    ]
+  }
+
+  return [
+    { label: "1. 待下发更新", tone: "ready" },
+    { label: "2. 制品下载", tone: "idle" },
+    { label: "3. SHA256 校验", tone: "idle" },
+    { label: "4. 服务替换", tone: "idle" },
+    { label: "5. 健康确认", tone: "idle" },
+  ]
+}
+
+const PIPELINE_TOTAL = 5
+
+type PipelineTone = "done" | "active" | "error" | "ready"
+
+type PipelineProgress = {
+  tone: PipelineTone
+  label: string
+  count: number
+}
+
+function buildPipelineProgress(client: UpdateClient): PipelineProgress {
+  const phase = resolveClientEffectivePhase(client)
+
+  if (phase === "healthy") return { tone: "done", label: "升级流程已完成", count: PIPELINE_TOTAL }
+  if (phase === "already-current") return { tone: "done", label: "已是最新版本", count: PIPELINE_TOTAL }
+  if (client.skipReason === "newer-than-release") return { tone: "done", label: "版本高于发布清单", count: PIPELINE_TOTAL }
+
+  if (phase === "pending" || phase === "sent" || phase === "running") {
+    const label = client.status === "offline"
+      ? "离线排队中"
+      : phase === "pending"
+        ? "队列挂起中"
+        : "指令下发中"
+    return { tone: "active", label, count: 1 }
+  }
+
+  if (phase === "downloading") return { tone: "active", label: "正在下载制品", count: 2 }
+  if (phase === "verified") return { tone: "active", label: "SHA256 校验完成", count: 3 }
+  if (phase === "applying") return { tone: "active", label: "正在替换服务", count: 4 }
+  if (phase === "rolled-back") return { tone: "error", label: "服务替换失败，已回滚", count: 3 }
+  if (phase === "failed") return { tone: "error", label: "升级失败", count: 3 }
+  if (client.skipReason === "invalid-version") return { tone: "error", label: "版本号异常", count: 0 }
+
+  return { tone: "ready", label: "等待下发升级指令", count: 0 }
+}
+
+const pipelineRingToneClass: Record<PipelineTone, string> = {
+  done: "text-positive",
+  active: "text-[#dce02d]",
+  error: "text-destructive",
+  ready: "text-primary",
+}
+
+const pipelineLabelToneClass: Record<PipelineTone, string> = {
+  done: "text-positive",
+  active: "text-[#dce02d]",
+  error: "text-destructive",
+  ready: "text-muted-foreground",
+}
+
+function PipelineRing({ tone, count }: { tone: PipelineTone; count: number }) {
+  const radius = 7.5
+  const circumference = 2 * Math.PI * radius
+  const ratio = Math.max(0, Math.min(1, count / PIPELINE_TOTAL))
+
   return (
-    <button type="button" onClick={onUpdate} className="flex items-center gap-1.5 rounded-full bg-surface px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted">
-      <Download className="h-3.5 w-3.5" />立即更新
+    <span
+      className={cn("relative grid h-5 w-5 shrink-0 place-items-center", pipelineRingToneClass[tone])}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 20 20" className="absolute inset-0 -rotate-90">
+        <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeOpacity={0.16} strokeWidth={2.4} />
+        {ratio > 0 && (
+          <circle
+            cx="10"
+            cy="10"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.4}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - ratio)}
+          />
+        )}
+      </svg>
+      {tone === "done" ? (
+        <Check className="relative h-2.5 w-2.5" strokeWidth={3} />
+      ) : tone === "error" ? (
+        <AlertCircle className="relative h-2.5 w-2.5" strokeWidth={2.6} />
+      ) : tone === "ready" ? (
+        <Download className="relative h-2.5 w-2.5" strokeWidth={2.6} />
+      ) : (
+        <span className="relative h-1 w-1 rounded-full bg-current" />
+      )}
+    </span>
+  )
+}
+
+function UpdateBadge({ client, onUpdate }: { client: UpdateClient; onUpdate: () => void }) {
+  const phase = resolveClientEffectivePhase(client)
+  const active = phase ? activePhases.has(phase) : false
+  if (phase === "healthy" || phase === "already-current") {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-positive/25 bg-positive/12 px-3 py-1 text-xs font-medium text-positive">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        {phaseLabels[phase]}
+      </span>
+    )
+  }
+  if (active) {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#dce02d]/30 bg-[#dce02d]/15 px-3 py-1 text-xs font-medium text-[#dce02d]">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        {phaseLabels[phase!] ?? phase}
+      </span>
+    )
+  }
+  if (phase === "rolled-back" || phase === "failed") {
+    return (
+      <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-destructive/30 bg-destructive/12 px-3 py-1 text-xs font-medium text-destructive">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+        {phaseLabels[phase]}
+      </span>
+    )
+  }
+  if (client.skipReason === "newer-than-release") {
+    return (
+      <span className="shrink-0 whitespace-nowrap rounded-full border border-border bg-background/50 px-3 py-1 text-xs text-muted-foreground">
+        高于发布版
+      </span>
+    )
+  }
+  if (client.skipReason === "invalid-version") {
+    return (
+      <span className="shrink-0 whitespace-nowrap rounded-full border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs text-destructive">
+        版本异常
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onUpdate}
+      className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-95"
+    >
+      <Download className="h-3.5 w-3.5 shrink-0" />
+      立即更新
     </button>
   )
 }
 
+export function ClientUpdateCard({
+  client,
+  onUpdate,
+}: {
+  client: UpdateClient
+  onUpdate: () => void
+}) {
+  const brand = resolveOsBrand(client.os, client.osName)
+  const status = statusMeta[client.status] ?? statusMeta.offline
+  const result = parseUpdateResult(client.command)
+  const steps = buildPipelineSteps(client)
+  const progress = buildPipelineProgress(client)
+  const isActive = isClientUpdateActive(client)
+  const isFailed = client.phase === "failed" || client.phase === "rolled-back"
+  const versionChanged = client.currentVersion !== client.targetVersion
+
+  const connectionDesc = client.status === "offline"
+    ? client.phase === "pending"
+      ? "离线 · 等待上线"
+      : "离线"
+    : client.connected
+      ? `${status.label} (WS 实时)`
+      : `${status.label} (HTTP 轮询)`
+
+  const metricsSummary = client.status !== "offline" && client.metrics
+    ? `CPU ${formatMetricPercent(client.metrics.cpu)}% / 内存 ${formatMetricPercent(client.metrics.memory)}%`
+    : `上次心跳 ${formatRelativeSeen(client.lastSeen)}`
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3.5 rounded-2xl border bg-surface/60 p-4 transition-colors hover:bg-surface",
+        isActive
+          ? "border-[#dce02d]/35"
+          : isFailed
+            ? "border-destructive/35"
+            : "border-border",
+      )}
+    >
+      {/* 卡片头部：OS 徽标 + 设备身份/环境负载 + 版本演进与操作 */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-xs"
+            style={{ backgroundColor: brand.color }}
+            title={brand.label}
+          >
+            <OsLogo brand={brand} className="h-5 w-5 text-white" />
+          </span>
+
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">{client.name}</p>
+              <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs font-medium", status.text)}>
+                <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} />
+                {connectionDesc}
+              </span>
+              {client.group && (
+                <span className="shrink-0 rounded-md border border-border bg-background/40 px-2 py-0.5 text-xs text-muted-foreground">
+                  {client.group}
+                </span>
+              )}
+              {client.tags?.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="max-w-24 truncate rounded-md border border-border/70 px-1.5 py-0.5 text-xs text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-muted-foreground">
+              <span>主机: {client.hostname}</span>
+              <span className="text-border" aria-hidden>·</span>
+              <span>IP: {client.ip}</span>
+              <span className="text-border" aria-hidden>·</span>
+              <span className="font-sans">{brand.label}</span>
+              <span className="text-border" aria-hidden>·</span>
+              <span className="font-sans">{metricsSummary}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* 右侧：版本号胶囊 + 状态/更新动作 */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background/50 px-2.5 py-1 font-mono text-xs text-foreground">
+            <span>v{client.currentVersion || "未知"}</span>
+            {versionChanged && (
+              <>
+                <span className="text-muted-foreground">→</span>
+                <strong className="font-semibold text-primary">v{client.targetVersion}</strong>
+              </>
+            )}
+          </span>
+          <UpdateBadge client={client} onUpdate={onUpdate} />
+        </div>
+      </div>
+
+      {/* 五步升级进度：圆环 + 当前步骤，悬停查看完整步骤 */}
+      <div
+        className="flex min-w-0 items-center gap-2.5 border-t border-border/70 pt-3"
+        title={steps.map((step) => step.label).join(" · ")}
+        aria-label={`升级进度：${progress.label}，${progress.count} / ${PIPELINE_TOTAL}`}
+      >
+        <PipelineRing tone={progress.tone} count={progress.count} />
+        <span className={cn("min-w-0 flex-1 truncate text-xs font-medium", pipelineLabelToneClass[progress.tone])}>
+          {progress.label}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/80">
+          {progress.count} / {PIPELINE_TOTAL}
+        </span>
+      </div>
+
+      {/* 错误或回滚详情 */}
+      {(result?.error || result?.rollbackReason) && (
+        <div className="rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {result.error || result.rollbackReason}
+          {result.fromVersion && ` · 已恢复 v${result.fromVersion}`}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ClientUpdatePanel() {
-  const { apiRequest, refresh } = useServerData()
+  const { apiRequest, refresh, developerPreview } = useServerData()
   const { confirm } = useConfirm()
   const [updates, setUpdates] = useState<AgentUpdates | null>(null)
+  const [signedAgentRelease, setSignedAgentRelease] = useState<AgentReleaseNotes | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastQueue, setLastQueue] = useState<QueueResult | null>(null)
+  const [filter, setFilter] = useState<UpdateFilter>("all")
+  const [copiedSha, setCopiedSha] = useState(false)
 
   async function load() {
     try {
@@ -614,12 +995,45 @@ export function ClientUpdatePanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiRequest])
 
+  useEffect(() => {
+    if (developerPreview || !updates?.release.version || updates.release.notes) return
+    const controller = new AbortController()
+    void fetch("/api/product-updates", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return null
+        const payload = await response.json().catch(() => null) as {
+          ok?: boolean
+          data?: { index?: { releases?: { agent?: AgentReleaseNotes } } }
+        } | null
+        return payload?.ok ? payload.data?.index?.releases?.agent ?? null : null
+      })
+      .then((agent) => {
+        if (!controller.signal.aborted && agent?.version) setSignedAgentRelease(agent)
+      })
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [developerPreview, updates?.release.notes, updates?.release.version])
+
+  async function copyReleaseSha() {
+    if (!updates?.release.sha256) return
+    try {
+      await navigator.clipboard.writeText(updates.release.sha256)
+      setCopiedSha(true)
+      window.setTimeout(() => setCopiedSha(false), 1600)
+    } catch {
+      setCopiedSha(false)
+    }
+  }
+
   async function queue(scope: "all" | "clients", clientIds: string[] = []) {
     if (!updates || submitting) return
-    const candidates = scope === "all" ? updates.clients.filter((item) => item.skipReason === null) : updates.clients.filter((item) => clientIds.includes(item.id))
+    const windowsClients = updates.clients.filter((item) => item.os === "Windows" && item.skipReason !== "not-windows")
+    const candidates = scope === "all"
+      ? windowsClients.filter((item) => item.skipReason === null)
+      : windowsClients.filter((item) => clientIds.includes(item.id))
     const online = candidates.filter((item) => item.status !== "offline").length
     const offline = candidates.length - online
-    const expectedSkipped = updates.clients.length - candidates.length
+    const expectedSkipped = windowsClients.length - candidates.length
     const accepted = await confirm({
       title: scope === "all" ? "为全部可升级客户端创建升级命令？" : "为所选客户端创建升级命令？",
       description: "升级期间 Agent 会短暂重连，命令支持断线重试与回滚。",
@@ -643,45 +1057,220 @@ export function ClientUpdatePanel() {
     }
   }
 
-  const rows = updates?.clients ?? []
-  const available = rows.filter((item) => item.skipReason === null).length
+  // 只展示 Windows 客户端（与真实服务端 /agent-updates 一致，兼容预览模式包含的 Linux 演示节点）
+  const rows = (updates?.clients ?? []).filter((item) => item.os === "Windows" && item.skipReason !== "not-windows")
+  const totalCount = rows.length
+  const upToDateCount = rows.filter(isClientUpToDate).length
+  const activeCount = rows.filter(isClientUpdateActive).length
+  const availableCount = rows.filter((item) => item.skipReason === null).length
+  const releaseNotes = updates
+    ? resolveAgentReleaseNotes(updates.release, signedAgentRelease)
+    : { title: undefined, notes: undefined }
+
+  const upToDatePct = totalCount > 0 ? Math.round((upToDateCount / totalCount) * 100) : 0
+  const activePct = totalCount > 0 ? Math.round((activeCount / totalCount) * 100) : 0
+  const availablePct = totalCount > 0 ? Math.max(0, 100 - upToDatePct - activePct) : 0
+
+  const filteredRows = rows.filter((client) => {
+    if (filter === "active") return isClientUpdateActive(client)
+    if (filter === "available") return client.skipReason === null
+    if (filter === "current") return isClientUpToDate(client)
+    return true
+  })
+
+  const filterButtons: Array<{ id: UpdateFilter; label: string; count: number; highlight?: string }> = [
+    { id: "all", label: "全部", count: totalCount },
+    { id: "active", label: "进行中", count: activeCount, highlight: activeCount > 0 ? "border-[#dce02d]/35 text-[#dce02d]" : undefined },
+    { id: "available", label: "待更新", count: availableCount, highlight: availableCount > 0 ? "border-primary/35 text-primary" : undefined },
+    { id: "current", label: "已最新", count: upToDateCount },
+  ]
 
   return (
     <PanelShell
       title="客户端更新"
-      desc={updates ? `最新版本 v${updates.release.version} · ${new Date(updates.release.publishedAt).toLocaleString()} · ${humanBytes(updates.release.sizeBytes)} · ${available} 台可更新` : "正在读取服务端发布清单"}
-      action={
-        <button type="button" onClick={() => void queue("all")} disabled={!updates || submitting || available === 0} className="flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50">
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}全部更新
-        </button>
+      desc={
+        updates
+          ? "基于控制服务端签名发布清单，向 Windows Agent 分发升级命令与回滚保护"
+          : "正在读取服务端发布清单"
       }
-    >
-      <div className="h-full overflow-auto pr-1">
-        {error && <div className="mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
-        {lastQueue && <div className="mb-3 rounded-xl border border-border bg-surface/60 px-3 py-2 text-xs text-muted-foreground">已排队 {lastQueue.queued.length} 台，跳过 {lastQueue.skipped.length} 台。</div>}
-        {rows.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"><Monitor className="h-8 w-8" /><p className="text-sm">暂无 Windows 客户端</p></div>
-        ) : <div className="flex flex-col gap-2">
-          {rows.map((client) => {
-            const result = parseUpdateResult(client.command)
+      action={
+        <div className="flex flex-wrap items-center gap-1.5">
+          {filterButtons.map((item) => {
+            const selected = filter === item.id
             return (
-              <div key={client.id} className="rounded-2xl border border-border bg-surface/60 px-4 py-3.5 transition-colors hover:bg-surface">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background/40"><Monitor className="h-5 w-5 text-muted-foreground" /></span>
-                    <div className="min-w-0 leading-tight">
-                      <p className="truncate text-sm font-medium">{client.name}</p>
-                      <p className="text-xs text-muted-foreground"><span className="font-mono">{client.currentVersion || "未知"}</span>{client.currentVersion !== client.targetVersion && <> → <span className="font-mono text-primary">{client.targetVersion}</span></>}</p>
-                      {client.status === "offline" && client.phase === "pending" && <p className="mt-1 text-xs text-[#dce02d]">等待上线</p>}
-                    </div>
-                  </div>
-                  <UpdateBadge client={client} onUpdate={() => void queue("clients", [client.id])} />
-                </div>
-                {(result?.error || result?.rollbackReason) && <div className="mt-3 rounded-xl bg-destructive/8 px-3 py-2 text-xs text-destructive">{result.error || result.rollbackReason}{result.fromVersion && ` · 已恢复 ${result.fromVersion}`}</div>}
-              </div>
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setFilter(item.id)}
+                className={cn(
+                  "rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+                  selected
+                    ? "border-primary/45 bg-primary/15 text-primary"
+                    : item.highlight ?? "border-border bg-surface/60 text-muted-foreground hover:bg-surface hover:text-foreground",
+                )}
+              >
+                {item.label} ({item.count})
+              </button>
             )
           })}
-        </div>}
+        </div>
+      }
+    >
+      <div className="flex h-full flex-col gap-4 overflow-x-hidden overflow-y-auto pr-1">
+        {error && (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
+            {error}
+          </div>
+        )}
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[310px_minmax(0,1fr)]">
+          {/* 左侧：发版制品与覆盖率看板 */}
+          <aside className="flex min-w-0 flex-col justify-between gap-4 rounded-2xl border border-border bg-surface/50 p-4">
+            <div className="flex min-w-0 flex-col gap-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-muted-foreground">当前发布清单 (latest.json)</span>
+                <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-positive/25 bg-positive/12 px-2.5 py-0.5 text-xs font-medium text-positive">
+                  <CheckCircle2 className="h-3 w-3 shrink-0" />
+                  {updates ? "SHA256 已核验" : "读取中"}
+                </span>
+              </div>
+
+              {/* 版本主卡片 */}
+              <div className="rounded-xl border border-primary/30 bg-primary/10 p-3.5">
+                <p className="text-xs font-medium text-primary">Windows Agent 正式版</p>
+                <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-mono text-2xl font-bold tracking-tight text-foreground">
+                    {updates ? `v${updates.release.version}` : "—"}
+                  </span>
+                  <span className="font-mono text-xs text-primary/90">
+                    {updates ? `${updates.release.rid} · ${humanBytes(updates.release.sizeBytes)}` : "正在获取..."}
+                  </span>
+                </div>
+              </div>
+
+              {/* 制品元数据 */}
+              <div className="flex flex-col gap-2 rounded-xl border border-border bg-background/45 p-3 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-muted-foreground">制品文件名</span>
+                  <span className="truncate font-mono text-foreground" title={updates?.release.fileName}>
+                    {updates?.release.fileName ?? "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-muted-foreground">发布时间</span>
+                  <span className="truncate text-foreground">
+                    {updates ? new Date(updates.release.publishedAt).toLocaleString() : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="shrink-0 text-muted-foreground">校验指纹</span>
+                  {updates ? (
+                    <button
+                      type="button"
+                      onClick={() => void copyReleaseSha()}
+                      title={`点击复制完整 SHA-256：${updates.release.sha256}`}
+                      className="inline-flex items-center gap-1 font-mono text-primary transition-opacity hover:opacity-80"
+                    >
+                      <span>{shortenSha256(updates.release.sha256)}</span>
+                      {copiedSha ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    </button>
+                  ) : (
+                    <span className="font-mono text-muted-foreground">—</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 全网版本覆盖率 */}
+              <div className="rounded-xl border border-border bg-background/45 p-3">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">全网版本覆盖率</span>
+                  <span className="font-mono font-semibold text-foreground">
+                    {upToDateCount} / {totalCount} 台已就绪 ({upToDatePct}%)
+                  </span>
+                </div>
+                <div className="mt-2 flex h-2 w-full overflow-hidden rounded-full bg-surface">
+                  {upToDatePct > 0 && (
+                    <div
+                      className="h-full bg-positive transition-all duration-300"
+                      style={{ width: `${upToDatePct}%` }}
+                    />
+                  )}
+                  {activePct > 0 && (
+                    <div
+                      className="h-full bg-[#dce02d] transition-all duration-300"
+                      style={{ width: `${activePct}%` }}
+                    />
+                  )}
+                  {availablePct > 0 && (
+                    <div
+                      className="h-full bg-primary/55 transition-all duration-300"
+                      style={{ width: `${availablePct}%` }}
+                    />
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    <strong className="font-mono text-positive">{upToDateCount}</strong> 已最新
+                  </span>
+                  <span>
+                    <strong className="font-mono text-[#dce02d]">{activeCount}</strong> 排队中
+                  </span>
+                  <span>
+                    <strong className="font-mono text-primary">{availableCount}</strong> 待更新
+                  </span>
+                </div>
+              </div>
+
+              {(releaseNotes.title || releaseNotes.notes) && (
+                <ReleaseNotesCapsule title={releaseNotes.title} notes={releaseNotes.notes} bodyMaxHeightClass="max-h-64" />
+              )}
+
+              {lastQueue && (
+                <div className="rounded-xl border border-border bg-background/45 px-3 py-2 text-xs text-muted-foreground">
+                  最近操作：已排队 <strong className="font-mono text-foreground">{lastQueue.queued.length}</strong> 台，跳过{" "}
+                  <strong className="font-mono text-foreground">{lastQueue.skipped.length}</strong> 台。
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void queue("all")}
+              disabled={!updates || submitting || availableCount === 0}
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform duration-200 hover:scale-[1.01] active:scale-95 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {availableCount > 0
+                ? `全部更新 (${availableCount})`
+                : activeCount > 0
+                  ? "全部更新（已全部入队）"
+                  : "全部更新"}
+            </button>
+          </aside>
+
+          {/* 右侧：升级进度圆环卡片列表 */}
+          <div className="flex min-h-0 min-w-0 flex-col gap-3 lg:overflow-x-hidden lg:overflow-y-auto lg:pr-1">
+            {rows.length === 0 ? (
+              <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface/40 text-muted-foreground">
+                <Monitor className="h-8 w-8" />
+                <p className="text-sm">暂无 Windows 客户端</p>
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface/40 text-muted-foreground">
+                <Monitor className="h-8 w-8" />
+                <p className="text-sm">当前筛选条件下暂无客户端</p>
+              </div>
+            ) : (
+              filteredRows.map((client) => (
+                <ClientUpdateCard
+                  key={client.id}
+                  client={client}
+                  onUpdate={() => void queue("clients", [client.id])}
+                />
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </PanelShell>
   )

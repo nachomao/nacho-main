@@ -6,6 +6,7 @@ import { ClientCard } from "@/components/clients/client-card"
 import type { Client } from "@/components/clients/client-data"
 import { ClientManagementPanel } from "@/components/clients/extensions-panel"
 import { resolveOsBrand } from "@/components/clients/os-logos"
+import { ClientUpdateCard, resolveAgentReleaseNotes, type UpdateClient } from "@/components/clients/panels"
 
 const windowsClient: Client = {
   id: "client-1",
@@ -114,6 +115,135 @@ test("Windows 11 客户端卡片渲染具体版本与等宽四窗格标识", () 
   assert.match(html, /Windows 11 Pro 25H2/)
   assert.match(html, new RegExp(escapeRegExp(win11Brand.path)))
   assert.doesNotMatch(html, new RegExp(escapeRegExp(legacyBrand.path)))
+})
+
+test("客户端更新步进卡片展示主机、负载、版本对比与五步进度圆环", () => {
+  const baseUpdateClient: UpdateClient = {
+    ...windowsClient,
+    name: "猫羽雫的计算姬",
+    hostname: "NAYUTA-PC",
+    ip: "192.168.1.12",
+    osName: "Windows 11 专业版",
+    version: "1.2.1",
+    currentVersion: "1.2.1",
+    targetVersion: "1.2.1",
+    metrics: { cpu: 12, memory: 41, disk: 58, uptime: 3600 },
+    command: null,
+    phase: null,
+    skipReason: "already-current",
+  }
+
+  const currentHtml = renderToStaticMarkup(
+    createElement(ClientUpdateCard, {
+      client: baseUpdateClient,
+      onUpdate: () => undefined,
+    }),
+  )
+  assert.match(currentHtml, /猫羽雫的计算姬/)
+  assert.match(currentHtml, /主机: NAYUTA-PC/)
+  assert.match(currentHtml, /IP: 192\.168\.1\.12/)
+  assert.match(currentHtml, /Windows 11 专业版/)
+  assert.match(currentHtml, /CPU 12% \/ 内存 41%/)
+  assert.match(currentHtml, /已是最新/)
+  assert.match(currentHtml, /已是最新版本/)
+  assert.match(currentHtml, /5 \/ 5/)
+  assert.match(currentHtml, /1\. 版本比对 ✓/)
+  assert.match(currentHtml, /5\. 健康确认 ✓/)
+
+  const queuedOfflineHtml = renderToStaticMarkup(
+    createElement(ClientUpdateCard, {
+      client: {
+        ...baseUpdateClient,
+        id: "client-2",
+        name: "STEAMD-BRIDE",
+        hostname: "STEAMD-BRIDE",
+        ip: "192.168.1.28",
+        status: "offline",
+        connected: false,
+        version: "1.1.21",
+        currentVersion: "1.1.21",
+        targetVersion: "1.2.1",
+        phase: "pending",
+        skipReason: "active-update",
+      },
+      onUpdate: () => undefined,
+    }),
+  )
+  assert.match(queuedOfflineHtml, /STEAMD-BRIDE/)
+  assert.match(queuedOfflineHtml, /离线 · 等待上线/)
+  assert.match(queuedOfflineHtml, /v1\.1\.21/)
+  assert.match(queuedOfflineHtml, /v1\.2\.1/)
+  assert.match(queuedOfflineHtml, /已排队/)
+  assert.match(queuedOfflineHtml, /离线排队中/)
+  assert.match(queuedOfflineHtml, /1 \/ 5/)
+  assert.match(queuedOfflineHtml, /1\. 离线排队中 ⋯/)
+
+  const rollbackHtml = renderToStaticMarkup(
+    createElement(ClientUpdateCard, {
+      client: {
+        ...baseUpdateClient,
+        id: "client-3",
+        currentVersion: "1.1.21",
+        targetVersion: "1.2.1",
+        phase: "rolled-back",
+        skipReason: null,
+        command: {
+          id: "cmd-1",
+          status: "failed",
+          result: JSON.stringify({ fromVersion: "1.1.21", rollbackReason: "健康检查超时" }),
+        },
+      },
+      onUpdate: () => undefined,
+    }),
+  )
+  assert.match(rollbackHtml, /已回滚/)
+  assert.match(rollbackHtml, /服务替换失败，已回滚/)
+  assert.match(rollbackHtml, /3 \/ 5/)
+  assert.match(rollbackHtml, /4\. 已触发回滚 !/)
+  assert.match(rollbackHtml, /健康检查超时 · 已恢复 v1\.1\.21/)
+
+  const downloadingHtml = renderToStaticMarkup(
+    createElement(ClientUpdateCard, {
+      client: {
+        ...baseUpdateClient,
+        id: "client-4",
+        currentVersion: "1.1.21",
+        targetVersion: "1.2.1",
+        phase: "downloading",
+        skipReason: null,
+        command: {
+          id: "cmd-2",
+          status: "running",
+          result: null,
+        },
+      },
+      onUpdate: () => undefined,
+    }),
+  )
+  assert.match(downloadingHtml, /正在下载制品/)
+  assert.match(downloadingHtml, /2 \/ 5/)
+  assert.match(downloadingHtml, /2\. 制品下载中 ⋯/)
+})
+
+test("更新说明优先使用服务端清单，缺失时回退到同版本签名索引", () => {
+  const signed = { version: "1.2.1", title: "连接稳定性优化", notes: "修复升级重连问题" }
+
+  assert.deepEqual(
+    resolveAgentReleaseNotes({ version: "1.2.1" }, signed),
+    { title: "连接稳定性优化", notes: "修复升级重连问题" },
+  )
+  assert.deepEqual(
+    resolveAgentReleaseNotes({ version: "1.2.1", title: "服务端标题", notes: "" }, signed),
+    { title: "服务端标题", notes: "修复升级重连问题" },
+  )
+  assert.deepEqual(
+    resolveAgentReleaseNotes({ version: "1.2.1" }, { ...signed, version: "1.2.0" }),
+    { title: undefined, notes: undefined },
+  )
+  assert.deepEqual(
+    resolveAgentReleaseNotes({ version: "1.2.1" }, null),
+    { title: undefined, notes: undefined },
+  )
 })
 
 function escapeRegExp(value: string) {

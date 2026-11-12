@@ -185,6 +185,8 @@ export type PreviewAgentRelease = {
   rid: "win-x64"
   sizeBytes: number
   publishedAt: string
+  title?: string
+  notes?: string
 }
 
 export type PreviewAgentUpdateClient = PreviewClient & {
@@ -701,6 +703,15 @@ function createAgentRelease(now: number): PreviewAgentRelease {
     rid: "win-x64",
     sizeBytes: 24_117_248,
     publishedAt: new Date(now - 48 * HOUR).toISOString(),
+    title: "连接稳定性与升级链路优化",
+    notes: [
+      "本次更新优化了 Windows Agent 的升级下载、校验与服务替换流程。",
+      "",
+      "· 下载或校验失败时自动重试，降低网络波动影响",
+      "· 升级过程保留设备身份、DPAPI 凭据与命令 journal",
+      "· 优化 WebSocket 重连与服务替换后的健康确认",
+      "· 修复长时间运行后偶发的内存占用偏高",
+    ].join("\n"),
   }
 }
 
