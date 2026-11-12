@@ -139,6 +139,7 @@ async function startPanelServer() {
     cwd: panelDir,
     env: {
       ...process.env,
+      NACHO_UPDATE_ORIGIN: process.env.NACHO_UPDATE_ORIGIN || updates.getOrigin(),
       NODE_ENV: "production",
       HOSTNAME: "127.0.0.1",
       PORT: String(panelPort),

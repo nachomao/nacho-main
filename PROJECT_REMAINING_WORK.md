@@ -94,13 +94,12 @@
   - 完成标准：新增插件包上传/下载与校验（大小、哈希、清单）；Agent 新增安装/卸载命令并回传结果；批量安装按真实执行状态汇总；面板支持真实文件选择、进度与失败重试；三层契约测试。
   - 若不实现：把“导入/下载/批量安装”标记为不可用，保留元数据管理。
 
-- [ ] **TODO-07 WebSSH 与文件传输**
-  - 现状（2026-11-11 复核，未完成）：终端为预置命令模拟器；文件面板使用 `MOCK_FS`，上传/下载/删除均为模拟进度，无 PTY/SFTP 通道。
-  - 已完成子项：仅面板演示终端与文件面板 UI。
-  - 未完成子项：Agent PTY 与文件传输命令；服务端 WebSocket 流式转发；终端尺寸、重连、输出上限、超时、审计与单会话限制；文件分块、校验与断点/重试；桌面与 `390×844` 视口验证。
-  - 证据：`nacho-panel/components/topbar/webssh-dialog.tsx:56`、`nacho-panel/components/topbar/webssh-files-panel.tsx:41`、`:89`。
-  - 完成标准：Agent 提供 PTY 与文件传输命令，服务端提供 WebSocket 流式转发；支持终端尺寸、重连、输出上限、超时、审计与单会话限制；文件传输支持分块、校验与断点/重试；完成桌面与 390×844 视口验证。
-  - 若不实现：入口明确标注“演示”，或暂时隐藏。
+- [x] **TODO-07 WebSSH 与文件传输**
+  - 现状（2026-11-12 完成）：面板经服务端 WebSocket 转发到在线 Windows Agent 的真实会话；终端为持久 PowerShell/CMD，文件面板使用真实目录与分块传输，不再是本地模拟。
+  - 已完成子项：Agent PTY 风格持久 Shell（PowerShell 行循环/CMD 常驻进程）与文件会话；服务端 `/agent/terminal`、`/agent/files` 及面板 ticket WebSocket 双向转发；终端尺寸夹取、面板断线重连与 128 KiB 回放、输入/输出上限、空闲 15 分钟与最长 60 分钟、单客户端 1 会话/全局 8 会话、会话审计表；文件驱动器/目录浏览、删除、256 KiB 分块、逐块 SHA-256、上传断点续传与下载按偏移续传、512 MiB 单文件上限；面板真实终端、文件队列与失败重试。
+  - 证据：`nacho-server/src/services/terminal-sessions.ts`、`file-sessions.ts`、`src/schemas/webssh.ts`、`client/src/Nacho.Agent/TerminalSessionManager.cs`、`FileSessionManager.cs`、`FileTransferStore.cs`、`nacho-panel/lib/webssh.ts`、`webssh-dialog.tsx`、`webssh-files-panel.tsx`。
+  - 验证（2026-11-12）：服务端 145 项测试、`tsc --noEmit`、`npm run build`；面板 353 项测试、`tsc --noEmit`、桌面 60 项测试与 `pnpm build`（`NachoPanel-Setup-0.3.22.exe`，223,427,191 字节，SHA-256 `128990eb03143c33de29ebfdc2c89086b0e96df86964f2f636f63120e6e06d4e`）；Agent `dotnet build` Debug/Release 通过，236 项测试全部通过（本会话 `dotnet test` 的 testhost 被宿主进程沙箱拦截，使用同一测试程序集的反射 runner 执行）；真实 Agent 端到端验证 PowerShell 中文输出、`C:\` 目录浏览、上传/下载 SHA-256 一致与删除；桌面与 `390×844` 浏览器验收无页面级横向溢出（截图见 `nacho-server/artifacts/evidence/webssh/`）。
+  - 剩余边界：仅在线 Windows Agent；终端为行级会话（每条命令一行，非 ConPTY 原始字节终端）；developer preview 不支持真实会话。
 
 - [x] **TODO-08 AI Mode 真实接入**
   - 现状（已完成，2026-10-30；2026-11-11 复核通过）：Windows 桌面版接入 opencode 1.19.5 sidecar（`--pure`，127.0.0.1 + 随机密码）；面板 `/api/ai/*` 提供 DPAPI 设置、Provider 代理、真实测试、NDJSON 流、MCP broker 与审批；MCP 仅 HTTP，设置页可增删改 URL/Token；技能/插件开关实际过滤工具；危险操作需面板确认或拒绝。

@@ -3,14 +3,44 @@ import { resolve4 } from "node:dns/promises"
 import { connect as netConnect, isIP } from "node:net"
 import { Client } from "ssh2"
 import { gitCloneShell, sourceArchiveShell } from "../../desktop/src/github-download.cjs"
+import { PANEL_VERSION } from "./panel-version"
 
 /** 云端部署固定使用的服务端端口。 */
 export const CLOUD_DEPLOY_PORT = 8443
+export const CLOUD_AGENT_ARTIFACT_TIMEOUT_MS = 20 * 60_000
+export const CLOUD_UPDATE_ORIGIN_PATTERN = /^https:\/\/[a-zA-Z0-9.-]+(?::[0-9]+)?$/
 
 type Target = { host: string; username: string; password: string; fingerprint: string }
-export type CloudDeploymentResult = { api: string; key: string; warning?: string }
+export type CloudAgentArtifactReport = {
+  ready: boolean
+  version: string | null
+  warning?: string
+}
+export type CloudDeploymentResult = {
+  api: string
+  key: string
+  warning?: string
+  agentArtifact?: CloudAgentArtifactReport
+}
+export type CloudDeployRuntimeOptions = {
+  updateOrigin?: unknown
+  panelVersion?: string
+  fetchImpl?: typeof fetch
+  artifactTimeoutMs?: number
+  resolveHost?: (host: string) => Promise<string>
+  connectHost?: (target: Target, address: string) => Promise<Client>
+  probePort?: (address: string, port?: number) => Promise<boolean>
+}
 export const NACHO_SERVER_REPOSITORY = "https://github.com/nachomao/nacho-server.git"
 export const NACHO_SERVER_BRANCH = "main"
+
+export function normalizeCloudUpdateOrigin(raw: unknown = process.env.NACHO_UPDATE_ORIGIN): string | null {
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim().replace(/\/+$/, "")
+  if (!trimmed || trimmed === "https://updates.example.invalid") return null
+  if (!CLOUD_UPDATE_ORIGIN_PATTERN.test(trimmed)) return null
+  return trimmed
+}
 
 /** 允许发起云端自动部署的运行平台：本机面板可在 Windows 或 Linux 上运行。 */
 export const CLOUD_DEPLOYMENT_PLATFORMS = ["win32", "linux"] as const
@@ -376,8 +406,10 @@ export function buildCloudPortWarning(options: { port?: number; localFirewall: C
   return `${localState}，但面板仍无法访问公网 ${port} 端口。疑似腾讯云（仅作示例，阿里云、华为云、AWS 等其他云厂商同理）的防火墙策略（安全组或云防火墙）未放行 TCP ${port}，或面板到该地址的网络访问受到限制。请在云控制台为该实例添加来源 0.0.0.0/0（或你的固定 IP）、协议 TCP、端口 ${port} 的入站放行规则；若服务器使用 iptables/nftables，也请手动确认本机规则。处理后点击“重试验证并继续”。`
 }
 
-export function buildCloudInstallCommand(remoteDirectory: string) {
+export function buildCloudInstallCommand(remoteDirectory: string, updateOrigin: unknown = process.env.NACHO_UPDATE_ORIGIN) {
   const sourceDirectory = `${remoteDirectory}/nacho-server`
+  const normalizedOrigin = normalizeCloudUpdateOrigin(updateOrigin)
+  const originPrefix = normalizedOrigin ? `NACHO_UPDATE_ORIGIN='${normalizedOrigin}' ` : ""
   // 国内网络对 git 智能协议限速严重，优先下载 codeload 源码包（约快一个数量级），
   // curl/tar 缺失或下载校验失败时才回退到 git 克隆。
   return [
@@ -392,13 +424,105 @@ export function buildCloudInstallCommand(remoteDirectory: string) {
     // 源码包与克隆回退必须拼成同一个 AND-OR 片段：放入两个数组元素会被 "; " 拼成非法的 "; ||"。
     `${sourceArchiveShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH)} || ${gitCloneShell(NACHO_SERVER_REPOSITORY, sourceDirectory, NACHO_SERVER_BRANCH)}`,
     `test -f '${sourceDirectory}/deploy/install.sh'`,
-    `NACHO_HIDE_INSTALL_SECRETS=1 bash '${sourceDirectory}/deploy/install.sh'`,
+    `${originPrefix}NACHO_HIDE_INSTALL_SECRETS=1 bash '${sourceDirectory}/deploy/install.sh'`,
   ].join("; ")
 }
 
-export async function deployCloudServer(target: Target, onProgress: (step: string) => void, onLog: (line: string) => void): Promise<CloudDeploymentResult> {
-  const address = await resolveCloudHost(target.host)
-  const client = await connectCloudHost(target, address)
+export async function prepareCloudAgentArtifact(options: {
+  api: string
+  key: string
+  panelVersion?: string
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+  onProgress?: (step: string) => void
+  onLog?: (line: string) => void
+}): Promise<CloudAgentArtifactReport> {
+  const api = options.api.replace(/\/+$/, "")
+  const panelVersion = options.panelVersion ?? PANEL_VERSION
+  const fetchImpl = options.fetchImpl ?? fetch
+  const timeoutMs = options.timeoutMs ?? CLOUD_AGENT_ARTIFACT_TIMEOUT_MS
+  const panelHeaders = {
+    Authorization: `Bearer ${options.key}`,
+    "X-Nacho-Panel-Version": panelVersion,
+    Accept: "application/json",
+  }
+
+  options.onProgress?.("准备 Windows Agent 安装制品")
+  options.onLog?.("[Nacho] 正在根据签名发布索引准备 Windows Agent 制品…")
+
+  try {
+    const syncResponse = await fetchImpl(`${api}/api/panel/product-updates/agent-artifact`, {
+      method: "POST",
+      headers: panelHeaders,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const syncBody = (await syncResponse.json().catch(() => null)) as {
+      ok?: boolean
+      data?: { version?: string; updated?: boolean }
+      message?: string
+    } | null
+    if (!syncResponse.ok || !syncBody?.ok) {
+      throw new Error(syncBody?.message || `准备 Windows Agent 制品失败（HTTP ${syncResponse.status}）`)
+    }
+
+    const runtimeResponse = await fetchImpl(`${api}/api/panel/runtime-info`, {
+      method: "GET",
+      headers: panelHeaders,
+      signal: AbortSignal.timeout(15_000),
+    })
+    const runtimeBody = (await runtimeResponse.json().catch(() => null)) as {
+      ok?: boolean
+      data?: { agentArtifactVersion?: string | null }
+      message?: string
+    } | null
+    const runtimeVersion = typeof runtimeBody?.data?.agentArtifactVersion === "string"
+      ? runtimeBody.data.agentArtifactVersion.trim()
+      : ""
+    if (!runtimeResponse.ok || !runtimeBody?.ok || !runtimeVersion) {
+      throw new Error(runtimeBody?.message || "服务端 runtime-info 未返回有效的 Windows Agent 制品版本")
+    }
+
+    const latestResponse = await fetchImpl(`${api}/agent/downloads/windows/latest.json`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    })
+    const latestBody = (await latestResponse.json().catch(() => null)) as {
+      version?: string
+      fileName?: string
+      sha256?: string
+      sizeBytes?: number
+    } | null
+    const latestVersion = typeof latestBody?.version === "string" ? latestBody.version.trim() : ""
+    if (!latestResponse.ok || !latestVersion || latestVersion !== runtimeVersion) {
+      throw new Error(`公开制品清单校验失败（HTTP ${latestResponse.status}）`)
+    }
+    if (typeof syncBody.data?.version === "string" && syncBody.data.version.trim() && syncBody.data.version.trim() !== latestVersion) {
+      throw new Error(`制品版本不一致（同步返回 ${syncBody.data.version}，清单为 ${latestVersion}）`)
+    }
+
+    options.onLog?.(`[Nacho] Windows Agent 制品已就绪（v${latestVersion}）`)
+    return { ready: true, version: latestVersion }
+  } catch (error) {
+    const reason = error instanceof Error && error.message.trim() ? error.message.trim() : "未知错误"
+    const warning = `Windows Agent 制品自动准备未完成（${reason}）；服务端已完成安装，稍后可在面板“设置 → 更新 → 准备新版制品”中手动重试`
+    options.onLog?.(`[Nacho] 警告：${warning}`)
+    return { ready: false, version: null, warning }
+  }
+}
+
+export async function deployCloudServer(
+  target: Target,
+  onProgress: (step: string) => void,
+  onLog: (line: string) => void,
+  options?: CloudDeployRuntimeOptions,
+): Promise<CloudDeploymentResult> {
+  const resolveHost = options?.resolveHost ?? resolveCloudHost
+  const connectHost = options?.connectHost ?? connectCloudHost
+  const probePort = options?.probePort ?? probeCloudPort
+  const updateOrigin = normalizeCloudUpdateOrigin(options?.updateOrigin !== undefined ? options.updateOrigin : process.env.NACHO_UPDATE_ORIGIN)
+  const address = await resolveHost(target.host)
+  const client = await connectHost(target, address)
   let remoteDirectory: string | null = null
   try {
     onProgress("检查目标系统与现有安装")
@@ -439,7 +563,7 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     onProgress("在目标服务器获取服务端代码并安装")
     let outputLines = 0
     const install = await runAsRoot(client, target.username, target.password,
-      `test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; ${buildCloudInstallCommand(remoteDirectory)}`,
+      `test ! -e /opt/control-server && test ! -e /var/lib/control-server && test ! -e /etc/systemd/system/control-server.service || exit 42; ${buildCloudInstallCommand(remoteDirectory, updateOrigin)}`,
       (line) => {
         if (!line.trim()) return
         outputLines += 1
@@ -484,12 +608,21 @@ export async function deployCloudServer(target: Target, onProgress: (step: strin
     let reachable = false
     for (let attempt = 0; attempt < CLOUD_PORT_PROBE_ATTEMPTS && !reachable; attempt += 1) {
       if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, CLOUD_PORT_PROBE_INTERVAL_MS))
-      reachable = await probeCloudPort(address, CLOUD_DEPLOY_PORT)
+      reachable = options?.probePort ? await options.probePort(address, CLOUD_DEPLOY_PORT) : await probeCloudPort(address, CLOUD_DEPLOY_PORT)
     }
     const api = `http://${target.host}:${CLOUD_DEPLOY_PORT}`
     if (reachable) {
       onLog(`[Nacho] 面板已可访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
-      return { api, key: secret.output }
+      const agentArtifact = await prepareCloudAgentArtifact({
+        api,
+        key: secret.output,
+        panelVersion: options?.panelVersion,
+        fetchImpl: options?.fetchImpl,
+        timeoutMs: options?.artifactTimeoutMs,
+        onProgress,
+        onLog,
+      })
+      return { api, key: secret.output, agentArtifact }
     }
     // 服务已在本机健康运行，问题通常在云安全组：保留安装并给出可操作的提示，不回滚。
     const warning = buildCloudPortWarning({ port: CLOUD_DEPLOY_PORT, localFirewall: firewallReport })

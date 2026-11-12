@@ -138,7 +138,7 @@
 - `nacho-panel/components/health/health-view.tsx` 已通过 health API 完成发现项与日志包读取、主动采集、下载、重分析和重采集。
 - `nacho-panel/components/plugins/plugins-context.tsx` 的目录读取、CRUD 与启停状态已由服务端持久化；包下载、导入和批量安装仍未形成真实包传输与 Agent 执行闭环。
 - `nacho-panel/components/ai-mode/ai-workspace.tsx` 已在 Windows 桌面版接入真实 AI：opencode sidecar、DPAPI 密钥、面板 Provider 代理与内部 MCP broker；浏览器访问不支持，developer preview 仍走演示脚本。
-- `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 仍是本地模拟终端和模拟文件系统。
+- `nacho-panel/components/topbar/webssh-dialog.tsx` 与 `nacho-panel/components/topbar/webssh-files-panel.tsx` 已接真实链路：面板经服务端 WebSocket 转发到 Windows Agent 的持久 Shell 会话与文件会话；仅支持在线 Windows Agent，developer preview 不支持。
 - `nacho-panel/components/scripts/scripts-view.tsx` 主要在浏览器本地生成／编辑脚本；`nacho-panel/components/scripts/install-dialog.tsx` 才会下载服务端动态生成的真实 `/nacho.ps1`。
 - `nacho-server/src/scripts/seed.ts` 只用于种子／演示数据，测试结果和生产状态不引用它作为真机证据。
 - 发现“注释宣称真实、实现仍为本地 state 或定时模拟”的情况时，以代码行为为准，并在相关任务中修正注释。

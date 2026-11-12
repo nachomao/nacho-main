@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { checkCloudDeploymentAvailability, CloudDeploymentError, deployCloudServer, inspectCloudHost, validateCloudDeployInput, validateCloudHost } from "@/lib/cloud-deployment"
+import { checkCloudDeploymentAvailability, CloudDeploymentError, deployCloudServer, inspectCloudHost, normalizeCloudUpdateOrigin, validateCloudDeployInput, validateCloudHost } from "@/lib/cloud-deployment"
 import { isSameOriginRequest } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
     }
     if (input.action !== "deploy") throw new CloudDeploymentError("不支持的云端部署操作")
     const target = validateCloudDeployInput(input)
+    const updateOrigin = normalizeCloudUpdateOrigin(process.env.NACHO_UPDATE_ORIGIN)
     if (deploymentActive) return json({ ok: false, message: "另一项云端部署正在进行" }, 409)
     deploymentActive = true
 
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
         const send = (event: unknown) => {
           if (connected) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
         }
-        void deployCloudServer(target, (step) => send({ type: "progress", step }), (content) => send({ type: "log", content }))
+        void deployCloudServer(target, (step) => send({ type: "progress", step }), (content) => send({ type: "log", content }), { updateOrigin })
           .then((data) => send({ type: "complete", data }))
           .catch((error: unknown) => send({
             type: "error",

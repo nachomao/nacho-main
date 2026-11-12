@@ -167,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File client/deploy/publish.ps1
 以下功能**尚未形成真实链路**，界面可用但不是生产实现：
 
 - 面板 AI Mode 已接入本地 opencode（Windows 桌面版）；浏览器访问不支持，developer preview 保留演示脚本
-- 面板 WebSSH 是模拟终端和模拟文件系统
+- 面板 WebSSH 已接真实 Agent：终端为 Windows 上的持久 PowerShell/CMD 会话，文件面板通过分块传输与 SHA-256 校验；仅支持在线 Windows Agent
 - 面板脚本页主要在浏览器本地生成，安装对话框才下载服务端真实生成的 `/nacho.ps1`
 - 插件的包下载、导入和批量安装没有真实传输与 Agent 执行闭环
 
