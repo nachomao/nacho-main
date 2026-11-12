@@ -78,6 +78,8 @@
   → 远端执行 deploy/install.sh
   → 安装 Node、编译、建系统用户、写 .env、装 systemd 单元 control-server.service
   → 身份核对后检测本机防火墙：运行中的 ufw/firewalld 自动放行 TCP 8443，裸 nftables/iptables 只提示
+  → 健康检查通过并读取 PANEL_API_KEY 后，经 SSH 本机接口 PUT /api/panel/settings 持久化 updates.origin
+  → 通过 SSH 本机 127.0.0.1:8443 准备 Agent 制品（curl --max-time，密钥走 stdin），不依赖公网端口
   → 安装后从面板探测公网 8443；本机已处理仍不可达时提示疑似云厂商安全组/云防火墙策略
 
 Agent 安装：浏览器执行 irm http://SERVER:8443/nacho.ps1 | iex
@@ -139,6 +141,7 @@ Agent 安装：浏览器执行 irm http://SERVER:8443/nacho.ps1 | iex
 - **协议先行**：改 API 或命令契约，先在 `nachomao/nacho-server` 发版，再更新 `nachomao/nacho-main` 的面板。
 - **兼容性**：服务端应容忍旧 Agent（未知命令类型返回明确错误，而不是静默丢弃）。
 - **更新来源**：面板 EXE 位于 `nacho-main` GitHub Release；服务端源码与 Agent EXE 共用一次 `nacho-server` GitHub Release。私有 `nacho-update-server` 仅签署更新索引并发送实时通知，不分发制品。旧安装实例须先人工安装迁移版。
+- **更新源管理**：面板“设置 → 更新”是唯一入口；保存时同时写面板本地与服务端 SQLite 设置，服务端按 `settings.updates.origin > NACHO_UPDATE_ORIGIN > none` 解析并清空跨 origin 缓存。`.env` 只作 bootstrap/headless 回退；1.1.24 需一次性迁移，1.2.0 面板只保存本地并提示升级，1.2.1+ 才能由面板管理。
 - 各自仓库的 `AGENTS.md` 是该仓的开发约束，跨仓任务两边都要看。
 
 ---

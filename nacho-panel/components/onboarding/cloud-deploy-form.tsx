@@ -8,7 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeCloudVerificationFailure } from "@/lib/cloud-connection-diagnosis"
-type DeploymentResult = { api: string; key: string; warning?: string }
+type DeploymentResult = {
+  api: string
+  key: string
+  warning?: string
+  updateOrigin?: { configured: boolean; origin: string | null; warning?: string }
+  agentArtifact?: { ready: boolean; version: string | null; warning?: string }
+}
 type DeployEvent = { type: "progress"; step: string } | { type: "log"; content: string } | { type: "complete"; data: DeploymentResult } | { type: "error"; message: string }
 
 async function readResponse<T>(response: Response): Promise<T> {
@@ -232,6 +238,20 @@ export function CloudDeployForm({ onConnected }: { onConnected: (source: { mode:
             <CloudAlert className="text-amber-500" aria-hidden="true" />
             <AlertTitle>疑似云防火墙策略拦截 8443 端口</AlertTitle>
             <AlertDescription>{result.warning}</AlertDescription>
+          </Alert>
+        )}
+        {result?.updateOrigin?.warning && (
+          <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+            <CloudAlert className="text-amber-500" aria-hidden="true" />
+            <AlertTitle>服务端更新源未持久化</AlertTitle>
+            <AlertDescription>{result.updateOrigin.warning}</AlertDescription>
+          </Alert>
+        )}
+        {result?.agentArtifact?.warning && (
+          <Alert className="border-amber-500/25 bg-amber-500/7 text-foreground">
+            <CloudAlert className="text-amber-500" aria-hidden="true" />
+            <AlertTitle>Agent 制品未自动准备</AlertTitle>
+            <AlertDescription>{result.agentArtifact.warning}</AlertDescription>
           </Alert>
         )}
         {result && (

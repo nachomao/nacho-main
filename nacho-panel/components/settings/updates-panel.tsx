@@ -14,7 +14,8 @@ import { useConfirm } from "@/components/ui/confirm-dialog"
 import { updateLocalControl } from "@/lib/local-control-server-client"
 import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
 import { PANEL_VERSION_LABEL, formatReleaseVersion } from "@/lib/panel-version"
-import { serverUpdateIssue } from "@/lib/product-update-status"
+import { serverUpdateIssue, updateSourceServerText, updateSourceState } from "@/lib/product-update-status"
+import { DEFAULT_UPDATE_ORIGIN, normalizeUpdateOriginInput, saveUpdateOrigin } from "@/lib/update-origin"
 import {
   newerPanelInstallState, panelInstallActive, PANEL_INSTALL_LABELS, type PanelInstallState,
 } from "@/lib/panel-install-progress"
@@ -42,6 +43,9 @@ type Runtime = {
   updateStatus: { phase: string; version: string; error?: string } | null
   updateMode?: string
   updateSourceConfigured?: boolean
+  updateSource?: string | null
+  updateSourceOrigin?: "panel" | "env" | "none"
+  capabilities?: { updateSourceManagement?: boolean }
   updateExecutorProtocol?: number | null
 }
 type UpdateBridge = {
@@ -100,31 +104,61 @@ export function UpdatesPanel() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showServerModal, setShowServerModal] = useState(false)
-  const [serverOrigin, setServerOrigin] = useState<string>("https://maojiu.cc")
+  const [localOrigin, setLocalOrigin] = useState(DEFAULT_UPDATE_ORIGIN)
+  const [lastSavedOrigin, setLastSavedOrigin] = useState(DEFAULT_UPDATE_ORIGIN)
+  const [originNotice, setOriginNotice] = useState<string | null>(null)
 
   useEffect(() => {
+    let active = true
+    const accept = (value: string) => {
+      if (!active) return
+      const normalized = normalizeUpdateOriginInput(value)
+      setLocalOrigin(normalized)
+      setLastSavedOrigin(normalized)
+    }
     if (typeof window !== "undefined" && window.nachoUpdates?.getOrigin) {
-      window.nachoUpdates.getOrigin().then(setServerOrigin).catch(() => {})
+      window.nachoUpdates.getOrigin().then(accept).catch(() => {})
     } else {
       try {
         const stored = localStorage.getItem("nacho_update_origin")
-        if (stored) setServerOrigin(stored)
+        if (stored) accept(stored)
       } catch {}
     }
+    return () => { active = false }
   }, [])
 
   async function handleSaveOrigin(newOrigin: string) {
-    const trimmed = newOrigin.trim().replace(/\/+$/, "")
-    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(trimmed)) {
-      throw new Error("更新服务器必须为有效的 HTTPS 地址 (如 https://maojiu.cc)")
+    const result = await saveUpdateOrigin({
+      origin: newOrigin,
+      previousLocalOrigin: lastSavedOrigin,
+      runtime,
+      setLocal: async (origin) => {
+        if (typeof window !== "undefined" && window.nachoUpdates?.setOrigin) {
+          await window.nachoUpdates.setOrigin(origin)
+        }
+        try {
+          localStorage.setItem("nacho_update_origin", origin)
+        } catch {}
+        setLocalOrigin(origin)
+      },
+      saveServer: async (origin) => {
+        await apiRequest("/settings", { method: "PUT", body: JSON.stringify({ updates: { origin } }) })
+      },
+      verify: async () => {
+        await apiRequest("/product-updates")
+      },
+    })
+    setLocalOrigin(result.origin)
+    setLastSavedOrigin(result.origin)
+    if (result.warning) {
+      setOriginNotice(result.warning)
+      void refresh(true)
+      // 服务端已写入但索引验证失败：保留弹窗和错误提示，便于恢复上一个更新源。
+      if (result.serverSynced) throw new Error(result.warning)
+      setShowServerModal(false)
+      return
     }
-    if (typeof window !== "undefined" && window.nachoUpdates?.setOrigin) {
-      await window.nachoUpdates.setOrigin(trimmed)
-    }
-    try {
-      localStorage.setItem("nacho_update_origin", trimmed)
-    } catch {}
-    setServerOrigin(trimmed)
+    setOriginNotice(null)
     setShowServerModal(false)
     void manualRefresh()
   }
@@ -353,17 +387,22 @@ export function UpdatesPanel() {
         checking={checking}
         onCheck={() => void manualRefresh()}
         onConfigureServer={() => setShowServerModal(true)}
-        serverOrigin={serverOrigin}
+        panelOrigin={localOrigin}
+        serverOriginText={runtime ? updateSourceServerText(runtime) : "未连接"}
+        sourceState={updateSourceState(runtime)}
       />
 
       <UpdateServerModal
         open={showServerModal}
-        currentOrigin={serverOrigin}
+        currentOrigin={localOrigin}
+        serverOriginText={runtime ? updateSourceServerText(runtime) : "未连接"}
+        sourceState={updateSourceState(runtime)}
+        fallbackOrigin={lastSavedOrigin}
         onClose={() => setShowServerModal(false)}
         onSave={handleSaveOrigin}
       />
 
-      {(developerPreview || (sourceError && !developerPreview) || connectedPanelIncompatible || serverError) && (
+      {(developerPreview || (sourceError && !developerPreview) || connectedPanelIncompatible || serverError || originNotice) && (
         <div className="flex flex-col gap-2">
           {developerPreview && (
             <Notice tone="info">开发者预览模式：使用内置演示数据，不访问更新服务器，更新检查与安装已禁用。</Notice>
@@ -374,6 +413,7 @@ export function UpdatesPanel() {
               当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
             </Notice>
           )}
+          {originNotice && <Notice tone="warning">{originNotice}</Notice>}
           {serverError && <Notice tone="danger">{serverError}</Notice>}
         </div>
       )}
@@ -447,10 +487,11 @@ export function UpdatesPanel() {
   )
 }
 
-function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck, onConfigureServer, serverOrigin }: {
+function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck, onConfigureServer, panelOrigin, serverOriginText, sourceState }: {
   releasesAvailable: boolean; updateCount: number; sequence?: number; publishedAt?: string; checkedAt: Date | null
   stale: boolean; developerPreview: boolean; checking: boolean; onCheck: () => void
-  onConfigureServer?: () => void; serverOrigin?: string
+  onConfigureServer?: () => void; panelOrigin: string; serverOriginText: string
+  sourceState: ReturnType<typeof updateSourceState>
 }) {
   const state: { title: string; desc: string; tone: Tone; icon: ReactNode } = developerPreview
     ? { title: "预览模式", desc: "更新检查已禁用，仅展示服务端版本信息。", tone: "muted", icon: <CircleSlash className="size-6" /> }
@@ -475,6 +516,13 @@ function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, c
             {publishedAt && <Meta label="发布于" value={formatTime(publishedAt)} />}
             {checkedAt && <Meta label="上次检查" value={formatTime(checkedAt)} />}
             {stale && <Meta label="数据" value="缓存" tone="warning" />}
+            <Meta label="面板本地" value={panelOrigin} />
+            <Meta
+              label="服务端"
+              value={serverOriginText}
+              tone={sourceState === "server-panel" ? "positive"
+                : sourceState === "unsupported" || sourceState === "disconnected" ? "warning" : undefined}
+            />
           </dl>
         </div>
       </div>
@@ -483,7 +531,7 @@ function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, c
           <button
             type="button"
             onClick={onConfigureServer}
-            title={serverOrigin ? `当前更新服务器：${serverOrigin}` : "设置更新服务器"}
+            title={`面板本地：${panelOrigin}；服务端：${serverOriginText}`}
             className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-surface/60 px-3.5 text-sm font-medium transition-colors hover:bg-surface"
           >
             <Server aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -611,11 +659,17 @@ function ComponentCard({
 function UpdateServerModal({
   open,
   currentOrigin,
+  serverOriginText,
+  sourceState,
+  fallbackOrigin,
   onClose,
   onSave,
 }: {
   open: boolean
   currentOrigin: string
+  serverOriginText: string
+  sourceState: ReturnType<typeof updateSourceState>
+  fallbackOrigin: string
   onClose: () => void
   onSave: (origin: string) => Promise<void>
 }) {
@@ -633,7 +687,7 @@ function UpdateServerModal({
 
   if (!open) return null
 
-  const isDefault = value.trim() === "https://maojiu.cc"
+  const isDefault = normalizeUpdateOriginInput(value) === DEFAULT_UPDATE_ORIGIN
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -643,6 +697,17 @@ function UpdateServerModal({
       await onSave(value)
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存更新服务器失败")
+      setSaving(false)
+    }
+  }
+
+  async function handleRestore() {
+    setError(null)
+    setSaving(true)
+    try {
+      await onSave(fallbackOrigin)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "恢复上一个更新源失败")
       setSaving(false)
     }
   }
@@ -659,8 +724,25 @@ function UpdateServerModal({
           更新服务器设置
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          独立更新服务器用于获取双仓签名版本索引及实时发布通知。
+          独立更新服务器用于获取双仓签名版本索引及实时发布通知。保存时同时更新面板本地与服务端（服务端 1.2.1 及以上）。
         </p>
+
+        <dl className="mt-4 flex flex-col gap-1.5 rounded-xl border border-border bg-surface/40 px-3.5 py-3 text-xs">
+          <div className="flex items-start justify-between gap-3">
+            <dt className="shrink-0 text-muted-foreground">面板本地</dt>
+            <dd className="min-w-0 break-all text-right font-mono text-foreground">{currentOrigin}</dd>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <dt className="shrink-0 text-muted-foreground">服务端</dt>
+            <dd className="min-w-0 break-all text-right font-mono text-foreground">{serverOriginText}</dd>
+          </div>
+        </dl>
+        {sourceState === "unsupported" && (
+          <p className="mt-2 text-xs text-warning">服务端 1.2.1 起支持面板管理更新源，请先升级服务端；1.1.24 需按部署文档一次性迁移。当前只会保存面板本地。</p>
+        )}
+        {sourceState === "disconnected" && (
+          <p className="mt-2 text-xs text-warning">尚未连接控制服务，保存只会写入面板本地。</p>
+        )}
 
         <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-4">
           <div>
@@ -695,18 +777,30 @@ function UpdateServerModal({
 
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="button"
-              disabled={isDefault || saving}
-              onClick={() => {
-                setValue("https://maojiu.cc")
-                setError(null)
-              }}
-              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
-            >
-              恢复官方默认
-            </button>
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <div className="flex flex-col items-start gap-1">
+              <button
+                type="button"
+                disabled={isDefault || saving}
+                onClick={() => {
+                  setValue(DEFAULT_UPDATE_ORIGIN)
+                  setError(null)
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
+              >
+                恢复官方默认
+              </button>
+              {fallbackOrigin && fallbackOrigin !== value.trim() && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void handleRestore()}
+                  className="text-xs text-primary hover:underline disabled:opacity-40"
+                >
+                  恢复上一个更新源
+                </button>
+              )}
+            </div>
 
             <div className="flex items-center gap-2">
               <button

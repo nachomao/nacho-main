@@ -8,7 +8,6 @@ import { NextRequest } from "next/server"
 import type { Client } from "ssh2"
 import { POST } from "../app/api/cloud-deployment/route"
 import { buildCloudFirewallCleanupCommand, buildCloudFirewallCommand, buildCloudInstallCommand, buildCloudPortWarning, checkCloudDeploymentAvailability, CLOUD_DEPLOY_PORT, CloudDeploymentError, deployCloudServer, describeCloudFirewallReport, normalizeCloudUpdateOrigin, parseCloudFirewallReport, prepareCloudAgentArtifact, probeCloudPort, resolveCloudHost, runRemote, sanitizeCloudInstallLine, validateCloudDeployInput, validateCloudHost } from "../lib/cloud-deployment"
-import { PANEL_VERSION } from "../lib/panel-version"
 
 const input = {
   action: "deploy",
@@ -295,7 +294,7 @@ test("cloud deployment checks the firewall and reports an unreachable public por
   assert.match(source, /onProgress\("检测并尝试放行 8443 端口防火墙"\)/)
   assert.match(source, /buildCloudFirewallCommand\(CLOUD_DEPLOY_PORT\)/)
   assert.match(source, /probeCloudPort\(address, CLOUD_DEPLOY_PORT\)/)
-  assert.match(source, /return \{ api, key: secret\.output, warning \}/)
+  assert.match(source, /return \{ api, key: secret\.output, warning, agentArtifact, updateOrigin: updateOriginReport \}/)
   assert.match(form, /deployment\.warning/)
   assert.match(form, /疑似云防火墙策略拦截 8443 端口/)
   assert.match(form, /部署时会自动检测并尝试放行 8443 端口防火墙/)
@@ -327,15 +326,40 @@ test("NACHO_UPDATE_ORIGIN is normalized from server environment, passed safely t
 
 test("deployCloudServer prepares the Windows Agent artifact after health check and does not fail deployment when preparation fails", async () => {
   const apiKey = "a".repeat(48)
-  const makeClient = (executed: string[]) => {
+  const makeClient = (executed: string[], options: {
+    settingsStdin?: string[]
+    settingsResponse?: string
+    settingsCode?: number
+    artifactStdin?: string[]
+    artifactResponse?: string
+    artifactCode?: number
+    runtimeResponse?: string
+    runtimeCode?: number
+    latestResponse?: string
+    latestCode?: number
+  } = {}) => {
     const client = {
       exec(command: string, callback: (error: Error | null, stream: EventEmitter & { stderr: EventEmitter; end: (value?: string) => void; close: () => void }) => void) {
         executed.push(command)
         const channel = new EventEmitter() as EventEmitter & { stderr: EventEmitter; end: (value?: string) => void; close: () => void }
         channel.stderr = new EventEmitter()
         channel.close = () => channel.emit("close", -1)
-        channel.end = () => {
-          if (command.includes("id -u")) {
+        channel.end = (value?: string) => {
+          if (command.includes("/api/panel/settings")) {
+            options.settingsStdin?.push(value || "")
+            channel.emit("data", Buffer.from(`${options.settingsResponse ?? '{"status":200,"ok":true,"message":"","origin":"https://maojiu.cc"}'}\n`))
+            channel.emit("close", options.settingsCode ?? 0)
+          } else if (command.includes("/api/panel/product-updates/agent-artifact")) {
+            options.artifactStdin?.push(value || "")
+            channel.emit("data", Buffer.from(`${options.artifactResponse ?? '{"ok":true,"data":{"version":"1.1.22","updated":true}}'}\n`))
+            channel.emit("close", options.artifactCode ?? 0)
+          } else if (command.includes("/api/panel/runtime-info")) {
+            channel.emit("data", Buffer.from(`${options.runtimeResponse ?? '{"ok":true,"data":{"agentArtifactVersion":"1.1.22"}}'}\n`))
+            channel.emit("close", options.runtimeCode ?? 0)
+          } else if (command.includes("/agent/downloads/windows/latest.json")) {
+            channel.emit("data", Buffer.from(`${options.latestResponse ?? '{"version":"1.1.22","fileName":"nacho-agent-1.1.22-win-x64.exe"}'}\n`))
+            channel.emit("close", options.latestCode ?? 0)
+          } else if (command.includes("id -u")) {
             channel.emit("data", Buffer.from("0\n"))
             channel.emit("close", 0)
           } else if (command.includes("test -e /opt/control-server || test -e /var/lib/control-server")) {
@@ -362,9 +386,10 @@ test("deployCloudServer prepares the Windows Agent artifact after health check a
 
   // 1. 成功准备 Windows Agent 制品并完成 runtime-info 与 latest.json 版本校验
   const executedSuccess: string[] = []
+  const settingsStdin: string[] = []
+  const artifactStdin: string[] = []
   const logsSuccess: string[] = []
   const stepsSuccess: string[] = []
-  const requestsSuccess: Array<{ url: string; method: string; auth: string | null; panelVersion: string | null }> = []
   const successResult = await deployCloudServer(
     input,
     (step) => stepsSuccess.push(step),
@@ -372,43 +397,27 @@ test("deployCloudServer prepares the Windows Agent artifact after health check a
     {
       updateOrigin: "https://maojiu.cc/",
       resolveHost: async () => input.host,
-      connectHost: async () => makeClient(executedSuccess),
+      connectHost: async () => makeClient(executedSuccess, { settingsStdin, artifactStdin }),
       probePort: async () => true,
-      fetchImpl: async (url, init) => {
-        const headers = new Headers(init?.headers)
-        requestsSuccess.push({
-          url: String(url),
-          method: init?.method || "GET",
-          auth: headers.get("authorization"),
-          panelVersion: headers.get("x-nacho-panel-version"),
-        })
-        if (String(url).endsWith("/api/panel/product-updates/agent-artifact")) {
-          return new Response(JSON.stringify({ ok: true, data: { version: "1.1.22", updated: true } }), { status: 202 })
-        }
-        if (String(url).endsWith("/api/panel/runtime-info")) {
-          return new Response(JSON.stringify({ ok: true, data: { agentArtifactVersion: "1.1.22", updateSourceConfigured: true } }), { status: 200 })
-        }
-        if (String(url).endsWith("/agent/downloads/windows/latest.json")) {
-          return new Response(JSON.stringify({ version: "1.1.22", fileName: "nacho-agent-1.1.22-win-x64.exe" }), { status: 200 })
-        }
-        throw new Error(`Unexpected URL: ${String(url)}`)
-      },
     },
   )
   assert.equal(successResult.api, `http://${input.host}:8443`)
   assert.equal(successResult.key, apiKey)
   assert.deepEqual(successResult.agentArtifact, { ready: true, version: "1.1.22" })
+  assert.deepEqual(successResult.updateOrigin, { configured: true, origin: "https://maojiu.cc" })
+  assert.deepEqual(settingsStdin, [`${apiKey}\n`])
+  assert.deepEqual(artifactStdin, [`Authorization: Bearer ${apiKey}\n`])
+  assert.ok(executedSuccess.every((cmd) => !cmd.includes(apiKey)), "面板密钥不得进入远程命令参数")
+  assert.ok(executedSuccess.some((cmd) => cmd.includes("/api/panel/settings")))
+  assert.ok(logsSuccess.some((line) => line.includes("服务端更新源已持久化：https://maojiu.cc")))
   assert.ok(executedSuccess.some((cmd) => cmd.includes("NACHO_UPDATE_ORIGIN='\\''https://maojiu.cc'\\'' NACHO_HIDE_INSTALL_SECRETS=1 bash")))
-  assert.equal(requestsSuccess.length, 3)
-  assert.deepEqual(requestsSuccess[0], {
-    url: `http://${input.host}:8443/api/panel/product-updates/agent-artifact`,
-    method: "POST",
-    auth: `Bearer ${apiKey}`,
-    panelVersion: PANEL_VERSION,
-  })
-  assert.equal(requestsSuccess[1].url, `http://${input.host}:8443/api/panel/runtime-info`)
-  assert.equal(requestsSuccess[2].url, `http://${input.host}:8443/agent/downloads/windows/latest.json`)
-  assert.equal(requestsSuccess[2].auth, null)
+  const artifactCommand = executedSuccess.find((cmd) => cmd.includes("/api/panel/product-updates/agent-artifact"))
+  assert.ok(artifactCommand, "必须通过 SSH 本机接口准备 Agent 制品")
+  assert.match(artifactCommand!, /--max-time 1200/)
+  assert.match(artifactCommand!, /127\.0\.0\.1:8443/)
+  assert.match(artifactCommand!, /X-Nacho-Panel-Version/)
+  assert.ok(logsSuccess.every((line) => !line.includes(apiKey)), "面板密钥不得进入部署日志")
+  assert.ok(logsSuccess.some((line) => line.includes("通过服务端本机接口")))
   assert.ok(logsSuccess.some((line) => line.includes("Windows Agent 制品已就绪（v1.1.22）")))
 
   // 2. 自动准备失败（如 503/超时）时只输出清晰警告，不抛错、不回滚已安装的服务
@@ -421,9 +430,11 @@ test("deployCloudServer prepares the Windows Agent artifact after health check a
     {
       updateOrigin: "https://maojiu.cc",
       resolveHost: async () => input.host,
-      connectHost: async () => makeClient(executedFailure),
+      connectHost: async () => makeClient(executedFailure, {
+        artifactResponse: '{"ok":false,"message":"发布索引读取失败（HTTP 503）"}',
+        artifactCode: 1,
+      }),
       probePort: async () => true,
-      fetchImpl: async () => new Response(JSON.stringify({ ok: false, message: "发布索引读取失败（HTTP 503）" }), { status: 503 }),
     },
   )
   assert.equal(failureResult.api, `http://${input.host}:8443`)
@@ -434,15 +445,58 @@ test("deployCloudServer prepares the Windows Agent artifact after health check a
   assert.ok(logsFailure.some((line) => line.includes("警告：Windows Agent 制品自动准备未完成")))
   assert.equal(executedFailure.some((cmd) => cmd.includes("uninstall.sh")), false)
 
-  // 3. runtime-info 与 latest.json 版本不一致时同样降级为警告而不抛错
-  const mismatch = await prepareCloudAgentArtifact({
-    api: `http://${input.host}:8443`,
-    key: apiKey,
-    fetchImpl: async (url) => {
-      if (String(url).endsWith("/agent-artifact")) return new Response(JSON.stringify({ ok: true, data: { version: "1.1.22", updated: true } }), { status: 202 })
-      if (String(url).endsWith("/runtime-info")) return new Response(JSON.stringify({ ok: true, data: { agentArtifactVersion: "1.1.22" } }), { status: 200 })
-      return new Response(JSON.stringify({ message: "Windows Agent 制品尚未发布" }), { status: 503 })
+  // 3. 服务端设置写入失败不阻断安装，只给出明确警告
+  const executedSettingsFailure: string[] = []
+  const logsSettingsFailure: string[] = []
+  const settingsFailureResult = await deployCloudServer(
+    input,
+    () => {},
+    (line) => logsSettingsFailure.push(line),
+    {
+      updateOrigin: "https://maojiu.cc",
+      resolveHost: async () => input.host,
+      connectHost: async () => makeClient(executedSettingsFailure, {
+        settingsResponse: '{"status":500,"ok":false,"message":"设置写入失败"}',
+        settingsCode: 1,
+      }),
+      probePort: async () => false,
     },
+  )
+  assert.equal(settingsFailureResult.updateOrigin?.configured, false)
+  assert.match(settingsFailureResult.updateOrigin?.warning || "", /未持久化.*设置写入失败/)
+  assert.ok(logsSettingsFailure.some((line) => line.includes("警告：服务端更新源未持久化")))
+  assert.equal(executedSettingsFailure.some((cmd) => cmd.includes("uninstall.sh")), false)
+  assert.equal(settingsFailureResult.agentArtifact?.ready, true, "公网端口不可达时仍应通过 SSH 本机接口准备制品")
+
+  // 4. 服务端缺少 updateSourceManagement 能力时跳过写入并提示升级
+  const executedUnsupported: string[] = []
+  const logsUnsupported: string[] = []
+  const unsupportedResult = await deployCloudServer(
+    input,
+    () => {},
+    (line) => logsUnsupported.push(line),
+    {
+      updateOrigin: "https://maojiu.cc",
+      resolveHost: async () => input.host,
+      connectHost: async () => makeClient(executedUnsupported, {
+        settingsResponse: '{"status":200,"ok":false,"unsupported":true,"message":"服务端版本不支持面板管理更新源（需 1.2.1 及以上）"}',
+        settingsCode: 0,
+      }),
+      probePort: async () => false,
+    },
+  )
+  assert.equal(unsupportedResult.updateOrigin?.configured, false)
+  assert.match(unsupportedResult.updateOrigin?.warning || "", /不支持面板管理更新源/)
+  assert.ok(logsUnsupported.some((line) => line.includes("服务端版本不支持面板管理更新源")))
+
+  // 5. runtime-info 与 latest.json 版本不一致时同样降级为警告而不抛错
+  const mismatch = await prepareCloudAgentArtifact({
+    client: makeClient([], {
+      artifactResponse: '{"ok":true,"data":{"version":"1.1.22","updated":true}}',
+      runtimeResponse: '{"ok":true,"data":{"agentArtifactVersion":"1.1.22"}}',
+      latestResponse: '{"version":"1.1.23","fileName":"nacho-agent-1.1.23-win-x64.exe"}',
+    }),
+    key: apiKey,
   })
   assert.equal(mismatch.ready, false)
   assert.match(mismatch.warning || "", /公开制品清单校验失败/)

@@ -16,16 +16,21 @@ export type CloudAgentArtifactReport = {
   version: string | null
   warning?: string
 }
+export type CloudUpdateOriginReport = {
+  configured: boolean
+  origin: string | null
+  warning?: string
+}
 export type CloudDeploymentResult = {
   api: string
   key: string
   warning?: string
   agentArtifact?: CloudAgentArtifactReport
+  updateOrigin?: CloudUpdateOriginReport
 }
 export type CloudDeployRuntimeOptions = {
   updateOrigin?: unknown
   panelVersion?: string
-  fetchImpl?: typeof fetch
   artifactTimeoutMs?: number
   resolveHost?: (host: string) => Promise<string>
   connectHost?: (target: Target, address: string) => Promise<Client>
@@ -196,7 +201,7 @@ export function sanitizeCloudInstallLine(line: string, password: string) {
   return text
 }
 
-export function runRemote(client: Client, command: string, sudoPassword?: string, onOutput?: (line: string) => void, timeoutMs = 15 * 60_000): Promise<{ code: number; output: string }> {
+export function runRemote(client: Client, command: string, sudoPassword?: string, onOutput?: (line: string) => void, timeoutMs = 15 * 60_000, stdin?: string): Promise<{ code: number; output: string }> {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, channel) => {
       if (error) return reject(new CloudDeploymentError("无法执行远程部署命令", 502))
@@ -250,7 +255,8 @@ export function runRemote(client: Client, command: string, sudoPassword?: string
         stderr.flush()
         resolve({ code: code ?? -1, output: output.trim() })
       })
-      if (sudoPassword !== undefined) channel.end(`${sudoPassword}\n`)
+      if (stdin !== undefined) channel.end(stdin)
+      else if (sudoPassword !== undefined) channel.end(`${sudoPassword}\n`)
       else channel.end()
     })
   })
@@ -428,49 +434,141 @@ export function buildCloudInstallCommand(remoteDirectory: string, updateOrigin: 
   ].join("; ")
 }
 
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+const PERSIST_UPDATE_ORIGIN_SCRIPT = `
+let data = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { data += chunk });
+process.stdin.on("end", async () => {
+  const base = "http://127.0.0.1:${CLOUD_DEPLOY_PORT}";
+  const headers = { Authorization: "Bearer " + data.trim(), "X-Nacho-Panel-Version": process.env.PANEL_VERSION };
+  const emit = (value) => console.log(JSON.stringify(value));
+  try {
+    const runtime = await fetch(base + "/api/panel/runtime-info", { headers });
+    const runtimeBody = await runtime.json().catch(() => null);
+    if (!runtime.ok || !runtimeBody || runtimeBody.ok !== true) {
+      emit({ status: runtime.status, ok: false, message: "runtime-info 读取失败" });
+      process.exit(1);
+    }
+    if (!runtimeBody.data || !runtimeBody.data.capabilities || runtimeBody.data.capabilities.updateSourceManagement !== true) {
+      emit({ status: 200, ok: false, unsupported: true, message: "服务端版本不支持面板管理更新源（需 1.2.1 及以上）" });
+      process.exit(0);
+    }
+    const response = await fetch(base + "/api/panel/settings", {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: process.env.BODY,
+    });
+    const body = await response.json().catch(() => null);
+    const origin = body && body.data && body.data.updates && typeof body.data.updates.origin === "string"
+      ? body.data.updates.origin : null;
+    emit({
+      status: response.status,
+      ok: Boolean(body && body.ok === true),
+      message: body && typeof body.message === "string" ? body.message : "",
+      origin,
+    });
+    process.exit(response.ok && body && body.ok === true ? 0 : 1);
+  } catch (error) {
+    emit({ status: 0, ok: false, message: String(error && error.message ? error.message : error) });
+    process.exit(1);
+  }
+});
+`
+
+/**
+ * 安装完成后由 SSH 会话从服务端本机写入 updates.origin；密钥只经 stdin 传递。
+ * 失败不回滚已安装服务，只返回可展示的警告。
+ */
+export async function persistCloudUpdateOrigin(options: {
+  client: Client
+  key: string
+  origin: string | null
+  panelVersion?: string
+  onProgress?: (step: string) => void
+  onLog?: (line: string) => void
+}): Promise<CloudUpdateOriginReport> {
+  if (!options.origin) {
+    const warning = "未从面板部署环境读取到 NACHO_UPDATE_ORIGIN，服务端更新源未持久化；安装完成后可在面板“设置 → 更新”中手动保存。"
+    options.onLog?.(`[Nacho] 警告：${warning}`)
+    return { configured: false, origin: null, warning }
+  }
+  const panelVersion = options.panelVersion ?? PANEL_VERSION
+  options.onProgress?.("持久化服务端更新源设置")
+  options.onLog?.("[Nacho] 正在将更新源写入服务端设置…")
+  const body = JSON.stringify({ updates: { origin: options.origin } })
+  const command = `PANEL_VERSION=${shellQuote(panelVersion)} BODY=${shellQuote(body)} node -e ${shellQuote(PERSIST_UPDATE_ORIGIN_SCRIPT)}`
+  const result = await runRemote(options.client, command, undefined, undefined, 30_000, `${options.key}\n`)
+  let parsed: { status?: number; ok?: boolean; unsupported?: boolean; message?: string; origin?: string | null } | null = null
+  try {
+    parsed = JSON.parse(result.output.trim().split(/\r?\n/).filter(Boolean).pop() || "")
+  } catch { /* 非 JSON 输出按失败处理 */ }
+  if (result.code === 0 && parsed?.ok) {
+    const origin = parsed.origin || options.origin
+    options.onLog?.(`[Nacho] 服务端更新源已持久化：${origin}`)
+    return { configured: true, origin }
+  }
+  if (parsed?.unsupported) {
+    const warning = "服务端版本不支持面板管理更新源（需 1.2.1 及以上）；服务端已完成安装，更新源未持久化，请先升级服务端。"
+    options.onLog?.(`[Nacho] 警告：${warning}`)
+    return { configured: false, origin: null, warning }
+  }
+  const reason = parsed?.message || (parsed?.status ? `HTTP ${parsed.status}` : `退出码 ${result.code}`)
+  const warning = `服务端更新源未持久化（${reason}）；服务端已完成安装，可在面板“设置 → 更新”中手动保存。`
+  options.onLog?.(`[Nacho] 警告：${warning}`)
+  return { configured: false, origin: null, warning }
+}
+
+function parseLastJson(output: string): unknown {
+  const lines = output.trim().split(/\r?\n/).reverse()
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) continue
+    try {
+      return JSON.parse(trimmed)
+    } catch { /* 继续尝试上一行 */ }
+  }
+  return null
+}
+
 export async function prepareCloudAgentArtifact(options: {
-  api: string
+  client: Client
   key: string
   panelVersion?: string
-  fetchImpl?: typeof fetch
   timeoutMs?: number
   onProgress?: (step: string) => void
   onLog?: (line: string) => void
 }): Promise<CloudAgentArtifactReport> {
-  const api = options.api.replace(/\/+$/, "")
   const panelVersion = options.panelVersion ?? PANEL_VERSION
-  const fetchImpl = options.fetchImpl ?? fetch
   const timeoutMs = options.timeoutMs ?? CLOUD_AGENT_ARTIFACT_TIMEOUT_MS
-  const panelHeaders = {
-    Authorization: `Bearer ${options.key}`,
-    "X-Nacho-Panel-Version": panelVersion,
-    Accept: "application/json",
-  }
+  const maxTime = Math.max(1, Math.ceil(timeoutMs / 1000))
+  const base = `http://127.0.0.1:${CLOUD_DEPLOY_PORT}`
+  const authHeader = `Authorization: Bearer ${options.key}\n`
 
   options.onProgress?.("准备 Windows Agent 安装制品")
-  options.onLog?.("[Nacho] 正在根据签名发布索引准备 Windows Agent 制品…")
+  options.onLog?.("[Nacho] 正在通过服务端本机接口根据签名发布索引准备 Windows Agent 制品…")
 
   try {
-    const syncResponse = await fetchImpl(`${api}/api/panel/product-updates/agent-artifact`, {
-      method: "POST",
-      headers: panelHeaders,
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    const syncBody = (await syncResponse.json().catch(() => null)) as {
+    // 长请求走 curl --max-time，避免 Node/undici 默认 5 分钟 headersTimeout 截断大制品下载。
+    const sync = await runRemote(options.client,
+      `curl -sS --max-time ${maxTime} -X POST -H @- -H ${shellQuote(`X-Nacho-Panel-Version: ${panelVersion}`)} -H 'Accept: application/json' ${shellQuote(`${base}/api/panel/product-updates/agent-artifact`)} 2>&1`,
+      undefined, undefined, timeoutMs + 30_000, authHeader)
+    const syncBody = parseLastJson(sync.output) as {
       ok?: boolean
       data?: { version?: string; updated?: boolean }
       message?: string
     } | null
-    if (!syncResponse.ok || !syncBody?.ok) {
-      throw new Error(syncBody?.message || `准备 Windows Agent 制品失败（HTTP ${syncResponse.status}）`)
+    if (sync.code !== 0 || !syncBody?.ok) {
+      throw new Error(syncBody?.message || `准备 Windows Agent 制品失败（退出码 ${sync.code}）`)
     }
 
-    const runtimeResponse = await fetchImpl(`${api}/api/panel/runtime-info`, {
-      method: "GET",
-      headers: panelHeaders,
-      signal: AbortSignal.timeout(15_000),
-    })
-    const runtimeBody = (await runtimeResponse.json().catch(() => null)) as {
+    const runtime = await runRemote(options.client,
+      `curl -sS --max-time 30 -H @- -H 'Accept: application/json' ${shellQuote(`${base}/api/panel/runtime-info`)} 2>&1`,
+      undefined, undefined, 60_000, authHeader)
+    const runtimeBody = parseLastJson(runtime.output) as {
       ok?: boolean
       data?: { agentArtifactVersion?: string | null }
       message?: string
@@ -478,24 +576,17 @@ export async function prepareCloudAgentArtifact(options: {
     const runtimeVersion = typeof runtimeBody?.data?.agentArtifactVersion === "string"
       ? runtimeBody.data.agentArtifactVersion.trim()
       : ""
-    if (!runtimeResponse.ok || !runtimeBody?.ok || !runtimeVersion) {
+    if (runtime.code !== 0 || !runtimeBody?.ok || !runtimeVersion) {
       throw new Error(runtimeBody?.message || "服务端 runtime-info 未返回有效的 Windows Agent 制品版本")
     }
 
-    const latestResponse = await fetchImpl(`${api}/agent/downloads/windows/latest.json`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
-    })
-    const latestBody = (await latestResponse.json().catch(() => null)) as {
-      version?: string
-      fileName?: string
-      sha256?: string
-      sizeBytes?: number
-    } | null
+    const latest = await runRemote(options.client,
+      `curl -sS --max-time 30 -H 'Accept: application/json' ${shellQuote(`${base}/agent/downloads/windows/latest.json`)} 2>&1`,
+      undefined, undefined, 60_000)
+    const latestBody = parseLastJson(latest.output) as { version?: string } | null
     const latestVersion = typeof latestBody?.version === "string" ? latestBody.version.trim() : ""
-    if (!latestResponse.ok || !latestVersion || latestVersion !== runtimeVersion) {
-      throw new Error(`公开制品清单校验失败（HTTP ${latestResponse.status}）`)
+    if (latest.code !== 0 || !latestVersion || latestVersion !== runtimeVersion) {
+      throw new Error(`公开制品清单校验失败（退出码 ${latest.code}）`)
     }
     if (typeof syncBody.data?.version === "string" && syncBody.data.version.trim() && syncBody.data.version.trim() !== latestVersion) {
       throw new Error(`制品版本不一致（同步返回 ${syncBody.data.version}，清单为 ${latestVersion}）`)
@@ -604,6 +695,22 @@ export async function deployCloudServer(
       const cleaned = await rollback()
       throw new CloudDeploymentError(cleaned ? "读取面板密钥失败，已清理本次安装" : "读取面板密钥失败，自动清理未完成；请检查目标服务器", 502)
     }
+    let updateOriginReport: CloudUpdateOriginReport
+    try {
+      updateOriginReport = await persistCloudUpdateOrigin({
+        client,
+        key: secret.output,
+        origin: updateOrigin,
+        panelVersion: options?.panelVersion,
+        onProgress,
+        onLog,
+      })
+    } catch (error) {
+      const reason = error instanceof Error && error.message ? error.message : "写入服务端更新源失败"
+      const warning = `服务端更新源未持久化（${reason}）；服务端已完成安装，可在面板“设置 → 更新”中手动保存。`
+      onLog(`[Nacho] 警告：${warning}`)
+      updateOriginReport = { configured: false, origin: null, warning }
+    }
     onProgress("验证公网 8443 端口可达性")
     let reachable = false
     for (let attempt = 0; attempt < CLOUD_PORT_PROBE_ATTEMPTS && !reachable; attempt += 1) {
@@ -611,24 +718,24 @@ export async function deployCloudServer(
       reachable = options?.probePort ? await options.probePort(address, CLOUD_DEPLOY_PORT) : await probeCloudPort(address, CLOUD_DEPLOY_PORT)
     }
     const api = `http://${target.host}:${CLOUD_DEPLOY_PORT}`
+    if (reachable) onLog(`[Nacho] 面板已可访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
+    // 制品准备走 SSH 本机 127.0.0.1，不依赖公网端口是否放行。
+    const agentArtifact = await prepareCloudAgentArtifact({
+      client,
+      key: secret.output,
+      panelVersion: options?.panelVersion,
+      timeoutMs: options?.artifactTimeoutMs,
+      onProgress,
+      onLog,
+    })
     if (reachable) {
-      onLog(`[Nacho] 面板已可访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
-      const agentArtifact = await prepareCloudAgentArtifact({
-        api,
-        key: secret.output,
-        panelVersion: options?.panelVersion,
-        fetchImpl: options?.fetchImpl,
-        timeoutMs: options?.artifactTimeoutMs,
-        onProgress,
-        onLog,
-      })
-      return { api, key: secret.output, agentArtifact }
+      return { api, key: secret.output, agentArtifact, updateOrigin: updateOriginReport }
     }
     // 服务已在本机健康运行，问题通常在云安全组：保留安装并给出可操作的提示，不回滚。
     const warning = buildCloudPortWarning({ port: CLOUD_DEPLOY_PORT, localFirewall: firewallReport })
     onLog(`[Nacho] 面板无法访问公网 ${CLOUD_DEPLOY_PORT} 端口`)
     onLog(`[Nacho] ${warning}`)
-    return { api, key: secret.output, warning }
+    return { api, key: secret.output, warning, agentArtifact, updateOrigin: updateOriginReport }
   } finally {
     if (remoteDirectory) await runRemote(client, `rm -rf ${remoteDirectory}`).catch(() => undefined)
     client.end()

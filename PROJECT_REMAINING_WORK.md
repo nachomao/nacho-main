@@ -22,6 +22,97 @@
   - 验证（2026-11-05 当次记录）：服务端/Agent 已迭代到 1.1.25、面板到 0.3.22。服务端 118 项测试与 `npm run build` 通过，Agent Release 构建通过（Agent 测试受当前终端 testhost 父进程句柄拒绝访问的环境限制未完成）；面板 336 项测试、`tsc --noEmit`、`pnpm build` 通过；桌面 60 项测试与 `pnpm build` 通过，生成 `desktop/dist/NachoPanel/NachoPanel-Setup-0.3.22.exe`（SHA-256 `ec0e95149b6ba1ce821eea3a0fa093fec8edd18d6115dc156c1f2afce939c33f`）；真实浏览器与 `390x844` 视口验证任务卡片、时区字段、下次/最近执行与滚动。2026-11-11 复核未重新执行测试或打包，功能代码与残余限制均未变化。
   - 残余限制：`logon` / `startup` / `boot` 属于客户端事件，当前保留配置且界面明确标注“服务端不排期”，需 Agent 侧事件上报或本机计划任务后才能闭环。
 
+- [ ] **TODO-13 面板统一管理更新源（0.4.1 / 1.2.1）【加急】**
+  - 现状基线（2026-11-12）：面板 `0.4.0 Beta`（提交 `b3205433f7f92936ba3004a7dd41e769cbf0994b`）、服务端与 Agent `1.2.0 Beta`（提交 `b608fc80d945ebb7b58880489b35b373a4445600`）已发布；签名索引为 `sequence 18`，包含面板 0.4.0、服务端/Agent 1.2.0。新安装的 `deploy/install.sh` 已会把 `NACHO_UPDATE_ORIGIN` 写入 `.env`，但**面板没有写服务端更新源的 API**；既有 1.1.24 服务端只读 `.env`，所以面板能看到索引 #18，服务端卡片仍提示“控制服务尚未配置更新源”，Agent 制品按钮被禁用。
+  - 产品目标：**面板是唯一管理入口，服务端是持久化与验签主体**。面板关闭时服务端仍能使用最后一次持久化的更新源完成索引校验、Agent 制品准备和服务端升级检查；`.env` 只保留为首次安装、无面板或 headless 部署的 bootstrap 回退，不再是唯一来源。
+  - 版本与门禁：服务端与 Agent 统一 `1.2.1`，面板 `0.4.1`；服务端 `deploy/compatibility.json` 增加 `features.updateSourceManagement: "0.4.1"`；旧面板/旧服务端必须安全降级，不能把“面板本地已保存”误报成“服务端已配置”。
+  - 当前代码锚点：`nacho-server/src/services/settings.ts`、`nacho-server/src/services/release-index.ts`、`nacho-server/src/services/product-updates.ts`、`nacho-server/src/services/agent-release-sync.ts`、`nacho-server/src/routes/panel.ts`、`nacho-server/deploy/compatibility.json`、`nacho-server/deploy/install.sh`、`nacho-main/nacho-panel/components/settings/updates-panel.tsx`、`nacho-main/nacho-panel/lib/product-update-status.ts`、`nacho-main/nacho-panel/lib/cloud-deployment.ts`、`nacho-main/nacho-panel/app/api/cloud-deployment/route.ts`、`nacho-main/desktop/src/main.cjs`、`nacho-main/desktop/src/updates.cjs`。
+  - 全局约束：
+    - 不允许把更新源只存在面板 localStorage 或桌面 `update-origin.txt`；服务端必须持久化。
+    - 不允许面板通过 SSH 直接改服务端 `.env`；统一走认证 API。
+    - 不允许绕过索引 Ed25519 验签、固定 GitHub 制品地址、大小与 SHA-256 校验。
+    - 不允许把 `PANEL_API_KEY`、`ENROLLMENT_KEY`、SSH 密码或 `.env` 全文写入日志、聊天或代码。
+    - 不允许让服务端在面板离线时失去更新检查能力；必须使用最后持久化的有效 origin。
+    - 本待办只记录计划，未开始改代码；实施前先按本条目核对当前源码和 `git status`。
+
+  - [x] **Step 0【加急】现有 1.1.24 一次性迁移**
+    - 完成记录（2026-11-12）：已用 1.2.0（固定提交 `b608fc80d945ebb7b58880489b35b373a4445600`）的 `deploy/install.sh` 在 `10.11.32.200` 原地重装，保留 `.env`、SQLite 与既有凭据，并补充 `NACHO_UPDATE_ORIGIN=https://maojiu.cc`。安装前备份位于 `/root/nacho-step0-backup-20261112-042557/`（`.env`、`control.db` 一致性快照、systemd 单元）。核对：`control-server` active、`/health` 正常、安装版本 1.2.0、`runtime-info.updateSourceConfigured=true`；`.env` 去除新增行后 SHA-256 与备份完全一致（`08e86d15…63f0`），权限仍为 `640 root:control`；数据库保留 1 个客户端与 2 条命令。1.2.0 尚无 `updateSource`/`updateSourceManagement` 字段，待 1.2.1 提供。
+    - 目标：让当前 `10.11.32.200` 的 1.1.24 先具备可用的更新源，并具备后续升级到 1.2.1 的条件。
+    - 事实：1.1.24 没有 `updates` 设置分组、没有面板管理 API，新面板无法直接修它；这是鸡生蛋问题，必须一次性迁移。
+    - 推荐路径：在 `10.11.32.200` 上用 1.2.0/1.2.1 的 `deploy/install.sh` 重新安装，保留 `.env`、SQLite、Agent 数据和既有凭据；安装时传入 `NACHO_UPDATE_ORIGIN=https://maojiu.cc`。安装前备份 `/opt/control-server/.env` 与数据库，安装后核对 `systemctl is-active control-server`、`/health`、`runtime-info.updateSourceConfigured=true`。
+    - 临时止血：若暂不迁移，备份 `.env` 后追加/修正 `NACHO_UPDATE_ORIGIN=https://maojiu.cc`，保持原 `root:control 640` 权限，重启 `control-server`，再在面板“设置 → 更新”点“检查更新”；Agent 制品按钮应启用。
+    - 验收：服务端 `runtime-info` 返回 `updateSourceConfigured=true`；面板服务端卡片不再显示“未配置更新源”；Agent“准备新版制品”可点击；`.env` 其他字段和凭据未被改写；备份可回滚。
+    - 已知限制：当前会话用 `C:\Users\Administrator\Downloads\id_ed25519` 登录 `root@10.11.32.200` 被拒（`Permission denied`）；新会话需用户提供可用 SSH 密钥/授权，或由用户在该机手工执行。不要把密码写入仓库或聊天。
+
+  - [x] **Step 1【加急】服务端设置持久化 `updates.origin`**
+    - 完成记录（2026-11-12）：`settings.ts` 新增 `updates` 分组与 `UpdateSettings`，默认值读取 `config.updateOrigin`（`NACHO_UPDATE_ORIGIN`），新增 `normalizeUpdateOrigin()`、`storedUpdateOrigin()`、`resolveUpdateOrigin()`；仅接受规范化 HTTPS 源，拒绝 `http://`、路径、查询、凭据、控制字符、占位值与非法端口，空字符串表示未配置。`PUT /api/panel/settings` 按分组浅合并，非法值返回 400 且不覆盖旧值；审计日志只额外记录 origin。新增 `src/tests/settings-updates.test.ts` 覆盖默认值、env 回退、面板优先、尾斜杠、空值、非法值、未知字段、并发保存、缓存重载与日志脱敏；设置相关 14 项测试通过，`npm run build` 通过。runtime-info 的即时反射在 Step 2 的动态读取中完成并验证。
+    - 改 `nacho-server/src/services/settings.ts`：新增 `updates` 分组与 `UpdateSettings = { origin: string }`；`origin` 允许空字符串表示未配置；默认值从 `config.updateOrigin`（`NACHO_UPDATE_ORIGIN`）读取；加入 `defaultSettings()`、`AppSettings`、`sectionSchemas`、`getEffectiveSettings()`、`mergeSettings()`；未知字段继续保留以兼容前后端版本差。
+    - 校验：只接受 `^https://[a-z0-9.-]+(:[0-9]+)?$`；统一去掉尾部 `/`；拒绝 `http://`、路径、查询、凭据、控制字符、空 host 和占位值 `https://updates.example.invalid`；非法值返回 400，不覆盖旧值。
+    - API：复用 `PUT /api/panel/settings`，请求体示例 `{ "updates": { "origin": "https://maojiu.cc" } }`；成功后 `runtime-info` 立即反映；审计日志只记录分组名与 origin（origin 非密钥），不得记录其他设置值或凭据。
+    - 读取语义：`settings.updates.origin` 非空优先；否则回退 `NACHO_UPDATE_ORIGIN`；两者都无效视为未配置。服务端重启后设置仍保留。
+    - 测试：新增/扩展 `src/tests/settings*.test.ts` 覆盖默认值、env 回退、settings 优先、非法 origin、尾斜杠、空值、未知字段保留、并发保存和重启读取。
+
+  - [x] **Step 2【加急】服务端运行时读取与索引缓存隔离**
+    - 完成记录（2026-11-12）：`release-index.ts` 删除模块级 `UPDATE_ORIGIN`/`RELEASE_INDEX_URL`，新增 `resolveUpdateOrigin()`（设置优先、env 回退、严格校验），未配置时抛出明确错误且不请求占位地址；内存与磁盘缓存均记录 origin，跨 origin 不复用，新增 `invalidateReleaseIndexCache()` 并在 `PUT /settings` 保存 `updates` 时调用，代次计数阻止在途旧请求写回缓存。`product-updates.ts` 的 `runtimeInfo()` 新增 `updateSource`、`updateSourceOrigin`（`panel`/`env`/`none`）、`updateSourceConfigured` 与 `capabilities.updateSourceManagement`；`compatibility.json` 增加 `updateSourceManagement: "0.4.1"`。新增 `release-index-origin.test.ts`、`release-index-unconfigured.test.ts` 并重写 `release-index.test.ts`，覆盖设置优先、env 回退、未配置报错、origin 变化清缓存、跨 origin 缓存隔离、在途失效与签名校验；服务端 159 项测试全部通过，`npm run build` 通过。
+    - 改 `nacho-server/src/services/release-index.ts`：删除模块级常量 `UPDATE_ORIGIN`/`RELEASE_INDEX_URL`，改为 `resolveUpdateOrigin(): string | null`（settings 优先、env 回退、严格校验）；`indexUrl(sequence?)`、`getReleaseIndex()` 全部通过它取地址；未配置时抛出明确错误，不请求占位地址。
+    - 缓存：内存缓存与磁盘 `release-index-cache-recommended.json` 增加 origin 字段；origin 不一致时忽略旧缓存；新增 `invalidateReleaseIndexCache()`，面板保存新 origin 后清空内存缓存和磁盘缓存，避免把旧 origin 的索引当成新 origin 的结果。
+    - 改 `nacho-server/src/services/product-updates.ts`：`runtimeInfo()` 增加 `updateSourceConfigured`、`updateSource`（当前 origin 或 null）、`updateSourceOrigin`（`panel` / `env` / `none`）和 `capabilities.updateSourceManagement`；`availableUpdates()`、`requestServerUpdate()` 使用动态 origin。
+    - 改 `nacho-server/deploy/compatibility.json`：增加 `updateSourceManagement: "0.4.1"`；旧面板不发送设置更新，旧服务端不返回该能力。
+    - 测试：`src/tests/recommended-updates.test.ts` 覆盖 settings 优先、env 回退、未配置报错、origin 变化清缓存、跨 origin 缓存不复用、签名校验仍生效。
+
+  - [x] **Step 3【加急】面板统一编辑入口与状态展示**
+    - 完成记录（2026-11-12）：新增 `lib/update-origin.ts` 统一保存流程：先写面板本地（桌面桥 `setOrigin` + localStorage），服务端支持时再 `PUT /api/panel/settings` 写入 `updates.origin`，随后 `GET /api/panel/product-updates` 验证；服务端写入失败自动恢复面板本地，验证失败保留新值并返回警告。`updates-panel.tsx` 的更新服务器弹窗同时展示面板本地与服务端更新源，支持能力门槛降级提示、保存失败错误与“恢复上一个更新源”，概览卡增加两处来源 Meta。`product-update-status.ts` 新增 `updateSourceState`（`panel-local`/`server-env`/`server-panel`/`unsupported`/`disconnected`）与真实来源文案，Agent 制品按钮继续以服务端 `updateSourceConfigured` 为准。新增 `tests/update-origin.test.ts` 并扩展 `product-update-status.test.ts`，覆盖双写、降级、失败回滚、验证失败与状态展示；面板 364 项测试、`tsc --noEmit`、`pnpm build` 通过。浏览器与 `390x844` 视口验收在 Step 7 统一执行。
+    - 改 `nacho-main/nacho-panel/components/settings/updates-panel.tsx`：保留现有“更新源”弹窗；保存时同时执行：
+      1. `window.nachoUpdates.setOrigin(origin)` 更新面板本地（`update-origin.txt`）；
+      2. 调用 `PUT /api/panel/settings` 写入 `updates.origin` 更新服务端。
+    - 加载时分别读取并显示“面板本地更新源”和“服务端更新源”；服务端 `runtime-info` 的 `updateSource`/`updateSourceOrigin` 决定文案，禁止再用面板本地 origin 推断服务端已配置。
+    - 能力门槛：若 `runtime-info` 没有 `capabilities.updateSourceManagement`（1.2.0 及更早），只保存面板本地，并明确显示“服务端 1.2.1 起支持面板管理更新源，请先升级服务端”；不得静默丢弃服务端同步失败。
+    - 保存后调用一次 `GET /api/panel/product-updates` 验证新 origin；失败时提示错误、保留“恢复上一个更新源”操作，不把失败状态写成成功。
+    - 改 `nacho-main/nacho-panel/lib/product-update-status.ts` 的类型与状态：Agent 制品按钮继续使用服务端 `updateSourceConfigured`；新增 UI 状态区分 `panel-local` / `server-env` / `server-panel` / `unsupported`。
+    - 测试：面板纯逻辑测试覆盖保存双写、服务端不支持降级、保存失败回滚、origin 展示、`updateSourceConfigured` 门禁；不得把真实密钥写入测试夹具。
+
+  - [x] **Step 4【加急】新安装与云端部署写入服务端设置**
+    - 完成记录（2026-11-12）：`cloud-deployment.ts` 新增 `persistCloudUpdateOrigin()`：安装完成、健康检查通过并读取 `PANEL_API_KEY` 后，在现有 SSH 会话内调用服务端本机 `127.0.0.1:8443` 的 `runtime-info` 检查 `updateSourceManagement`，再 `PUT /api/panel/settings` 写入 `updates.origin`；密钥只经 SSH stdin 传递，不进入命令 argv 或日志，响应只解析状态与 origin。能力缺失时跳过写入并提示升级；写入失败不回滚安装，返回“服务端更新源未持久化”警告并写入部署日志。`cloud-deploy-form.tsx` 完成页新增更新源未持久化与 Agent 制品未准备提示。`route.ts` 已确认只从面板进程环境读取 `NACHO_UPDATE_ORIGIN` 并复用严格校验，无需功能改动。`cloud-deployment.test.ts` 19 项通过，覆盖成功写入、能力缺失、写入失败不阻断、密钥不出现在命令中、Agent 准备顺序与日志；`tsc --noEmit` 通过。
+    - 改 `nacho-main/nacho-panel/lib/cloud-deployment.ts` 与 `app/api/cloud-deployment/route.ts`：安装时继续把 `NACHO_UPDATE_ORIGIN` 传给 `install.sh` 作为 bootstrap；健康检查通过并读取 `PANEL_API_KEY` 后，调用 `PUT /api/panel/settings` 将 origin 持久化到服务端设置，再执行 Agent 制品准备。
+    - 只从面板服务进程环境（或已验证的部署上下文）取 origin，不从客户端请求体任意接收；origin 仍走严格 HTTPS 校验与 shell 转义。
+    - 失败处理：设置写入失败不回滚已安装服务端，但必须在部署日志/完成页明确提示“服务端更新源未持久化”，并保留手动设置入口；不得静默成功。
+    - 测试：扩展 `tests/cloud-deployment.test.ts` 覆盖设置写入、能力缺失、写入失败不阻断、Agent 准备顺序和日志；真实云端安装由用户提供目标机后验收。
+
+  - [x] **Step 5【加急】修复 0.4.0 的 Agent 制品自动准备缺陷**
+    - 完成记录（2026-11-12）：`prepareCloudAgentArtifact` 改为在现有 SSH 会话内调用服务端本机 `http://127.0.0.1:8443`：准备请求使用 `curl --max-time 1200`（避免 undici 5 分钟 headersTimeout），并带 `X-Nacho-Panel-Version`；`PANEL_API_KEY` 只通过 SSH stdin 以 `Authorization: Bearer …` 传给 `curl -H @-`，不进入 argv 或部署日志；准备成功后再经本机 `runtime-info` 与公开 `latest.json` 校验版本。`deployCloudServer` 不再以公网 8443 可达为前提，探测失败时仍会准备制品；失败只警告、不回滚安装。`cloud-deployment.test.ts` 19 项通过，覆盖本机命令包含 `--max-time`/`127.0.0.1`/`X-Nacho-Panel-Version`、密钥只经 stdin 且不出现在命令与日志、失败不抛错、公网端口不可达仍准备成功；`tsc --noEmit` 通过。真实制品下载与 `latest.json` 200 验证在 Step 7 执行。
+    - 改 `prepareCloudAgentArtifact`：不再使用全局 `fetch` 等待 20 分钟；改为在现有 SSH 会话内对服务端本机 `http://127.0.0.1:8443/api/panel/product-updates/agent-artifact` 发起请求，优先 `curl --max-time 1200`，或使用 `node:http` 显式设置 20 分钟 socket 超时；不得依赖公网 8443 可达。
+    - `PANEL_API_KEY` 从远端 `.env` 读取，不得进入命令行 argv、日志或面板日志；通过 stdin/`curl -H @-` 或 600 权限临时文件传 header，并在 finally 清理。
+    - 请求必须带 `X-Nacho-Panel-Version`；准备成功后用远端 `GET /agent/downloads/windows/latest.json` 校验版本；失败只警告、不回滚安装、保留面板“准备新版制品”手动兜底。
+    - 测试：覆盖 SSH 本机命令包含 `--max-time`/`127.0.0.1`/`X-Nacho-Panel-Version`、密钥不出现在命令与日志、失败不抛错、公网端口不可达仍可准备。
+
+  - [x] **Step 6【加急】兼容、迁移与降级路径**
+    - 完成记录（2026-11-12）：版本矩阵已落实到代码与文档：1.1.24 无设置分组与管理 API，面板按 `unsupported` 只保存本地并在弹窗提示“1.1.24 需按部署文档一次性迁移”；1.2.0 无 `updateSourceManagement`，同样降级并提示升级；1.2.1+ 面板写 `updates.origin`，设置优先于 `.env`，`.env` 仅作 bootstrap/headless 回退。面板同时展示面板本地与服务端来源，保存默认双写，失败恢复上一值。`nacho-server/README.md` 新增“更新源管理与一次性迁移”章节、`NACHO_UPDATE_ORIGIN` 环境变量说明与 runtime-info 新字段；`nacho-main/ARCHITECTURE.md` 更新云端部署流程与跨仓更新源约定。新增 `install.sh` 迁移安全测试，确认不会删除数据目录、SQLite、`.env` 或已有 Agent 制品；部署脚本 19 项、面板更新源 11 项测试通过。迁移不覆盖既有数据的实证见 Step 0（`.env` 原内容 SHA-256 一致、数据库保留）。
+    - 三个版本矩阵必须明确：
+      - 1.1.24：没有 settings/API，只能按 Step 0 手工迁移；面板不得声称可管理。
+      - 1.2.0：有更新源 env，但没有 `updateSourceManagement`；面板只保存本地并提示升级。
+      - 1.2.1+：面板可写 `updates.origin`；设置优先于 env；`.env` 继续作为 headless/bootstrap 回退。
+    - 面板本地 origin 与服务端 origin 短暂不一致时，UI 必须分别展示；保存默认同步，失败可恢复上一值。
+    - 迁移不得覆盖现有 `.env`、SQLite、Agent token、journal、已下发命令的旧制品；升级/回滚遵循各仓 AGENTS 的备份、重启、健康验证、失败回滚流程。
+    - 文档：更新 `nacho-server/README.md`、`nacho-main/ARCHITECTURE.md` 或相关运维说明，写清“面板管理、服务端持久化、env 仅 bootstrap”的语义和 1.1.24 一次性迁移步骤。
+
+  - [ ] **Step 7【加急】分层测试与真机验收**
+    - 服务端：`npm test && npm run build`；覆盖 settings、runtime-info、索引缓存、Agent 同步、非法 origin、重启持久化。
+    - 面板：`pnpm exec tsx --test tests/*.test.ts`、`pnpm exec tsc --noEmit`、`pnpm build`；桌面 `pnpm test && pnpm build`，核对 `desktop/dist/NachoPanel/NachoPanel-Setup-0.4.1.exe` 重新生成。
+    - 部署脚本：`bash deploy/tests/napl-fixture.sh`；`install.sh` 保持 LF；若修改 `install.sh`，按 AGENTS 核对 `cloud-deployment.ts` 的部署输入。
+    - Agent：`dotnet test`（若本机 testhost 仍被宿主沙箱拦截，使用同一测试程序集的反射 runner，并在报告记录）；`dotnet build -c Release`。
+    - 真机验收：面板修改 origin → 服务端 `runtime-info` 立即变化 → 重启服务端设置仍在 → Agent“准备新版制品”成功 → `GET /agent/downloads/windows/latest.json` 返回 200；从 Windows 机器执行 `irm .../nacho.ps1 | iex` 安装成功。
+    - 安全验收：非法 origin、HTTP、路径、占位值、注入字符全部拒绝；日志/面板输出不出现 API Key、密码、`.env` 全文；索引 Ed25519 签名仍校验。
+
+  - [ ] **Step 8【加急】发布 0.4.1 / 1.2.1**
+    - 先确认 0.4.0/1.2.0 的已知自动准备缺陷已按 Step 5 修复，再递增版本：面板 `desktop/package.json` 与 `PANEL_VERSION` 语义为 `0.4.1`，服务端 `package.json`/`package-lock.json`/Agent `Nacho.Agent.csproj` 统一 `1.2.1`，`deploy/compatibility.json` 增加能力门槛。
+    - 按 `AI_RELEASE_POLICY.md` 和根 `publish-update.ps1` 执行：全量测试 → 提交并推送固定 SHA → 生成面板 EXE、服务端源码包和 Agent EXE → GitHub Release 回读大小/哈希 → 通过 SSH 只发送发布元数据 → 更新服务器签署 v4 索引并 SSE 通知。
+    - 发布后独立核对：签名索引 `.sig` 用固定公钥验签；GitHub API 资产 `size`/`digest` 与索引一致；记录索引序号、两个仓提交 SHA、版本、频道和回滚状态。
+    - 升级顺序：先服务端/Agent `1.2.1`，再面板 `0.4.1`；1.1.24 先按 Step 0 迁移；1.2.0 可直接由面板升级（若执行器协议允许），否则按 Step 6 的迁移路径处理。
+    - 报告必须区分：源码已修改、构建通过、源码已推送、远端已签名发布、客户端实际可用；未完成真机验证时不得声称用户端已生效。
+
+  - 完成定义：面板可在“设置 → 更新”一处修改更新源，服务端持久化并在重启/面板离线后继续使用；新装自动写入；1.2.1+ 旧实例无需 SSH；1.2.0/1.1.24 有明确降级/迁移提示；Agent 自动准备不再受 undici 5 分钟和公网 8443 限制；全量测试、桌面 EXE、GitHub Release、签名索引和真机安装均有证据。
+  - 不在本待办范围：替 1.1.24 直接增加新 API；修改索引签名/公钥；把私钥、PANEL_API_KEY、ENROLLMENT_KEY 或 SSH 密码写入仓库；绕过 512 KiB 结果上限或命令契约。
+
 - [ ] **TODO-02 系统设置持久化与生效（常规 + 通知条件）**
   - 现状（2026-11-11 复核，部分完成）：服务端已有通用 `GET/PUT /api/panel/settings` JSON 存储与读取；面板挂载时只读取 `security.openEnrollment`，保存时也只在免密注册变化时提交该字段。常规设置与通知条件仍只存在前端 state，刷新即还原，服务端不消费。`PUT /settings` 仍是整包替换。
   - 已完成子项：服务端通用设置 JSON 存取；免密注册的持久化与服务端生效；免密注册相关测试。
