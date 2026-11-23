@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { countUnknownClientOS, matchesClientOS } from "@/lib/client-os"
 import {
   Activity,
   AppWindow,
@@ -279,6 +280,8 @@ function TargetPicker({
 }: TargetPickerProps) {
   const { clients } = useServerData()
   const list = clients.filter((c) => (!onlineOnly || c.status === "online") && matchOS(c, os))
+  // 系统类型未知的客户端既不计入 Windows 也不计入 Linux，空态里要说明原因，避免被当成“没在线”
+  const unknownOSCount = countUnknownClientOS(clients)
   const fixedClient = clientId ? clients.find((client) => client.id === clientId) ?? null : null
   const [internalSelected, setInternalSelected] = useState<string[]>(list[0] ? [list[0].id] : [])
   const selected = selectedIds ?? internalSelected
@@ -363,9 +366,14 @@ function TargetPicker({
       icon={<Users className="h-3.5 w-3.5" />}
     >
       {list.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border bg-surface/40 px-4 py-3 text-xs text-muted-foreground">
-          暂无 {os === "windows" ? "Windows" : "Linux"} 客户端在线
-        </p>
+        <div className="rounded-xl border border-dashed border-border bg-surface/40 px-4 py-3 text-xs text-muted-foreground">
+          <p>暂无 {os === "windows" ? "Windows" : "Linux"} 客户端在线</p>
+          {unknownOSCount > 0 && (
+            <p className="mt-1 text-[11px] text-muted-foreground/70">
+              另有 {unknownOSCount} 台客户端未上报可识别的系统类型，不计入 Windows / Linux 分组
+            </p>
+          )}
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           {/* 一键全选 + 按分组选择 */}
@@ -2877,17 +2885,9 @@ function CronManage({ os, clientId }: DetailProps) {
 }
 
 /* ---------- 系统类型 & 工具清单 ---------- */
-/* 依据客户端信息粗略判断所属系统（无字段时按平均分配以便演示） */
+/* 只按客户端真实上报的系统字段分组：字段缺失即未知，不参与任何系统工具，也不按 id 猜测分配 */
 function matchOS(c: Client, os: OS): boolean {
-  const raw = `${(c as Record<string, unknown>).os ?? ""} ${(c as Record<string, unknown>).system ?? ""} ${
-    (c as Record<string, unknown>).platform ?? ""
-  }`.toLowerCase()
-  if (raw.includes("win")) return os === "windows"
-  if (raw.includes("linux") || raw.includes("ubuntu") || raw.includes("centos") || raw.includes("debian"))
-    return os === "linux"
-  // 无系统字段时用 id 的哈希稳定分配，保证两个分组都有数据
-  const hash = c.id.split("").reduce((a, ch) => a + ch.charCodeAt(0), 0)
-  return (hash % 2 === 0) === (os === "windows")
+  return matchesClientOS(c, os)
 }
 
 type Tool = {

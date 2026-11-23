@@ -1,6 +1,7 @@
 "use client"
 
-import { createContext, useContext, useState } from "react"
+import { createContext, useContext, useEffect, useState } from "react"
+import { panelStorage, readPluginDownloadServer, writePluginDownloadServer } from "@/lib/plugin-download-server"
 import {
   Activity,
   Camera,
@@ -111,7 +112,15 @@ export function PluginsProvider({ children }: { children: React.ReactNode }) {
   const [editing, setEditing] = useState<Plugin | null>(null)
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
-  const [downloadServer, setDownloadServer] = useState("")
+  const [downloadServer, setDownloadServerState] = useState("")
+  // 下载服务器地址是面板本地偏好：挂载时从本地存储恢复，修改即持久化，刷新或重启面板后仍在
+  useEffect(() => {
+    const stored = readPluginDownloadServer(panelStorage())
+    if (stored) setDownloadServerState(stored)
+  }, [])
+  const setDownloadServer = (value: string) => {
+    setDownloadServerState(writePluginDownloadServer(panelStorage(), value))
+  }
 
   const openImport = () => setImportOpen(true)
   const closeImport = () => setImportOpen(false)

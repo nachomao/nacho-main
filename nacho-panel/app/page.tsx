@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/page-header"
-import { BitcoinCard, MarketCapCard } from "@/components/stat-cards"
+import { AbnormalDeviceCard, DeviceTotalCard } from "@/components/stat-cards"
 import { RevenueCard } from "@/components/revenue-card"
 import { RetentionCard } from "@/components/retention-card"
 import { BalanceCard } from "@/components/balance-card"
@@ -13,8 +13,8 @@ export default function Page() {
       {/* Top row */}
       <div className="flex min-h-0 flex-none flex-col gap-4 lg:flex-[3] lg:basis-0 lg:flex-row">
         <div className="flex min-h-[420px] w-full min-w-0 flex-col gap-4 lg:min-h-0 lg:w-1/3">
-          <BitcoinCard />
-          <MarketCapCard />
+          <DeviceTotalCard />
+          <AbnormalDeviceCard />
         </div>
         <div className="flex min-h-[360px] w-full min-w-0 lg:min-h-0 lg:w-1/3">
           <RevenueCard />

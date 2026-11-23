@@ -4,7 +4,7 @@ import { Monitor } from "lucide-react"
 import { AnimatedNumber } from "@/components/animated-number"
 import { useServerData } from "@/components/server-data-context"
 
-export function BitcoinCard() {
+export function DeviceTotalCard() {
   const { overview } = useServerData()
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden rounded-3xl bg-gradient-to-br from-primary to-accent p-5 text-primary-foreground">
@@ -20,7 +20,7 @@ export function BitcoinCard() {
   )
 }
 
-export function MarketCapCard() {
+export function AbnormalDeviceCard() {
   const { overview } = useServerData()
   const abnormal = (overview?.clients.warning ?? 0) + (overview?.clients.offline ?? 0)
   const total = overview?.clients.total ?? 0

@@ -98,14 +98,73 @@ function generateSecret() {
   return randomBytes(32).toString("base64url")
 }
 
-function localIpv4Addresses() {
-  const addresses = new Set<string>()
-  for (const records of Object.values(os.networkInterfaces())) {
-    for (const record of records || []) {
-      if (record.family === "IPv4" && !record.internal) addresses.add(record.address)
+/* 虚拟/隧道网卡名称特征：Hyper-V、WSL、Docker、VMware/VirtualBox、VPN、Npcap 等，优先度低于真实物理网卡 */
+const VIRTUAL_INTERFACE_HINTS = [
+  /vethernet/i,
+  /hyper-?v/i,
+  /virtualbox/i,
+  /vbox/i,
+  /vmware/i,
+  /vmnet/i,
+  /docker/i,
+  /\bwsl\b/i,
+  /tailscale/i,
+  /zerotier/i,
+  /\bvpn\b/i,
+  /\btap\d*\b/i,
+  /\btun\d*\b/i,
+  /\butun\d*\b/i,
+  /\bnpcap\b/i,
+  /\bnpf\b/i,
+  /\bbr-/i,
+  /loopback/i,
+]
+
+export type NetworkInterfaceRecord = { address?: unknown; family?: unknown; internal?: unknown }
+export type NetworkInterfaceMap = Record<string, ReadonlyArray<NetworkInterfaceRecord> | undefined>
+
+export function isVirtualNetworkInterface(name: string): boolean {
+  const normalized = name.trim().toLowerCase()
+  if (!normalized) return false
+  return VIRTUAL_INTERFACE_HINTS.some((pattern) => pattern.test(normalized))
+}
+
+function isUsableLanIpv4(address: string): boolean {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) return false
+  const [first, second] = address.split(".").map((part) => Number(part))
+  if (first === 0 || first === 127 || first >= 224) return false
+  // 169.254/16 是 DHCP 失败时的 APIPA 地址，局域网内不可路由
+  if (first === 169 && second === 254) return false
+  return true
+}
+
+/**
+ * 局域网候选地址排序：真实物理网卡在前，虚拟/隧道网卡在后；同优先级按地址排序，
+ * 保证同一台机器上多网卡（VPN / Docker / Hyper-V / WSL）时结果稳定、可预测。
+ * 入参与 `os.networkInterfaces()` 同构，便于用多网卡夹具测试。
+ */
+export function rankLanAddressCandidates(interfaces: NetworkInterfaceMap): string[] {
+  const seen = new Set<string>()
+  const candidates: Array<{ address: string; virtual: boolean }> = []
+  for (const [name, records] of Object.entries(interfaces)) {
+    for (const record of records ?? []) {
+      const address = typeof record.address === "string" ? record.address.trim() : ""
+      const family = String(record.family ?? "")
+      if (!address || record.internal === true) continue
+      if (family !== "IPv4" && family !== "4") continue
+      if (!isUsableLanIpv4(address) || seen.has(address)) continue
+      seen.add(address)
+      candidates.push({ address, virtual: isVirtualNetworkInterface(name) })
     }
   }
-  return [...addresses]
+  candidates.sort(
+    (left, right) => Number(left.virtual) - Number(right.virtual) || left.address.localeCompare(right.address),
+  )
+  return candidates.map((candidate) => candidate.address)
+}
+
+function localIpv4Addresses() {
+  return rankLanAddressCandidates(os.networkInterfaces())
 }
 
 function managedServerDirectory() {
@@ -305,9 +364,31 @@ function localApi(port: number) {
   return `http://127.0.0.1:${port}`
 }
 
-function localAgentApi(accessMode: LocalControlAccessMode, port: number, addresses: string[]) {
-  if (accessMode === "lan" && addresses[0]) return `http://${addresses[0]}:${port}`
-  return localApi(port)
+/**
+ * 写入 Agent 安装信息的地址必须与服务实际监听地址一致：
+ * - HOST 绑定到具体网卡时直接用该地址，不做二次挑选；
+ * - HOST 为 0.0.0.0（通配监听）时取排序后的首个真实网卡地址；
+ * - 非局域网模式或没有可用地址时回退回环地址，不编造一个不可达地址。
+ */
+export function selectAgentAddress(
+  accessMode: LocalControlAccessMode,
+  host: string | undefined,
+  addresses: readonly string[],
+): string | null {
+  if (accessMode !== "lan") return null
+  const bindAddress = (host ?? "").trim()
+  if (bindAddress && bindAddress !== "0.0.0.0" && bindAddress !== "::" && bindAddress !== "127.0.0.1") return bindAddress
+  return addresses[0] ?? null
+}
+
+export function buildAgentApiUrl(
+  accessMode: LocalControlAccessMode,
+  port: number,
+  addresses: readonly string[],
+  host?: string,
+): string {
+  const address = selectAgentAddress(accessMode, host, addresses)
+  return address ? `http://${address}:${port}` : localApi(port)
 }
 
 function hasStrongSecret(values: EnvironmentMap, key: string) {
@@ -662,7 +743,7 @@ export async function getLocalControlServerStatus(): Promise<LocalControlServerS
     version,
     databasePath: databasePathFromEnvironment(serverDir, values),
     localAddresses,
-    connection: installed && key ? { api: localApi(port), agentApi: localAgentApi(accessMode, port, localAddresses), key } : null,
+    connection: installed && key ? { api: localApi(port), agentApi: buildAgentApiUrl(accessMode, port, localAddresses, values.get("HOST")), key } : null,
     prerequisites: {
       git,
       node,

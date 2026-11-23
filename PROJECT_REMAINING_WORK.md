@@ -1,10 +1,16 @@
 # 当前待办
 
-> 本文件是唯一当前待办来源。以下「未完成功能待办」为 2026-11-11 基于当前源码的只读复核结果；历史发布记录已剥离至 `PROJECT_RELEASE_HISTORY.md`。完成一项后勾选并更新对应条目。
+> 本文件是唯一当前待办来源。以下「未完成功能待办」为 2026-11-13 基于当前源码、测试与线上签名索引的复核结果；历史发布记录已剥离至 `PROJECT_RELEASE_HISTORY.md`。完成一项后勾选并更新对应条目。
 
-## 未完成功能待办（2026-11-11）
+## 未完成功能待办（2026-11-13）
 
-**复核统计**：共 18 个条目（文档编号无 TODO-04），已完成 2 项（TODO-01、TODO-08），未完成 16 项。未完成项中，TODO-02、TODO-03、TODO-06、TODO-11、TODO-12 为部分完成；TODO-03 前置是 TODO-03 的门禁。本次复核仅做只读核查，未修改代码、未执行测试或打包、未发布、未提交或推送。
+**复核统计**：共 20 个条目（文档编号无 TODO-04，含 TODO-13、DEF-03 与 4 项 Alpha），已完成 9 项（TODO-01、TODO-02、TODO-07、TODO-08、TODO-10、TODO-13、DEF-01、DEF-02、DEF-03），未完成 11 项。未完成项按性质拆分：**待开发功能与缺陷 5 项**（TODO-03 前置、TODO-03、TODO-05、TODO-06、TODO-09）；**发布后验证 2 项**（TODO-11、TODO-12，发布本身已完成，仅余真机演练证据）；**Alpha 未排期 4 项**（ALPHA-01~04，统一依赖账号体系）。TODO-03、TODO-06 为部分完成；TODO-03 前置是 TODO-03 的门禁。
+
+**2026-11-13 纠偏说明**：上一版统计（18 项 / 已完成 2 项）已过期，本次按源码纠正三处偏差：① TODO-02 实际已于 2026-11-11 21:50 实现并随 0.4.1 / 1.2.1 发布，原文档仍记为「部分完成、仅前端 state」，现勾选完成；② TODO-11 / TODO-12 的版本目标（1.1.25 / 0.3.22）已被 1.2.1 / 0.4.1 取代，条目改写为当前版本口径；③ TODO-08 的「未发布、GitHub 仍为 v0.3.11」已过期，随 0.4.1 发布纠正。本次执行了服务端与面板测试，未修改功能代码、未打包、未发布、未提交或推送。
+
+**2026-11-23 补记**：两批并行工作已完成并转记——① TODO-10 的「过期注释」子项已修正（面板注释改为与 `/logs` 真实链路一致，其余 3 个子项未动）；② DEF-01 由 `nacho-server` 提交 `60a5cfe` 修复、DEF-03 由提交 `624f21a` 修复，两项均以服务端 171/171 测试与干净 `git status` 佐证，现勾选完成。同日面板验证：`pnpm exec tsx --test tests/*.test.ts` 374 项通过、`pnpm exec tsc --noEmit` 通过；桌面测试 60 项中 57 通过、3 项仍为已知 Electron 无交互会话限制。
+
+**2026-11-23 补记②（第二批）**：TODO-10 剩余 3 个子项与 DEF-02 已完成。① 首页统计卡改名 `DeviceTotalCard` / `AbnormalDeviceCard`（`components/stat-cards.tsx`），`app/page.tsx` 引用同步，`app/layout.tsx` 删除 `generator: 'v0.app'`；② 插件下载服务器地址改由新增的 `lib/plugin-download-server.ts` 持久化到面板本地存储（键 `nacho_plugin_download_server`），刷新或重启面板后仍在；③ `extensions-panel.tsx` 的 `matchOS` 改为只读真实系统字段（新增 `lib/client-os.ts`），删掉按 id 哈希“演示”分配，未知系统不进入任何分组且空态说明原因；④ DEF-02 改为按网卡类型排序选地址，`HOST` 绑定具体网卡时直接使用该地址，无可用地址回退回环。验证：`pnpm exec tsc --noEmit` 本轮实跑通过；`pnpm exec tsx --test tests/*.test.ts` 在本机会话被沙箱拦为 `spawn EPERM`（tsx 需要起子进程），改用 esbuild 打包 + `node` 直跑的等价方式执行全部 77 个测试文件：**385 项通过、2 项失败**，失败项为 `local-control-server` 的 spawn 子进程用例与 `ai-local-jobs` 的临时目录 `EBUSY`，均属沙箱环境限制而非本轮改动。本轮提交**未推送**：本机当前无 GitHub 出网与凭据（`git ls-remote` 报 `SEC_E_NO_CREDENTIALS`、`curl` 直连 000）。
 
 **统计口径**：面板界面 + 服务端 API + Agent 执行三层端到端可用。仅界面存在、后端未闭环的也计入。开发者预览模式为有意设计，不计入待办。
 
@@ -116,14 +122,16 @@
   - 完成定义：面板可在“设置 → 更新”一处修改更新源，服务端持久化并在重启/面板离线后继续使用；新装自动写入；1.2.1+ 旧实例无需 SSH；1.2.0/1.1.24 有明确降级/迁移提示；Agent 自动准备不再受 undici 5 分钟和公网 8443 限制；全量测试、桌面 EXE、GitHub Release、签名索引和真机安装均有证据。
   - 不在本待办范围：替 1.1.24 直接增加新 API；修改索引签名/公钥；把私钥、PANEL_API_KEY、ENROLLMENT_KEY 或 SSH 密码写入仓库；绕过 512 KiB 结果上限或命令契约。
 
-- [ ] **TODO-02 系统设置持久化与生效（常规 + 通知条件）**
-  - 现状（2026-11-11 复核，部分完成）：服务端已有通用 `GET/PUT /api/panel/settings` JSON 存储与读取；面板挂载时只读取 `security.openEnrollment`，保存时也只在免密注册变化时提交该字段。常规设置与通知条件仍只存在前端 state，刷新即还原，服务端不消费。`PUT /settings` 仍是整包替换。
-  - 已完成子项：服务端通用设置 JSON 存取；免密注册的持久化与服务端生效；免密注册相关测试。
-  - 未完成子项：设置 schema 与默认值；面板整包读取/保存与重启后生效；并发数、命令超时、重试次数、日志保留、离线阈值、时区、自动清理、CPU/内存/磁盘阈值与静默时段的服务端消费；前向兼容未知字段；整包与单字段合并语义；往返、默认值、旧数据与非法值测试。
-  - 证据：`nacho-panel/components/settings/settings-view.tsx:62`、`:86`、`nacho-server/src/routes/panel.ts:737`、`nacho-server/src/services/settings.ts:10`、`nacho-server/src/config.ts:41`。
-  - 完成标准：服务端定义设置 schema 与默认值，整包保存/读取并前向兼容未知字段；实际消费并发数、命令超时、重试次数、日志保留、离线阈值、时区、自动清理、CPU/内存/磁盘阈值与静默时段；面板挂载时读取、保存后重启仍生效；测试覆盖往返、默认值、旧数据与非法值。
-  - 合并语义：`PUT /settings` 当前为整包替换；面板只提交 `security.openEnrollment`，当前尚不会误清空其他字段，但一旦扩展为整包保存必须先定义合并语义并补测试。
-  - 注意：SMTP 密码等敏感字段不得写入日志。
+- [x] **TODO-02 系统设置持久化与生效（常规 + 通知条件）**
+  - 完成记录（2026-11-13 复核纠正）：本项实际已于 2026-11-11 21:50 完成，原文档漏勾。实现提交：面板 `c911598`、服务端 `346183a`；经 `git merge-base --is-ancestor` 核对，两者均已是已发布提交的祖先（面板 `60da795` → 0.4.1，服务端 `dbfb2bf` → 1.2.1），即功能已随线上版本交付，不只是本地源码。
+  - 现状（2026-11-13 源码复核，已完成）：`settings.ts` 定义 `GeneralSettings` / `EmailSettings` / `NotifyConditions` / `SecuritySettings` / `UpdateSettings` 五组 schema 与 `defaultSettings()`；`sanitizeSection()` 对旧数据逐字段校验、非法值回退默认；`getEffectiveSettings()` 带缓存与 `invalidateSettingsCache()`；`mergeSettings()` 按分组浅合并，未提交字段与未知字段原样保留（前向兼容）。面板挂载即整包读取、保存整包提交。
+  - 已完成子项：设置 schema 与默认值；面板整包读取/保存与重启后生效；全部要求字段的服务端消费；前向兼容未知字段；分组合并语义；往返、默认值、旧数据与非法值测试；审计日志脱敏。
+  - 消费点证据（逐条核对）：并发数 `commands.ts:15`；命令超时 `commands.ts:84`；通道超时 `ws.ts:219`；重试次数 `task-scheduler.ts:58`；自动清理 `task-scheduler.ts:67`；日志条目上限 `logs.ts:16`、压缩归档 `logs.ts:35`、保留天数 `logs.ts:51`；离线阈值 `clients.ts:64`；时区 `tasks.ts:103`、`notifications.ts:22`/`:44`；静默时段 `notifications.ts:46`；离线/任务失败通知 `notifications.ts:89`/`:96`；CPU/内存/磁盘阈值 `notifications.ts:114-116`。
+  - 面板证据：`settings-view.tsx:63`（挂载 `GET /settings`）、`:86`（整包 `PUT`）、`settings-remote.ts` 的 `applyRemoteSettings()`（部分响应按字段合并、非法值回退本地）。
+  - 合并语义（已定稿）：`PUT /settings` 为**按分组浅合并**，不再是整包替换；未提交分组与字段保持原值，未知字段保留但不做类型约束；非法值与非对象分组返回 400 且不覆盖旧值。
+  - 脱敏：`panel.ts:807` 审计日志只记录 `sections=` 与更新源 origin，不写入 SMTP 密码等设置值；`settings.test.ts` 有专项断言。
+  - 验证（2026-11-13 本次执行）：服务端 `npm test` **160 项全部通过**（含 `settings.test.ts` 7 项：默认值与环境变量回退、旧数据非法字段逐项回退、损坏存储回退、浅合并与重启后生效、审计脱敏、非法值 400、未知字段保留；另有 `settings-effects.test.ts`、`notification-settings.test.ts`）；面板 `pnpm exec tsx --test tests/*.test.ts` **367 项全部通过**（含 `settings-remote.test.ts` 4 项）。本次未重新执行 `npm run build`、`tsc --noEmit`、`pnpm build` 与 EXE 打包（只读复核，未改功能代码）。
+  - 边界（不属本项，勿据此认为安全项已交付）：`security.sessionTimeout` / `ipAllowlist` / `forceHttps` / `loginLockout` 目前**只持久化、未强制生效**，归 TODO-03；SMTP 真实发信归 TODO-05。本项只保证「存取 + 常规/通知条件消费」闭环。
 
 - [ ] **TODO-03 前置：HTTPS/TLS 基线与客户端信任策略（阻塞 TODO-03）**
   - 现状事实（2026-11-11 复核，仍未完成）：
@@ -200,8 +208,8 @@
   - 已完成子项：opencode sidecar、DPAPI 设置、Provider 代理、真实连接测试、NDJSON 流、MCP broker/审批、技能/插件工具过滤、桌面专属门禁。
   - 未闭环/边界子项：浏览器与云端面板不支持；MCP 仅 HTTP；`s-task` 只读、`s-report` 由模型汇总、`p-backup` 依赖 wbadmin；不开放 restart-system、manage-local-user、manage-registry、安装包与文件部署；MCP Token 会进入 sidecar 环境（bash 可读，但 Provider Key 与 PANEL_API_KEY 不会）；会话不跨刷新持久化；opencode 版本随桌面版本固定；Electron 启动类测试在无交互桌面会话下不可运行。
   - 证据：`desktop/opencode.lock.json`、`nacho-panel/lib/ai/`、`nacho-panel/app/api/ai/`、`nacho-panel/components/ai-mode/ai-event-reducer.ts`、`nacho-panel/components/settings/ai-config-sync.tsx`。
-  - 验证（2026-10-30 当次记录，桌面 0.3.12；当前版本口径 0.3.22）：面板 241 项测试、`tsc --noEmit`、`pnpm build`；桌面非 Electron 测试 29 项、`pnpm build` 生成 `desktop/dist/NachoPanel/NachoPanel-Setup-0.3.12.exe`（约 180MB，含 opencode，SHA-256 `5af43c4ed850a43223bb7a59ae9ead25172103bc02d7ad2a5be6d67556f2524d`）；真实 UI 验证设置测试连接、流式回复、工具审批与拒绝。2026-11-11 复核：当前桌面源码为 0.3.22，AI Mode 路由与运行链路仍存在；本次未重新执行测试、未重新打包，0.3.22 的 EXE 与哈希未更新，不能把 0.3.12 的验证结果直接视为 0.3.22 的产物验证。
-  - 发布状态：未发布；当前 0.3.22 只有本地源码/构建链路，GitHub 最新面板 Release 仍为 v0.3.11。
+  - 验证（2026-10-30 当次记录，桌面 0.3.12；当前版本口径 0.4.1）：面板 241 项测试、`tsc --noEmit`、`pnpm build`；桌面非 Electron 测试 29 项、`pnpm build` 生成 `desktop/dist/NachoPanel/NachoPanel-Setup-0.3.12.exe`（约 180MB，含 opencode，SHA-256 `5af43c4ed850a43223bb7a59ae9ead25172103bc02d7ad2a5be6d67556f2524d`）；真实 UI 验证设置测试连接、流式回复、工具审批与拒绝。2026-11-11 复核：当前桌面源码为 0.3.22，AI Mode 路由与运行链路仍存在；本次未重新执行测试、未重新打包，0.3.22 的 EXE 与哈希未更新，不能把 0.3.12 的验证结果直接视为 0.3.22 的产物验证。
+  - 发布状态（2026-11-13 纠正）：已随面板 0.4.1 Beta 发布。线上签名索引 `https://maojiu.cc/updates/index.json` 为 sequence 19（`publishedAt 2026-11-12T04:54:44Z`），含 panel 0.4.1 与 server 1.2.1；原记录「未发布、GitHub 仍为 v0.3.11 / 当前 0.3.22」已过期。AI Mode 运行链路随该版本交付，但本次未单独重跑 AI Mode 真机用例。
 
 - [ ] **TODO-09 Linux Agent 与 Linux 管理页**
   - 现状（2026-11-11 复核，未完成）：Agent 只有 Windows 实现，制品清单只接受 `win-x64`；面板 Linux 页签的 systemd 服务与 Crontab 为硬编码、按钮无请求；其余 Linux 功能被过滤或占位；macOS 入口仍提示“仅覆盖 Windows 与 Linux 客户端”，与 Linux 尚未实现的现状不一致。
@@ -213,31 +221,43 @@
 
 ### P2
 
-- [ ] **TODO-10 清理项（非阻塞）**
-  - 现状（2026-11-11 复核，未完成）：以下 4 个子项均仍存在。
-  - 已完成子项：无。
-  - 未完成子项：
-    - 遗留命名：`nacho-panel/app/page.tsx:2` 仍导入 `BitcoinCard` / `MarketCapCard`，`nacho-panel/app/layout.tsx:25` 保留 `generator: 'v0.app'`；后续统一改为设备/控制台语义。
-    - 过期注释：`nacho-panel/components/logs/logs-view.tsx:158` 仍写“演示数据”，实际已接 `/logs` API。
-    - 插件下载服务器地址只存在组件内存（`plugins-context.tsx:114` 的 `useState("")`），未持久化。
-    - `extensions-panel.tsx` 的 `matchOS` 在缺少 OS 字段时按 id 哈希“演示”分配（`:2881`），应改为真实字段或明确空态。
+- [x] **TODO-10 清理项（非阻塞）**
+  - 现状（2026-11-23 第二批，已完成）：4 个子项全部完成。
+  - 已完成子项：
+    - 过期注释（2026-11-23）——`nacho-panel/components/logs/logs-view.tsx` 中 `LogsView` 的“演示数据/hydration”注释已改为与代码一致：说明初始列表为空、数据由 `load()` 经 `apiRequest` 拉取 `/logs` 与 `/logs/sources` 后写入 state，不在客户端生成演示数据；仅改注释、未改逻辑。
+    - 遗留命名（2026-11-23 第二批）——`components/stat-cards.tsx` 的 `BitcoinCard` / `MarketCapCard` 改为 `DeviceTotalCard` / `AbnormalDeviceCard`，`app/page.tsx` 的导入与引用同步；`app/layout.tsx` 删除 `generator: 'v0.app'`，metadata 不再声明 v0 生成器。
+    - 插件下载服务器地址持久化（2026-11-23 第二批）——新增 `lib/plugin-download-server.ts`（键 `nacho_plugin_download_server`，读写均容错），`components/plugins/plugins-context.tsx` 挂载时恢复、输入即写入，刷新或重启面板后地址仍在；存储不可用（SSR／隐私模式／配额不足）时退回内存值，不阻断输入。
+    - `matchOS` 不再伪造系统（2026-11-23 第二批）——新增 `lib/client-os.ts`，只读 `os` / `osName` / `system` / `platform` 真实字段（macOS 需先于 `win` 判断，`darwin` 含 `win`），删除按 id 哈希“演示”分配；系统未知的客户端不进入任何系统分组，`extensions-panel.tsx` 的目标选择器空态明确提示“另有 N 台客户端未上报可识别的系统类型”。
+  - 证据：`nacho-panel/components/stat-cards.tsx`、`nacho-panel/app/page.tsx`、`nacho-panel/app/layout.tsx`、`nacho-panel/lib/plugin-download-server.ts`（新增）、`nacho-panel/lib/client-os.ts`（新增）、`nacho-panel/components/plugins/plugins-context.tsx`、`nacho-panel/components/clients/extensions-panel.tsx`、`nacho-panel/tests/client-os.test.ts`（新增 4 项）、`nacho-panel/tests/plugin-download-server.test.ts`（新增 4 项）。
+  - 验证（2026-11-23 第二批）：`pnpm exec tsc --noEmit` 通过；`pnpm exec tsx --test tests/*.test.ts` 因沙箱 `spawn EPERM` 无法运行，改用 esbuild 打包 + `node` 直跑的等价方式：77 个测试文件、385 项通过、2 项沙箱限制失败（口径见文首补记②）。
 
 ### 现存缺陷（非功能待办）
 
-- [ ] **DEF-01 注册限流的客户端 IP 解析**
-  - 现状（2026-11-11 复核，未修复）：`clientIp()` 无条件信任 `X-Forwarded-For`，与 `TRUST_PROXY` 无关，可伪造头绕过注册限流并污染日志。
-  - 已完成子项：注册失败限流与日志限频框架（`enrollment-guard`）。
-  - 未完成子项：仅在 `TRUST_PROXY` 开启且来源为可信代理时解析转发链；取首个非代理地址；IPv6 映射；直连、代理链、伪造头与限流恢复测试。
-  - 证据：`nacho-server/src/routes/agent.ts:17`、`nacho-server/src/config.ts:41`。
-  - 完成标准：仅在 `TRUST_PROXY` 开启且来源为可信代理时解析转发链，取首个非代理地址；处理 IPv6 映射；测试覆盖直连、代理链、伪造头与限流恢复。
-  - 优先级：高，建议先于 TODO-03 修复。
+- [x] **DEF-01 注册限流的客户端 IP 解析**
+  - 完成记录（2026-11-23）：已修复，提交 `60a5cfe`（`nacho-server`，`fix(agent): 只在可信代理链下解析 X-Forwarded-For (DEF-01)`）。修复前的缺陷是 `clientIp()` 无条件信任 `X-Forwarded-For`，可伪造头绕过注册限流并污染日志。
+  - 现状（2026-11-23 复核，已完成）：新增 `nacho-server/src/lib/client-ip.ts` 统一解析器——仅当 `TRUST_PROXY` 开启且直连对端为可信代理（回环/私有网段）时才解析 `X-Forwarded-For`，从代理链右侧取第一个非代理地址，`::ffff:` 形式的 IPv6 映射已归一化；`nacho-server/src/routes/agent.ts` 的 `clientIp()` 改为调用 `resolveClientIp()`。
+  - 已完成子项：注册失败限流与日志限频框架（`enrollment-guard`）；仅在 `TRUST_PROXY` 开启且来源为可信代理时解析转发链；取首个非代理地址；IPv6 映射；直连、代理链、伪造头与限流恢复测试。
+  - 未完成子项：无。
+  - 证据：`nacho-server/src/lib/client-ip.ts`（新增 110 行）、`nacho-server/src/routes/agent.ts`（改动 14 行）、`nacho-server/src/tests/client-ip.test.ts`（新增 210 行，11 个用例覆盖直连、代理链、伪造头与限流恢复）。
+  - 验证（2026-11-23 本次执行）：`nacho-server` `npm test` **171/171 通过**（基线 160 + 新增 11），`npm run build` 通过。
+  - 完成标准（核对通过）：仅在 `TRUST_PROXY` 开启且来源为可信代理时解析转发链，取首个非代理地址；处理 IPv6 映射；测试覆盖直连、代理链、伪造头与限流恢复。
 
-- [ ] **DEF-02 局域网 Agent 地址选择**
-  - 现状（2026-11-11 复核，未修复）：局域网模式取第一个非回环 IPv4 写入 Agent 安装信息，多网卡（VPN/Docker/Hyper-V）时可能不可达。
-  - 已完成子项：局域网模式切换与 Windows 防火墙放行流程。
-  - 未完成子项：可达地址探测或用户选择；安装信息与实际监听地址一致；多网卡与无可用地址测试。
-  - 证据：`nacho-panel/lib/local-control-server.ts:101`、`:309`。
-  - 完成标准：探测或让用户选择可达地址，安装信息与实际监听地址一致；测试覆盖多网卡与无可用地址。
+- [x] **DEF-02 局域网 Agent 地址选择**
+  - 完成记录（2026-11-23 第二批）：`lib/local-control-server.ts` 新增 `isVirtualNetworkInterface()` / `rankLanAddressCandidates()` / `selectAgentAddress()` / `buildAgentApiUrl()`。局域网候选地址按“真实物理网卡优先、虚拟/隧道网卡（Hyper-V、WSL、Docker、VMware/VirtualBox、Tailscale/ZeroTier、VPN/TAP、Npcap）靠后”排序，同级按地址排序保证稳定；过滤回环、IPv6、`169.254/16`（APIPA）与重复地址。写入 Agent 安装信息的地址以服务端 `HOST` 为准：绑定具体网卡时直接使用该地址，`0.0.0.0` 通配监听时取排序后的首个真实网卡地址，没有可用地址时回退 `127.0.0.1`，不再编造不可达地址。
+  - 原缺陷（2026-11-11 复核）：局域网模式取第一个非回环 IPv4 写入 Agent 安装信息，多网卡（VPN/Docker/Hyper-V）时可能不可达。
+  - 已完成子项：局域网模式切换与 Windows 防火墙放行流程；网卡类型排序与地址过滤；安装信息与监听地址一致；多网卡、无可用地址、过滤与稳定性测试。
+  - 证据：`nacho-panel/lib/local-control-server.ts`、`nacho-panel/tests/local-control-server-lan.test.ts`（新增 5 项：多网卡排序、无可用地址回退、IPv6/APIPA/重复过滤、绑定地址一致、枚举顺序无关）。
+  - 验证（2026-11-23 第二批）：`pnpm exec tsc --noEmit` 通过；新增 5 项测试在等效 runner 下全部通过（全量口径见文首补记②）。
+  - 完成标准（已满足）：探测或让用户选择可达地址，安装信息与实际监听地址一致；测试覆盖多网卡与无可用地址。
+
+- [x] **DEF-03 服务端测试在仓库根留下未忽略的 log-archives/**
+  - 完成记录（2026-11-23）：已修复，提交 `624f21a`（`nacho-server`，`fix(tests): 测试数据隔离到临时目录，不再在仓库根生成 log-archives (DEF-03)`），与本轮 DEF-01 同批处理。
+  - 原缺陷（2026-11-13 复核发现）：`npm test` 会在仓库根生成 `log-archives/` 并留下 zip，且该目录**未被 `.gitignore` 覆盖**，`git status` 显示为未跟踪，存在 `git add -A` 误提交风险。
+  - 成因：`log-archive.ts:24` 的 `defaultLogArchiveDirectory()` 取 `path.dirname(config.databasePath)`；而 `settings-effects.test.ts:6` 等测试把 `DATABASE_PATH` 设为 `process.cwd()/tmp-*.db`，于是归档目录落在仓库根。
+  - 修复（2026-11-23 复核，已完成）：新增 `nacho-server/src/tests/test-workspace.ts`，把测试数据隔离到 `os.tmpdir()` 临时工作区；14 个测试文件的 `DATABASE_PATH` / `ARTIFACTS_PATH` 改走临时工作区并在 `after()` 中清理；`.gitignore` 增加 `log-archives/`，仅作手工在仓库根运行服务端时的兜底。
+  - 证据：`nacho-server/src/tests/test-workspace.ts`（新增 50 行）；`commands`、`health`、`install-profiles`、`managed-artifacts`、`notification-settings`、`notifications`、`release-index`（3 个文件）、`settings`、`settings-effects`、`settings-updates`、`task-scheduler`、`webssh` 共 14 个测试文件改动；`.gitignore:21-22`。
+  - 验证（2026-11-23 本次执行）：`nacho-server` `npm test` **171/171 通过**；测试结束后仓库根无 `log-archives/`、无 `tmp-*.db`；两次提交后 `git status` 均为空。
+  - 完成标准（核对通过）：`.gitignore` 增加 `log-archives/`，或让测试把归档目录隔离到临时目录并在 `after()` 清理；修复后 `npm test` 结束时 `git status --short` 保持干净。
 
 ### Alpha（未来，未排期）
 
@@ -274,17 +294,24 @@
 
 ### 发布与验证（非功能待办）
 
-- [ ] **TODO-11 服务端/Agent 1.1.25 发布与升级源迁移**
-  - 现状（2026-11-11 复核，部分完成）：服务端与 Agent 源码版本已到 1.1.25（提交 `0ef2603`），`1.1.24` 源码提交 `bbf2c41` 也已在历史中，且已推送到 `origin/main`。GitHub 最新服务端/Agent Release 仍为 `v1.1.22`；仓库内 `artifacts/windows/latest.json` 仍指向 1.1.21。未发现 1.1.24/1.1.25 的 GitHub 制品、签名索引切换、SSE 通知或升级执行器迁移/回滚演练证据。
-  - 已完成子项：服务端/Agent 源码版本推进到 1.1.25 并推送。
-  - 未完成子项：固定提交后的双仓 Release；1.1.25 服务端源码包与 Agent EXE；签名索引与 SSE 通知；GitHub 公网回读；现有控制服务与 root 升级执行器迁移；目标主机构建/回滚演练。
-  - 完成标准：固定提交、双仓 Release、签名索引、SSE 通知与 GitHub 公网回读全部验证；升级执行器在目标主机完成构建/回滚演练。
+- [ ] **TODO-11 服务端/Agent 升级执行器真机演练（版本口径已更新为 1.2.1）**
+  - 纠偏说明（2026-11-13）：原条目「1.1.25 发布与升级源迁移」的版本目标已被取代——服务端/Agent 已从 1.1.25 经 1.2.0 推进到 **1.2.1** 并完成发布，故发布类子项全部关闭，本项只保留尚未取得证据的升级执行器演练。
+  - 现状（2026-11-13 复核，部分完成）：`package.json` 为 1.2.1，固定提交 `dbfb2bf`。线上签名索引 sequence 19 含 server 1.2.1，`publishedAt 2026-11-12T04:54:44Z`。TODO-13 Step 0/7/8 已记录：`10.11.32.200` 原地迁移并升级到 1.2.1、保留 `.env` 与 SQLite、Agent 1.2.1 在线、GitHub 制品回读大小与 SHA-256 一致、SSE 推送 `{"sequence":19}`。
+  - 已完成子项：固定提交与推送；双仓 Release（服务端源码包 + Agent EXE）；签名索引切换与 SSE 通知；GitHub 公网回读；现有控制服务的一次性迁移与真机升级。
+  - 未完成子项：root 拥有的 `control-server-updater.path/.service` **升级执行器**在目标主机的构建与**失败回滚**演练证据（既有真机升级经由 `install.sh` 与面板链路完成，不能替代执行器演练）。
+  - 遗留事实：仓库内 `artifacts/windows/latest.json` 仍指向 1.1.21（`nacho-agent-1.1.21-win-x64.exe`，2026-09-30），与线上 1.2.1 不一致；按 `.gitignore` 注释该文件应与当前版本 exe 保持一致并由 `agent-artifacts.test.ts` 断言，需在下次 Agent 发布时核对是否属预期迁移期状态。
+  - 完成标准：升级执行器在目标主机完成一次成功构建与一次失败回滚演练，并记录代码、配置、SQLite 与服务状态的恢复结果。
+  - 本次验证边界：GitHub API 在本会话触发限流（rate limit exceeded），未能直接回读 Release 资产；发布事实以线上签名索引、本地制品与 TODO-13 Step 8 记录三方佐证。
 
-- [ ] **TODO-12 面板 0.3.22 安装验证**
-  - 现状（2026-11-11 复核，部分完成）：桌面源码版本为 0.3.22（提交 `b5caf47`），但 GitHub 最新面板 Release 仍为 `v0.3.11`；0.3.11 Beta 已发布并完成公网回读，实际安装/升级/回滚仍无仓库内验证证据。0.3.12–0.3.22 为本地迭代版本，尚未形成对应公网 Release。
-  - 已完成子项：0.3.11 Beta 发布、公网回读与更新索引切换；0.3.22 本地源码/构建链路。
-  - 未完成子项：0.3.22 公网 Release；真实安装、升级、回滚与更新中心展示验证；桌面 3 项真实 Electron 用例的环境限制处理或复跑记录。
-  - 完成标准：真实安装、升级、回滚与更新中心展示验证通过；记录 Electron 用例的环境限制或修复测试环境。
+- [ ] **TODO-12 面板安装/升级/回滚真机验证（版本口径已更新为 0.4.1）**
+  - 纠偏说明（2026-11-13）：原条目「0.3.22 安装验证」的版本目标已被取代——面板已从 0.3.22 经 0.4.0 推进到 **0.4.1 Beta** 并完成发布，故发布类子项关闭，本项只保留真机安装/升级/回滚与 Electron 用例环境限制。
+  - 现状（2026-11-13 复核，部分完成）：`desktop/package.json` 为 0.4.1（`releaseChannel: beta`），线上索引 sequence 19 含 panel 0.4.1。TODO-13 Step 7/8 已记录 0.4.1 EXE 打包、GitHub 回读与真机可见性、真实 Chrome 390×844 视口验收。
+  - 已完成子项：0.4.1 公网 Release、签名索引切换与公网回读；390×844 视口与更新页双来源展示验收。
+  - 未完成子项：面板 EXE 的**真实安装、在线升级与回滚**演练证据（Step 8 只验证到「面板 0.4.1 Beta 可见」，不等于安装/回滚演练）；桌面 3 项真实 Electron 用例的环境限制处理或修复。
+  - Electron 用例现状（2026-11-13 本次执行 `pnpm test`）：桌面 **60 项中 57 通过、3 失败**。失败项为 `connection-context.test.cjs` 的 v1 迁移/重启/凭据保留、`connection-store.test.cjs` 的 safeStorage 跨进程重启、以及 sandbox preload 桥接用例；均报 `TypeError: Cannot read properties of undefined (reading 'setPath')`，即无交互桌面会话下 Electron `app` 不可用，属已知环境限制而非功能回归。
+  - ⚠️ 制品一致性告警（2026-11-13）：本地 `desktop/dist/NachoPanel/NachoPanel-Setup-0.4.1.exe` 为 **223,441,139 字节 / SHA-256 `00cf71c98208fcad16ccfc4123cec65800ac1477cc42f8c83e0319220f1f4baf`**（mtime 2026-11-13 09:11），与 TODO-13 Step 8 记录的**已发布** 0.4.1 制品（223,431,146 字节 / SHA-256 `96017b32fa9eb51f10da842bc58b45675dd7ac851050c6107573d4ed183fff2f`）**不一致**。原因是本地带未提交改动重新打包但未递增版本、未重新发布。同号不同哈希会破坏「版本 ↔ 制品」对应关系，须先决定提交发布或回退，再做安装验证。
+  - 关联未提交改动（nacho-main，2026-11-13 仍在）：`components/clients/panels.tsx`、`components/ui/confirm-dialog.tsx`、`lib/developer-preview-data.ts`、`lib/developer-preview-transport.ts`、`tests/developer-preview.test.ts`；内容为客户端更新页「指令下发中」阶段与 developer preview 升级时间线模拟（`agentUpdateRuns` / `previewUpdatePhase`），不属任何已列待办。忽略行尾差异后约 458 增 / 149 删。
+  - 完成标准：真实安装、升级、回滚与更新中心展示验证通过；本地与已发布制品哈希一致或有明确版本区分；记录 Electron 用例的环境限制或修复测试环境。
 
 ---
 
