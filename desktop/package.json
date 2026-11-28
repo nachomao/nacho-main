@@ -1,6 +1,6 @@
 {
   "name": "nacho-panel-desktop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "releaseChannel": "beta",
   "private": true,
   "description": "Nacho 面板 Windows 安装版桌面封装",
@@ -14,7 +14,8 @@
     "build:panel": "node scripts/build-panel.cjs",
     "build:credentials": "node scripts/build-credentials.cjs",
     "build:opencode": "node scripts/fetch-opencode.cjs",
-    "stage": "pnpm run build:credentials && pnpm run build:opencode && node scripts/stage-app.cjs",
+    "build:age": "node scripts/fetch-age.cjs",
+    "stage": "pnpm run build:credentials && pnpm run build:opencode && pnpm run build:age && node scripts/stage-app.cjs",
     "build": "pnpm run build:panel && pnpm run stage && node scripts/build-desktop.cjs",
     "start": "pnpm run stage && electron .",
     "pack": "pnpm run stage && node scripts/build-desktop.cjs --dir",
@@ -41,7 +42,8 @@
       "**/*",
       "!panel/**",
       "!panel-deps/**",
-      "!opencode/**"
+      "!opencode/**",
+      "!age/**"
     ],
     "extraResources": [
       {
@@ -55,6 +57,10 @@
       {
         "from": "app/opencode",
         "to": "opencode"
+      },
+      {
+        "from": "app/age",
+        "to": "age"
       }
     ],
     "win": {
