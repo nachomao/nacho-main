@@ -511,7 +511,7 @@ function LogsActions() {
   )
 }
 
-function ExpandableLabel({ expanded, children }: { expanded: boolean; children: string }) {
+function ExpandableLabel({ expanded, children, className }: { expanded: boolean; children: string; className?: string }) {
   const labelRef = useRef<HTMLSpanElement>(null)
   const [labelWidth, setLabelWidth] = useState(0)
 
@@ -533,6 +533,7 @@ function ExpandableLabel({ expanded, children }: { expanded: boolean; children: 
       className={cn(
         "shrink-0 overflow-hidden whitespace-nowrap text-sm font-medium leading-none transition-[width,margin-left,opacity,filter] duration-300 ease-linear motion-reduce:transition-none",
         expanded ? "ml-1.5 opacity-100 blur-0" : "ml-0 opacity-0 blur-[4px]",
+        className,
       )}
       style={{ width: expanded ? `${labelWidth}px` : "0px" }}
     >
@@ -549,6 +550,7 @@ function IconButton({
   expandLabel,
   onClick,
   badge,
+  compact,
 }: {
   children: React.ReactNode
   label: string
@@ -557,6 +559,8 @@ function IconButton({
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   /** 右上角角标：数字显示计数气泡，true 显示小圆点 */
   badge?: number | boolean
+  /** 窄屏右侧工具栏只保留图标 */
+  compact?: boolean
 }) {
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
@@ -571,7 +575,10 @@ function IconButton({
       onBlur={() => setFocused(false)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="relative flex h-12 items-center justify-start rounded-full bg-surface px-3.5 text-foreground transition-colors duration-300 ease-out hover:bg-muted"
+      className={cn(
+        "relative flex h-12 items-center justify-start rounded-full bg-surface px-3.5 text-foreground transition-colors duration-300 ease-out hover:bg-muted",
+        compact && "shrink-0 max-md:h-10 max-md:px-2.5",
+      )}
     >
       {/* 角标：未读计数气泡或激活小圆点 */}
       {typeof badge === "number" && badge > 0 && (
@@ -581,7 +588,11 @@ function IconButton({
       )}
       {badge === true && <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full bg-primary" />}
       <span className="flex h-5 w-5 shrink-0 items-center justify-center">{children}</span>
-      {expandLabel && <ExpandableLabel expanded={expanded}>{expandLabel}</ExpandableLabel>}
+      {expandLabel && (
+        <ExpandableLabel expanded={expanded} className={compact ? "max-md:hidden" : undefined}>
+          {expandLabel}
+        </ExpandableLabel>
+      )}
     </button>
   )
 }
@@ -594,10 +605,10 @@ function DeveloperPreviewBadge() {
     <Link
       href="/settings?tab=connection"
       title="开发者预览模式：使用内置演示数据，不连接真实服务端"
-      className="flex h-12 shrink-0 items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+      className="flex size-10 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-sm font-medium text-primary transition-colors hover:bg-primary/15 md:h-12 md:w-auto md:gap-2 md:px-4"
     >
       <Sparkles className="h-4 w-4" aria-hidden="true" />
-      开发者预览
+      <span className="sr-only whitespace-nowrap md:not-sr-only">开发者预览</span>
     </Link>
   )
 }
@@ -613,16 +624,16 @@ function NotificationIsland({ onOpen }: { onOpen?: () => void }) {
       data-notification-state={expanded ? "error" : "idle"}
       aria-live="polite"
       className={cn(
-        "relative flex h-13 flex-row-reverse items-center overflow-hidden rounded-full border transition-[width,background-color,border-color,box-shadow] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        expanded ? "border-negative/35 bg-card/95 shadow-xl shadow-negative/10" : "border-transparent bg-surface",
+        "relative flex h-10 flex-row-reverse items-center overflow-hidden rounded-full border transition-[flex-basis,min-width,background-color,border-color,box-shadow] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none md:h-13",
+        // 下限为铃铛、重连、设置三枚按钮加间距与描边，收窄时只截断文案。
+        expanded ? "min-w-30 basis-[27rem] border-negative/35 bg-card/95 shadow-xl shadow-negative/10 md:min-w-33" : "min-w-0 basis-10 border-transparent bg-surface md:basis-13",
       )}
-      style={{ width: expanded ? "min(27rem, calc(100vw - 8.5rem))" : "3.25rem" }}
     >
       <button
         type="button"
         onClick={expanded ? undefined : onOpen}
         className={cn(
-          "relative z-10 flex h-13 w-13 shrink-0 items-center justify-center rounded-full transition-colors duration-300",
+          "relative z-10 flex size-10 shrink-0 items-center justify-center rounded-full transition-colors duration-300 md:size-13",
           expanded ? "text-negative" : "text-foreground",
         )}
         aria-label={expanded ? "服务端连接已断开" : "通知中心"}
@@ -630,9 +641,15 @@ function NotificationIsland({ onOpen }: { onOpen?: () => void }) {
         <Bell className="size-5" strokeWidth={2} aria-hidden="true" />
       </button>
 
-      <div className={cn("min-w-0 flex-1 pl-[1.125rem] pr-1 transition-[opacity,transform,filter] duration-500", expanded ? "translate-x-0 opacity-100 blur-0 delay-150" : "-translate-x-2 opacity-0 blur-sm")}>
-        <p className="truncate text-[13px] font-semibold text-foreground">服务端连接已断开</p>
-        <p className="truncate text-xs text-muted-foreground">{error}</p>
+      {/* 文案先让出空间；铃铛、重连和设置的点击区不参与收缩。 */}
+      <div
+        aria-hidden={!expanded}
+        className={cn("w-0 min-w-0 flex-1 overflow-hidden transition-[opacity,transform,filter] duration-500 motion-reduce:transition-none", expanded ? "translate-x-0 opacity-100 blur-0 delay-150" : "-translate-x-2 opacity-0 blur-sm")}
+      >
+        <div className="pl-[1.125rem] pr-1" title={error ?? undefined}>
+          <p className="truncate text-[13px] font-semibold text-foreground">服务端连接已断开</p>
+          <p className="truncate text-xs text-muted-foreground">{error}</p>
+        </div>
       </div>
 
       {expanded && (
@@ -798,6 +815,14 @@ function Reveal({
  */
 function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs: boolean }) {
   const actions = useTopbarActions()
+  // 离场回放保留客户端页真实选中的标签，避免蓝色胶囊闪现归位到首项
+  const activeTab = useClientTabs()?.active ?? 0
+  // 选中胶囊与标签的展开宽度：必须在首帧绘制前量取并写入 state。
+  // 只写 ref 不会重渲染，绘制出的起始宽度仍是 auto，而 auto → 3rem 不可插值，
+  // 合并帧就会直接闪成圆形；锁定成显式像素后宽度才有可过渡的起点。
+  const [exitWidths, setExitWidths] = useState<{ pill: number; label: number } | null>(null)
+  const exitPillRef = useRef<HTMLSpanElement>(null)
+  const exitLabelRef = useRef<HTMLSpanElement>(null)
   // 是否需要先回放「上一页按钮收拢离场」再展示首页功能键
   const reverse = fromClients || fromLogs
   // 0: 渲染上一页按钮（静止） 1: 向左合并离场 2: 展示首页功能键
@@ -806,15 +831,44 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
   // 都从模糊轻移态开始逐个揭示，保证每次进入页面顶栏都有一致的切入动画。
   const [keysIn, setKeysIn] = useState(false)
 
+  // 从客户端返回：绘制前锁定胶囊与标签的展开宽度（48px 为收起态圆形下限）
+  useLayoutEffect(() => {
+    if (!fromClients || stage !== 0 || exitWidths) return
+    const pill = exitPillRef.current
+    const label = exitLabelRef.current
+    if (!pill || !label) return
+    setExitWidths({
+      pill: Math.max(48, Math.ceil(pill.getBoundingClientRect().width)),
+      label: Math.max(0, Math.ceil(label.getBoundingClientRect().width)),
+    })
+  }, [fromClients, stage, exitWidths])
+
+  // 离场途中又切到首页/脚本安装等共用工具栏的页面时，立即结束回放，
+  // 避免客户端标签残留在新页面顶栏
+  useEffect(() => {
+    if (!reverse && stage < 2) setStage(2)
+  }, [reverse, stage])
+
+  // 宽度锁定后先让展开态真实绘制一帧，再触发收拢，width 过渡才有起点
   useEffect(() => {
     if (!reverse) return
-    const raf = requestAnimationFrame(() => setStage(1)) // 触发合并离场
-    const toKeys = setTimeout(() => setStage(2), 470) // 离场完成后展示功能键
+    if (!fromLogs && !exitWidths) return // 客户端标签尚未量取完成，先保持展开态
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setStage(1)) // 触发合并离场
+    })
     return () => {
-      cancelAnimationFrame(raf)
-      clearTimeout(toKeys)
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
     }
-  }, [reverse])
+  }, [reverse, fromLogs, exitWidths])
+
+  // 揭示计时从合并开始起算，避免测量与等待帧挤占离场动画时长
+  useEffect(() => {
+    if (stage !== 1) return
+    const toKeys = setTimeout(() => setStage(2), 470) // 离场完成后展示功能键
+    return () => clearTimeout(toKeys)
+  }, [stage])
 
   useEffect(() => {
     if (stage !== 2 || keysIn) return
@@ -855,36 +909,59 @@ function HomeActions({ fromClients, fromLogs }: { fromClients: boolean; fromLogs
     )
   }
 
-  // 阶段 0/1（从客户端返回）：客户端标签从右往「客户端」合并，伴随变淡与模糊离场
+  // 阶段 0/1（从客户端返回）：先按真实选中项还原标签排布，选中胶囊原地收回圆形，
+  // 随后整组向左合并、变淡模糊离场——任何选中项都不闪现归位到首项
   if (stage < 2) {
     const merging = stage === 1
+    // 未量取完成时用 auto 保持自然展开态，量取后换成显式像素以便平滑收回
+    const exitPillWidth = exitWidths ? `${exitWidths.pill}px` : "auto"
+    const exitLabelWidth = exitWidths ? `${exitWidths.label}px` : "auto"
     return (
       <div className="flex items-center gap-2">
         {clientTabs.map((t, i) => {
           const Icon = t.icon
-          const isFirst = i === 0
+          const isActive = i === activeTab
           return (
             <span
               key={t.id}
+              ref={isActive ? exitPillRef : undefined}
               className={cn(
-                "flex h-12 items-center justify-start rounded-full px-3.5",
-                isFirst
+                "flex h-12 items-center justify-start overflow-hidden rounded-full px-3.5",
+                isActive
                   ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25"
                   : "border border-border bg-surface/70 text-foreground",
               )}
               style={{
-                // 全部向最左侧「客户端」靠拢堆叠，伴随变淡与模糊
+                // 选中项从锁定的展开宽度收回圆形（与标签文字同步），其余保持圆形；随后全部向最左侧靠拢堆叠
+                width: isActive ? (merging ? "3rem" : exitPillWidth) : "auto",
                 transform: merging ? `translateX(-${i * 60}px) scale(0.92)` : "translateX(0) scale(1)",
                 opacity: merging ? 0 : 1,
                 filter: merging ? "blur(6px)" : "blur(0px)",
-                transition: "transform 440ms cubic-bezier(0.4,0,1,1), opacity 440ms ease-in, filter 440ms ease-in",
+                // 宽度用 300ms 减速曲线先收回（此时仍基本不透明，收展过程清晰可见），
+                // 位移/淡出/模糊沿用 440ms 加速离场曲线，收完再淡出
+                transition:
+                  "width 300ms cubic-bezier(0.22,1,0.36,1), transform 440ms cubic-bezier(0.4,0,1,1), opacity 440ms ease-in, filter 440ms ease-in",
               }}
             >
               <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                 <Icon className="h-5 w-5" />
               </span>
-              {isFirst && (
-                <span className="ml-1.5 whitespace-nowrap text-sm font-medium leading-none">{t.label}</span>
+              {isActive && (
+                <span
+                  ref={exitLabelRef}
+                  className={cn(
+                    "shrink-0 overflow-hidden whitespace-nowrap text-sm font-medium leading-none",
+                    merging ? "ml-0 opacity-0 blur-[4px]" : "ml-1.5 opacity-100 blur-0",
+                  )}
+                  style={{
+                    width: merging ? "0px" : exitLabelWidth,
+                    // 文字宽度/间距与胶囊本体同曲线收回；淡出跟随整体离场节奏
+                    transition:
+                      "width 300ms cubic-bezier(0.22,1,0.36,1), margin-left 300ms cubic-bezier(0.22,1,0.36,1), opacity 440ms ease-in, filter 440ms ease-in",
+                  }}
+                >
+                  {t.label}
+                </span>
               )}
             </span>
           )
@@ -1068,12 +1145,12 @@ function AIModeButton({ onClick }: { onClick?: (trigger?: HTMLElement | React.Mo
       onClick={(e) => onClick?.(e.currentTarget)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group relative ml-1 flex h-12 items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4.5 transition-all duration-300 hover:border-primary/45 hover:shadow-[0_0_24px_-8px_var(--primary)] active:scale-95"
+      className="group relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface transition-all duration-300 hover:border-primary/45 hover:shadow-[0_0_24px_-8px_var(--primary)] active:scale-95 md:ml-1 md:h-12 md:w-auto md:gap-2 md:px-4.5"
     >
       {/* 悬浮像素星芒：LED 点阵随指针点亮 */}
       <PixelStardust active={hovered} />
       <Dna className="relative h-4.5 w-4.5 text-primary transition-transform duration-500 ease-out group-hover:rotate-90 group-active:rotate-180" />
-      <span className="relative whitespace-nowrap text-sm font-medium">AI Mode</span>
+      <span className="sr-only whitespace-nowrap text-sm font-medium md:not-sr-only md:relative">AI Mode</span>
     </button>
   )
 }
@@ -1101,8 +1178,8 @@ export function Topbar() {
   return (
     // 固定 min-h-14：无论首页（含 h-14 加号）还是客户端页（h-12 标签），
     // 行高都锁定为 56px，避免切换时 items-center 基线变化导致顶栏整体上移。
-    <header className="electron-drag-region flex min-h-14 flex-wrap items-center gap-4">
-      <div className="flex min-w-0 flex-wrap items-center gap-4">
+    <header className="electron-drag-region flex min-h-14 flex-col items-start gap-x-4 gap-y-2 min-[60rem]:flex-row">
+      <div className="flex min-h-14 min-w-0 max-w-full flex-wrap items-center gap-4">
       <TokenPill />
       <PluginsActions active={onPlugins} />
       <TasksActions active={onTasks} />
@@ -1120,14 +1197,11 @@ export function Topbar() {
       )}
       </div>
 
-      {/* 无边框 Electron 窗口的实际拖拽区域；两侧业务控件显式标记为 no-drag。 */}
-      <div className="electron-drag-region min-h-14 min-w-8 flex-1 self-stretch" aria-hidden="true" />
-
-      {/* 常驻右侧控件：不管切换到哪个页面都始终显示 */}
-      <div className="ml-auto flex items-center gap-4">
+      {/* 右侧占用左侧之外的剩余宽度。空白仍可拖动窗口；空间用完后，通知胶囊跟随相邻按钮逐帧让位。 */}
+      <div className="ml-auto flex min-h-14 w-full min-w-min items-center justify-end gap-1 max-[24.25rem]:min-w-0 max-[24.25rem]:flex-wrap md:gap-4 min-[60rem]:w-auto min-[60rem]:flex-1">
         <DeveloperPreviewBadge />
         <NotificationIsland onOpen={actions?.openNotices} />
-        <IconButton label="全局搜索" expandLabel="Ctrl K" onClick={actions?.openSearch}>
+        <IconButton label="全局搜索" expandLabel="Ctrl K" onClick={actions?.openSearch} compact>
           <Search className="h-5 w-5" />
         </IconButton>
 

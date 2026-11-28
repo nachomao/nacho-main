@@ -1,6 +1,6 @@
 # 项目级开发提示词（AGENTS.md）
 
-> 独立更新服务器 `../nacho-update-server/` 仅签署索引和通知；功能源码推送 GitHub 后，由根目录 `publish-update.ps1` 将面板 EXE 上传 `nacho-main` GitHub Release，回读校验后只通过 SSH/SFTP 发送发布元数据。面板从 GitHub 下载签名索引约束的制品。历史 Pages/Actions 链路不再用于产品发布。
+> 独立更新服务器 `../nacho-update-server/` 仅签署索引和通知；用户明确要求发布面板时，功能源码推送 GitHub 后由根目录 `publish-update.ps1` 将面板 EXE 上传 `nacho-main` GitHub Release，回读校验后只通过 SSH/SFTP 发送发布元数据。面板从 GitHub 下载签名索引约束的制品。历史 Pages/Actions 链路不再用于产品发布。
 
 ## 1. 核心原则
 
@@ -169,16 +169,15 @@ Pop-Location
 - UI 变更还需在真实浏览器访问 `http://localhost:3000`，核对目标页面、控制台、网络请求、桌面和 `390x844` 视口。
 - 已有 dev 服务运行时，构建可能改写 `nacho-panel/.next/`；先确认运行进程，必要时在独立副本构建并保持原 dev 服务状态。
 
-**每次修改面板相关代码后，必须重新测试并重新打包 Windows EXE。** 面板相关代码包括 `nacho-panel/`、`desktop/` 以及面板打包配置。除上述面板测试、类型检查和 Next.js 构建外，还必须执行：
+面板相关改动（`nacho-panel/`、`desktop/` 与面板打包配置）完成上述验证后，仍须执行桌面测试：
 
 ```powershell
 Push-Location desktop
 pnpm test
-pnpm build
 Pop-Location
 ```
 
-`desktop/pnpm build` 会重新构建面板、生成 Electron 安装包，并必须核对 `desktop/dist/NachoPanel/NachoPanel-Setup-<version>.exe` 已更新；只执行 `nacho-panel/pnpm build` 不算完成。UI 修改仍需完成真实浏览器与 `390x844` 视口验证。
+**仅在用户明确要求制作面板 EXE 或发布面板时，才在 `desktop/` 执行 `pnpm build`。** 该命令会重新构建面板并生成 Electron 安装包；打包后核对 `desktop/dist/NachoPanel/NachoPanel-Setup-<version>.exe` 已更新。日常改动只做验证，不生成或覆盖安装包。`nacho-panel/` 下的 `pnpm build` 是 Next.js 构建验证，不生成安装包。
 
 ### 7.2 服务端：按部署模式验证
 
@@ -225,7 +224,7 @@ dotnet test client/tests/Nacho.Agent.Tests/Nacho.Agent.Tests.csproj
 dotnet build client/src/Nacho.Agent/Nacho.Agent.csproj -c Release
 ```
 
-- 涉及发布时追加：
+- 仅在用户明确要求制作 Agent EXE 或发布 Agent 时追加：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File client/deploy/publish.ps1

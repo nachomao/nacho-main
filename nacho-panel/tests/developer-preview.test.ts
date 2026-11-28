@@ -142,6 +142,42 @@ test("预览传输为主页面提供演示数据", async () => {
   assert.deepEqual(await transport.request<unknown[]>("/deployment-batches?kind=file&limit=1"), [])
 })
 
+test("预览模式可直接下发升级并按时间线推进到完成", async () => {
+  let now = FIXED_NOW
+  const transport = createDeveloperPreviewTransport({ now: () => now })
+  type UpdateShape = {
+    release: { version: string }
+    clients: Array<{ id: string; phase: string | null; skipReason: string | null; currentVersion: string }>
+  }
+
+  const before = await transport.request<UpdateShape>("/agent-updates")
+  const target = before.clients.find((client) => client.skipReason === null)
+  assert.ok(target)
+
+  const result = await transport.request<{ queued: Array<{ id: string; status: string }> }>("/agent-updates", {
+    method: "POST",
+    body: JSON.stringify({ scope: "clients", clientIds: [target.id] }),
+  })
+  assert.equal(result.queued.length, 1)
+
+  const downloading = (await transport.request<UpdateShape>("/agent-updates"))
+    .clients.find((client) => client.id === target.id)
+  assert.equal(downloading?.phase, "downloading")
+  assert.equal(downloading?.skipReason, "active-update")
+
+  now += 3_500
+  const verified = (await transport.request<UpdateShape>("/agent-updates"))
+    .clients.find((client) => client.id === target.id)
+  assert.equal(verified?.phase, "verified")
+
+  now += 3_500
+  const done = (await transport.request<UpdateShape>("/agent-updates"))
+    .clients.find((client) => client.id === target.id)
+  assert.equal(done?.phase, "healthy")
+  assert.equal(done?.currentVersion, before.release.version)
+  assert.equal(done?.skipReason, "already-current")
+})
+
 test("预览传输的写操作更新内存演示数据", async () => {
   const transport = createDeveloperPreviewTransport({ now: () => FIXED_NOW })
 

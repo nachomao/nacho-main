@@ -1,8 +1,10 @@
 import { Analytics } from '@vercel/analytics/next'
+import { headers } from 'next/headers'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono, Outfit } from 'next/font/google'
 import './globals.css'
 import { AppShell } from '@/components/app-shell'
+import { WindowSurface } from '@/components/window-surface'
 import { LocalSettingsProvider } from '@/components/local-settings-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { ConfirmDialogProvider } from '@/components/ui/confirm-dialog'
@@ -39,12 +41,15 @@ export default async function RootLayout({
   children: React.ReactNode
 }>) {
   const localSettings = await readLocalSettings()
+  // 桌面壳窗口透明并用大圆角裁切四角；浏览器预览保持直角铺满视口。
+  const desktopShell = /Electron\//.test((await headers()).get('user-agent') ?? '')
   const theme = localSettings.settings.theme
   const reduceMotion = localSettings.settings.reduceMotion
 
   return (
     <html
       lang="zh-CN"
+      data-desktop-shell={desktopShell ? '' : undefined}
       data-theme={theme === 'blue' ? undefined : theme}
       data-reduce-motion={reduceMotion ? 'true' : undefined}
       className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} bg-background`}
@@ -58,7 +63,9 @@ export default async function RootLayout({
         <LocalSettingsProvider initialSnapshot={localSettings}>
           <ThemeProvider>
             <ConfirmDialogProvider>
-              <AppShell>{children}</AppShell>
+              <WindowSurface>
+                <AppShell>{children}</AppShell>
+              </WindowSurface>
             </ConfirmDialogProvider>
           </ThemeProvider>
         </LocalSettingsProvider>

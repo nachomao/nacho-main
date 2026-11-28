@@ -14,6 +14,7 @@ import {
   updateLocalControlServer,
 } from "@/lib/local-control-server"
 import { isSameOriginRequest } from "@/lib/same-origin"
+import { validLocalUpdateToken } from "@/lib/local-release-proof"
 import type {
   LocalControlInstallOptions,
   LocalControlInstallStreamEvent,
@@ -165,12 +166,15 @@ export async function POST(request: NextRequest) {
         data = await repairLocalControlServer()
         break
       case "update":
-        requireOnlyKeys(body, ["action", "version", "panelVersion", "sequence"])
-        if (typeof body.version !== "string" || typeof body.panelVersion !== "string" ||
-            !Number.isSafeInteger(body.sequence) || Number(body.sequence) < 1) {
-          throw new LocalControlServerError("升级版本参数无效", 400)
+        if (!validLocalUpdateToken(request.headers.get("x-nacho-local-update"), process.env.NACHO_LOCAL_UPDATE_TOKEN)) {
+          throw new LocalControlServerError("仅受信任的桌面升级流程可执行此操作", 403)
         }
-        data = await updateLocalControlServer(body.version, body.panelVersion, Number(body.sequence))
+        requireOnlyKeys(body, ["action", "leaseId"])
+        if (typeof body.leaseId !== "string") throw new LocalControlServerError("桌面升级会话无效", 400)
+        {
+          const updated = await updateLocalControlServer(body.leaseId)
+          data = { version: updated.version, healthy: updated.healthy }
+        }
         break
       default:
         throw new LocalControlServerError("本地服务操作无效", 400)

@@ -1,5 +1,7 @@
 "use client"
 
+import type { ReleaseTarget } from "@/lib/github-update-ui"
+
 import {
   createContext,
   useCallback,
@@ -90,7 +92,7 @@ type ServerDataContextValue = {
   apiRequest: <T>(path: string, init?: RequestInit) => Promise<T>
   uploadRequest: <T>(path: string, file: File, onProgress: (percent: number) => void) => Promise<T>
   downloadRequest: (path: string, fallbackFileName: string) => Promise<void>
-  transferProductUpdate: (kind: "server" | "agent", target: { sequence: number; version: string }) => Promise<void>
+  transferProductUpdate: (kind: "server" | "agent", target: ReleaseTarget) => Promise<void>
 }
 
 const ServerDataContext = createContext<ServerDataContextValue | null>(null)
@@ -108,6 +110,7 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestSequence = useRef(0)
+  const refreshInFlight = useRef(false)
   const notificationMutationEpoch = useRef(0)
   const connectedOnce = useRef(false)
   const notificationQuery = useMemo(() => {
@@ -126,10 +129,10 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     () => developerPreview ? createDeveloperPreviewTransport() : null,
     [developerPreview],
   )
-  const transferProductUpdate = useCallback(async (kind: "server" | "agent", target: { sequence: number; version: string }) => {
+  const transferProductUpdate = useCallback(async (kind: "server" | "agent", target: ReleaseTarget) => {
     if (developerPreview) throw new Error(developerPreviewUnsupportedMessage("下发产品更新"))
     if (!connection || !window.nachoUpdates?.transferRelease) throw new Error("需要已连接的桌面面板")
-    await window.nachoUpdates.transferRelease(kind, connection.baseUrl, connection.key, target.sequence, target.version)
+    await window.nachoUpdates.transferRelease(kind, target)
   }, [connection, developerPreview])
 
   const apiRequest = useCallback(
@@ -258,13 +261,16 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     if (!onboardingHydrated) return
+    const sequence = ++requestSequence.current
     if (!connection) {
+      refreshInFlight.current = false
       setError("尚未配置服务端连接")
       setNotificationError("尚未配置服务端连接")
       setLoading(false)
+      setRefreshing(false)
       return
     }
-    const sequence = ++requestSequence.current
+    refreshInFlight.current = true
     const notificationEpoch = notificationMutationEpoch.current
     if (!connectedOnce.current) {
       setLoading(true)
@@ -273,15 +279,20 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     try {
       // 仅概览接口作为连接判定依据；其它业务接口缺失或暂时失败时保留已有数据，
       // 避免某个旧版路由的 404 被误报为整面板断线。
-      const [overviewResult, clientsResult, groupsResult, logsResult] = await Promise.allSettled([
-        apiRequest<Overview>("/overview"),
+      const overviewRequest = apiRequest<Overview>("/overview")
+      const snapshots = Promise.allSettled([
         apiRequest<Client[]>("/clients"),
         apiRequest<string[]>("/groups"),
         apiRequest<LogEntry[]>("/logs?limit=30"),
       ])
-      if (overviewResult.status === "rejected") throw overviewResult.reason
+      const nextOverview = await overviewRequest
       if (sequence !== requestSequence.current) return
-      setOverview(overviewResult.value)
+      setOverview(nextOverview)
+      connectedOnce.current = true
+      setError(null)
+
+      const [clientsResult, groupsResult, logsResult] = await snapshots
+      if (sequence !== requestSequence.current) return
       if (clientsResult.status === "fulfilled") setClients(clientsResult.value)
       if (groupsResult.status === "fulfilled") setGroups(groupsResult.value)
       if (logsResult.status === "fulfilled") setLogs(logsResult.value)
@@ -295,13 +306,12 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
         // 保留上次成功的数据；旧服务端缺少通知路由时明确显示错误而不是伪装成空列表。
         setNotificationError(caught instanceof Error ? caught.message : "通知加载失败")
       }
-      connectedOnce.current = true
-      setError(null)
     } catch (caught) {
       if (sequence !== requestSequence.current) return
       setError(caught instanceof Error ? caught.message : "服务端连接失败")
     } finally {
       if (sequence === requestSequence.current) {
+        refreshInFlight.current = false
         setLoading(false)
         setRefreshing(false)
       }
@@ -315,7 +325,10 @@ export function ServerDataProvider({ children }: { children: ReactNode }) {
     if (!connection || developerPreview) return
     // 客户端状态（尤其是卸载后的“已注销”）需要尽快反映到卡片；
     // 3 秒轮询仍可避免请求风暴，同时把可见延迟控制在一个交互节拍内。
-    const timer = window.setInterval(() => void refresh(), 3_000)
+    // 在途检测必须先给出结果，不能被下一次轮询覆盖（单次请求最长 8 秒）。
+    const timer = window.setInterval(() => {
+      if (!refreshInFlight.current) void refresh()
+    }, 3_000)
     return () => window.clearInterval(timer)
   }, [connection, developerPreview, onboardingHydrated, refresh])
 

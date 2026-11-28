@@ -11,6 +11,7 @@ import {
   createDeveloperPreviewStore,
   developerPreviewAgentUpdates,
   developerPreviewOverview,
+  developerPreviewQueueAgentUpdates,
   type DeveloperPreviewStore,
   type PreviewClient,
   type PreviewInstallProfile,
@@ -119,7 +120,7 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
       if (pathname === "/settings") return store.settings as T
       if (pathname === "/runtime-info") return store.runtimeInfo as T
       if (pathname === "/install-profiles") return store.installProfiles as T
-      if (pathname === "/agent-updates") return developerPreviewAgentUpdates(store) as T
+      if (pathname === "/agent-updates") return developerPreviewAgentUpdates(store, now()) as T
 
       const clientMatch = /^\/clients\/([^/]+)$/.exec(pathname)
       if (clientMatch) {
@@ -141,6 +142,13 @@ export function createDeveloperPreviewTransport(options: PreviewTransportOptions
       }
 
       return unsupported()
+    }
+
+    /* ---------------- 客户端升级 ---------------- */
+    if (method === "POST" && pathname === "/agent-updates") {
+      const body = readBody<{ scope?: "all" | "clients"; clientIds?: string[] }>(init)
+      const scope = body?.scope === "clients" ? "clients" : "all"
+      return developerPreviewQueueAgentUpdates(store, scope, body?.clientIds ?? [], now()) as T
     }
 
     /* ---------------- 通知中心 ---------------- */

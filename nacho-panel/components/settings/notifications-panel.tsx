@@ -1,242 +1,12 @@
 "use client"
 
-import { useState } from "react"
-import {
-  Mail,
-  BellRing,
-  Loader2,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  WifiOff,
-  CircleX,
-  Cpu,
-  MemoryStick,
-  HardDrive,
-  MoonStar,
-  Download,
-} from "lucide-react"
+import { BellRing, WifiOff, CircleX, Cpu, MemoryStick, HardDrive, MoonStar, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SettingCard, SettingRow, Toggle, TextField, NumberStepper, ThresholdSlider } from "./primitives"
-import type { EmailSettings, NotifyConditions } from "./settings-data"
+import { SettingCard, SettingRow, Toggle, NumberStepper, ThresholdSlider } from "./primitives"
+import { EmailNotificationSettings, type EmailNotificationSettingsProps } from "./email-notification-settings"
+import type { NotifyConditions } from "./settings-data"
 import type { NotificationCenterSettings } from "@/lib/local-settings-schema"
 import { useServerData } from "@/components/server-data-context"
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-type TestResult =
-  | { status: "idle" }
-  | { status: "testing" }
-  | { status: "ok"; message: string; latencyMs?: number; warnings?: string[] }
-  | { status: "error"; errors: string[]; warnings?: string[] }
-
-function EmailBlock({
-  value,
-  onChange,
-}: {
-  value: EmailSettings
-  onChange: (patch: Partial<EmailSettings>) => void
-}) {
-  const [result, setResult] = useState<TestResult>({ status: "idle" })
-
-  const fromInvalid = value.from.length > 0 && !EMAIL_RE.test(value.from)
-  const toInvalid = value.to.length > 0 && !EMAIL_RE.test(value.to)
-
-  const runTest = async () => {
-    setResult({ status: "testing" })
-    try {
-      const res = await fetch("/api/settings/test-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(value),
-      })
-      const data = await res.json()
-      if (data.ok) {
-        setResult({ status: "ok", message: data.message, latencyMs: data.latencyMs, warnings: data.warnings })
-      } else {
-        setResult({ status: "error", errors: data.errors ?? ["校验失败"], warnings: data.warnings })
-      }
-    } catch {
-      setResult({ status: "error", errors: ["请求失败，请检查服务端是否正常运行"] })
-    }
-  }
-
-  const encryptionOptions: { id: EmailSettings["encryption"]; label: string }[] = [
-    { id: "none", label: "无" },
-    { id: "ssl", label: "SSL" },
-    { id: "tls", label: "STARTTLS" },
-  ]
-
-  return (
-    <SettingCard
-      title="邮件通知"
-      desc="配置 SMTP 服务器，用于发送告警与通知邮件"
-      icon={<Mail className="h-5 w-5" />}
-      action={<Toggle checked={value.enabled} onChange={(v) => onChange({ enabled: v })} label="启用邮件通知" />}
-    >
-      <div
-        className={cn(
-          "flex flex-col transition-opacity",
-          !value.enabled && "pointer-events-none select-none opacity-40",
-        )}
-      >
-        {/* SMTP 主机 + 端口 */}
-        <div className="grid grid-cols-1 gap-4 border-t border-border py-4 first:border-t-0 first:pt-0 sm:grid-cols-3">
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <label htmlFor="smtp-host" className="text-sm font-medium">SMTP 服务器</label>
-            <TextField
-              id="smtp-host"
-              value={value.host}
-              onChange={(v) => onChange({ host: v })}
-              placeholder="smtp.example.com"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="smtp-port" className="text-sm font-medium">端口</label>
-            <NumberStepper
-              id="smtp-port"
-              value={value.port}
-              onChange={(v) => onChange({ port: v })}
-              min={1}
-              max={65535}
-              className="w-full"
-            />
-          </div>
-        </div>
-
-        {/* 加密方式 */}
-        <SettingRow label="加密方式" hint="端口 465 → SSL，端口 587 → STARTTLS，端口 25 → 无加密。">
-          <div className="flex items-center gap-1 rounded-full border border-border bg-surface/60 p-1">
-            {encryptionOptions.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                onClick={() => onChange({ encryption: o.id })}
-                className={cn(
-                  "h-8 rounded-full px-3 text-xs font-medium transition-colors",
-                  value.encryption === o.id
-                    ? "bg-primary text-primary-foreground shadow"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </SettingRow>
-
-        {/* 用户名 + 密码 */}
-        <div className="grid grid-cols-1 gap-4 border-t border-border py-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="smtp-user" className="text-sm font-medium">用户名</label>
-            <TextField
-              id="smtp-user"
-              value={value.username}
-              onChange={(v) => onChange({ username: v })}
-              placeholder="notify@example.com"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="smtp-pass" className="text-sm font-medium">密码 / 授权码</label>
-            <TextField
-              id="smtp-pass"
-              type="password"
-              value={value.password}
-              onChange={(v) => onChange({ password: v })}
-              placeholder="••••••••"
-            />
-          </div>
-        </div>
-
-        {/* 发件人 + 测试收件人 */}
-        <div className="grid grid-cols-1 gap-4 border-t border-border py-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="smtp-from" className="text-sm font-medium">发件人邮箱</label>
-            <TextField
-              id="smtp-from"
-              value={value.from}
-              onChange={(v) => onChange({ from: v })}
-              placeholder="notify@example.com"
-              invalid={fromInvalid}
-            />
-            {fromInvalid && <span className="text-xs text-negative">邮箱格式不正确</span>}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="smtp-to" className="text-sm font-medium">测试收件人</label>
-            <TextField
-              id="smtp-to"
-              value={value.to}
-              onChange={(v) => onChange({ to: v })}
-              placeholder="admin@example.com"
-              invalid={toInvalid}
-            />
-            {toInvalid && <span className="text-xs text-negative">邮箱格式不正确</span>}
-          </div>
-        </div>
-
-        {/* 校验按钮 + 结果 */}
-        <div className="flex flex-col gap-3 border-t border-border pt-4">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={runTest}
-              disabled={result.status === "testing"}
-              className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-105 active:scale-95 disabled:opacity-60"
-            >
-              {result.status === "testing" ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在校验参数…
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="h-4 w-4" />
-                  校验参数可用性
-                </>
-              )}
-            </button>
-            <p className="text-xs text-muted-foreground">校验邮箱格式并探测 SMTP 服务器连通性，不会真实发信。</p>
-          </div>
-
-          {result.status === "ok" && (
-            <div className="flex flex-col gap-1 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
-              <span className="flex items-center gap-2 font-medium">
-                <CheckCircle2 className="h-4 w-4" />
-                {result.message}
-                {result.latencyMs != null && (
-                  <span className="text-xs text-primary/70">· 耗时 {result.latencyMs}ms</span>
-                )}
-              </span>
-              {result.warnings?.map((w, i) => (
-                <span key={i} className="flex items-center gap-2 text-xs text-warning">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  {w}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {result.status === "error" && (
-            <div className="flex flex-col gap-1 rounded-xl border border-negative/40 bg-negative/10 px-4 py-3 text-sm">
-              {result.errors.map((e, i) => (
-                <span key={i} className="flex items-center gap-2 font-medium text-negative">
-                  <XCircle className="h-4 w-4" />
-                  {e}
-                </span>
-              ))}
-              {result.warnings?.map((w, i) => (
-                <span key={`w-${i}`} className="flex items-center gap-2 text-xs text-warning">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  {w}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </SettingCard>
-  )
-}
 
 /* 通知条件项：图标 + 标题 + 开关，展开可含阈值滑块 */
 function ConditionRow({
@@ -373,14 +143,12 @@ function ConditionsBlock({
 export function NotificationsPanel({
   email,
   conditions,
-  onEmailChange,
   onConditionsChange,
   notificationCenter,
   onNotificationCenterChange,
 }: {
-  email: EmailSettings
+  email: EmailNotificationSettingsProps
   conditions: NotifyConditions
-  onEmailChange: (patch: Partial<EmailSettings>) => void
   onConditionsChange: (patch: Partial<NotifyConditions>) => void
   notificationCenter: NotificationCenterSettings
   onNotificationCenterChange: (patch: Partial<NotificationCenterSettings>) => void
@@ -397,7 +165,7 @@ export function NotificationsPanel({
         <SettingRow label="严重错误同时弹出"><Toggle checked={notificationCenter.showCriticalAsToast} onChange={(v) => onNotificationCenterChange({ showCriticalAsToast: v })} label="严重错误弹窗" /></SettingRow>
         <div className="flex flex-wrap gap-2 border-t border-border pt-4"><button type="button" onClick={() => void downloadRequest(`/notifications?export=true&format=${notificationCenter.exportFormat}&retentionDays=${notificationCenter.retentionDays}&maxItems=${notificationCenter.maxItems}&autoPurge=${notificationCenter.autoPurge}`, `notifications.${notificationCenter.exportFormat}`)} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-foreground"><Download className="h-4 w-4" />立即导出</button><button type="button" onClick={() => void apiRequest("/notifications/purge", { method: "POST", body: JSON.stringify({ retentionDays: notificationCenter.retentionDays }) })} className="h-9 rounded-xl border border-border px-3 text-xs">清理已读/过期通知</button></div>
       </SettingCard>
-      <EmailBlock value={email} onChange={onEmailChange} />
+      <EmailNotificationSettings {...email} />
       <ConditionsBlock value={conditions} onChange={onConditionsChange} />
     </div>
   )

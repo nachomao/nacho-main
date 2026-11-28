@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { SlidersHorizontal, Bell, ShieldCheck, Info, Save, RotateCcw, Check, Sparkles, Network, RefreshCw } from "lucide-react"
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control"
 import { GeneralPanel } from "./general-panel"
@@ -11,7 +11,8 @@ import { AIPanel } from "./ai-panel"
 import { ConnectionPanel } from "./connection-panel"
 import { UpdatesPanel } from "./updates-panel"
 import { defaultSettings, type SettingsState } from "./settings-data"
-import { applyRemoteSettings } from "./settings-remote"
+import { applyRemoteSettings, buildSettingsUpdate, isEmailSettingsDirty, syncSavedEmail } from "./settings-remote"
+import { isTrustedEmailService, readEmailStatus, type EmailStatus } from "./email-settings"
 import { cn } from "@/lib/utils"
 import { useLocalSettings } from "@/components/local-settings-provider"
 import { useServerData } from "@/components/server-data-context"
@@ -30,11 +31,90 @@ const tabs: readonly SegmentedOption<TabId>[] = [
 
 export function SettingsView() {
   const local = useLocalSettings()
-  const { apiRequest } = useServerData()
+  const { apiRequest, developerPreview, serverConnection } = useServerData()
   const [tab, setTab] = useState<TabId>("general")
   // 内容跟随药丸滑动方向水平平移进场
   const [enterAnim, setEnterAnim] = useState("animate-slide-in-right")
-  const [settings, setSettings] = useState<SettingsState>(defaultSettings)
+  const [{ settings, saved }, setModel] = useState({ settings: defaultSettings, saved: defaultSettings })
+  const [justSaved, setJustSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [settingsResult, setSettingsResult] = useState<{ source: typeof apiRequest; ready: boolean } | null>(null)
+  const [emailStatusResult, setEmailStatusResult] = useState<{ source: typeof apiRequest; status: EmailStatus | null } | null>(null)
+  const statusRevision = useRef(0)
+  const settingsRevision = useRef(0)
+  const activeRequest = useRef<typeof apiRequest | null>(apiRequest)
+  const trustedEmailConnection = !developerPreview && !!serverConnection && isTrustedEmailService(serverConnection.baseUrl)
+  const emailStatus = emailStatusResult?.source === apiRequest ? emailStatusResult.status : null
+  const settingsReady = settingsResult?.source === apiRequest && settingsResult.ready
+  function emailUnavailableReason() {
+    if (developerPreview) return "开发者预览不支持邮箱授权、保存邮件凭据或真实发信。"
+    if (!serverConnection) return "连接控制服务端后即可检查邮件通知设置。"
+    if (!trustedEmailConnection) return "请通过 HTTPS 或本机回环地址连接控制服务端后配置邮件。"
+    if (emailStatusResult?.source === apiRequest && !emailStatus) return "暂未检测到服务端邮件功能。请确认服务端已更新并重试。"
+    if (emailStatus && !emailStatus.configurable) return emailStatus.reason || "当前控制服务端未启用邮件配置。"
+    if (settingsResult?.source === apiRequest && !settingsResult.ready) return "未能读取已保存的邮件设置。请重试检查。"
+    return null
+  }
+
+  const refreshEmailStatus = useCallback(async () => {
+    if (!trustedEmailConnection || activeRequest.current !== apiRequest) return
+    const revision = ++statusRevision.current
+    let status: EmailStatus | null = null
+    try { status = readEmailStatus(await apiRequest<unknown>("/email/status", { redirect: "error" })) } catch { /* 显示可重试的状态 */ }
+    if (revision === statusRevision.current) setEmailStatusResult({ source: apiRequest, status })
+  }, [apiRequest, trustedEmailConnection])
+
+  const updateEmailStatus = useCallback((status: EmailStatus) => {
+    if (activeRequest.current !== apiRequest) return
+    statusRevision.current++
+    setEmailStatusResult({ source: apiRequest, status })
+  }, [apiRequest])
+
+  const refreshSettings = useCallback(async (emailOnly = false) => {
+    if (activeRequest.current !== apiRequest) return
+    const revision = ++settingsRevision.current
+    try {
+      const remote = await apiRequest<unknown>("/settings", trustedEmailConnection ? { redirect: "error" } : undefined)
+      if (revision !== settingsRevision.current) return
+      const effective = applyRemoteSettings(remote, defaultSettings)
+      setModel((current) => emailOnly ? {
+        settings: { ...current.settings, email: syncSavedEmail(current.settings.email, current.saved.email, effective.email) },
+        saved: { ...current.saved, email: effective.email },
+      } : { settings: effective, saved: effective })
+      setSettingsResult({ source: apiRequest, ready: true })
+    } catch {
+      if (revision === settingsRevision.current) setSettingsResult({ source: apiRequest, ready: false })
+    }
+  }, [apiRequest, trustedEmailConnection])
+
+  useEffect(() => {
+    activeRequest.current = apiRequest
+    setSaving(false)
+    setSaveError(null)
+    setJustSaved(false)
+    void refreshSettings()
+    void refreshEmailStatus()
+    return () => {
+      activeRequest.current = null
+      settingsRevision.current++
+      statusRevision.current++
+    }
+  }, [apiRequest, refreshEmailStatus, refreshSettings])
+
+  useEffect(() => {
+    if (!justSaved) return
+    const timer = setTimeout(() => setJustSaved(false), 2_000)
+    return () => clearTimeout(timer)
+  }, [justSaved])
+
+  const retryEmailStatus = useCallback(async () => {
+    await Promise.all([refreshEmailStatus(), settingsReady ? Promise.resolve() : refreshSettings(true)])
+  }, [refreshEmailStatus, refreshSettings, settingsReady])
+
+  const refreshMailState = useCallback(async () => {
+    await Promise.all([refreshEmailStatus(), refreshSettings(true)])
+  }, [refreshEmailStatus, refreshSettings])
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("tab")
@@ -52,54 +132,47 @@ export function SettingsView() {
       setEnterAnim(to > from ? "animate-slide-in-right" : "animate-slide-in-left")
     }
     setTab(next)
+    if (next === "notifications") void refreshEmailStatus()
   }
-  const [saved, setSaved] = useState<SettingsState>(defaultSettings)
-  const [justSaved, setJustSaved] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    void apiRequest<unknown>("/settings")
-      .then((remote) => {
-        if (!active) return
-        // 整包读取：常规、邮件、通知条件与安全设置都以服务端为准。
-        setSettings((current) => applyRemoteSettings(remote, current))
-        setSaved((current) => applyRemoteSettings(remote, current))
-      })
-      .catch(() => {
-        // 服务端尚未连接时保留初始显示值，连接恢复后会再次加载实际设置。
-      })
-    return () => { active = false }
-  }, [apiRequest])
-
-  const dirty = useMemo(() => JSON.stringify(settings) !== JSON.stringify(saved), [settings, saved])
+  const emailDirty = isEmailSettingsDirty(settings.email, saved.email)
+  const canWriteEmail = trustedEmailConnection && emailStatus?.configurable === true && settingsReady
+  const dirty = (canWriteEmail && emailDirty) || JSON.stringify(buildSettingsUpdate(settings, saved, false)) !== JSON.stringify(buildSettingsUpdate(saved, saved, false))
 
   const patch = <K extends keyof SettingsState>(key: K, value: Partial<SettingsState[K]>) =>
-    setSettings((s) => ({ ...s, [key]: { ...s[key], ...value } }))
+    setModel((model) => key === "email" && (!canWriteEmail || saving) ? model : {
+      ...model, settings: { ...model.settings, [key]: { ...model.settings[key], ...value } },
+    })
 
   const handleSave = async () => {
+    if (saving) return
     setSaveError(null)
     setSaving(true)
     try {
-      // 整包保存：服务端按分组浅合并，不会清空未提交或未知字段。
+      // 仅确认服务端支持新邮件契约后，才发送有改动的邮件分组。
+      const update = buildSettingsUpdate(settings, saved, canWriteEmail)
       const remote = await apiRequest<unknown>("/settings", {
         method: "PUT",
-        body: JSON.stringify(settings),
+        body: JSON.stringify(update),
+        ...(update.email ? { redirect: "error" } as const : {}),
       })
-      const effective = applyRemoteSettings(remote, settings)
-      setSettings(effective)
-      setSaved(effective)
+      if (activeRequest.current !== apiRequest) return
+      settingsRevision.current++
+      const effective = applyRemoteSettings(remote, { ...settings, email: { ...saved.email, ...update.email } })
+      setModel((model) => ({
+        settings: settingsReady && emailDirty && !update.email ? { ...effective, email: syncSavedEmail(model.settings.email, model.saved.email, effective.email) } : effective,
+        saved: effective,
+      }))
+      setSettingsResult({ source: apiRequest, ready: true })
       setJustSaved(true)
-      setTimeout(() => setJustSaved(false), 2000)
+      if (update.email) void refreshEmailStatus()
     } catch (caught) {
-      setSaveError(caught instanceof Error ? caught.message : "设置保存失败")
+      if (activeRequest.current === apiRequest) setSaveError(caught instanceof Error ? caught.message : "设置保存失败")
     } finally {
-      setSaving(false)
+      if (activeRequest.current === apiRequest) setSaving(false)
     }
   }
 
-  const handleReset = () => setSettings(saved)
+  const handleReset = () => setModel((model) => ({ ...model, settings: model.saved }))
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
@@ -114,9 +187,19 @@ export function SettingsView() {
         {tab === "connection" && <ConnectionPanel />}
         {tab === "notifications" && (
           <NotificationsPanel
-            email={settings.email}
+            email={{
+              value: settings.email,
+              saved: saved.email,
+              dirty: emailDirty,
+              status: canWriteEmail ? emailStatus : null,
+              unavailable: emailUnavailableReason(),
+              refreshStatus: trustedEmailConnection ? (settingsReady ? refreshEmailStatus : retryEmailStatus) : undefined,
+              refreshMailState,
+              onStatusUpdate: updateEmailStatus,
+              saving,
+              onChange: (p) => patch("email", p),
+            }}
             conditions={settings.conditions}
-            onEmailChange={(p) => patch("email", p)}
             onConditionsChange={(p) => patch("conditions", p)}
             notificationCenter={local.settings.notificationCenter}
             onNotificationCenterChange={(p) => void local.update({ notificationCenter: p })}
@@ -138,7 +221,7 @@ export function SettingsView() {
           style={{ zIndex: 40 }}
         >
           <div
-            className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-border bg-card/95 px-4 py-3 shadow-xl backdrop-blur transition-all duration-300"
+            className="pointer-events-auto flex max-w-full flex-wrap items-center gap-3 rounded-2xl border border-border bg-card/95 px-4 py-3 shadow-xl backdrop-blur transition-all duration-300"
             style={{
               transform: dirty || justSaved ? "translateY(0)" : "translateY(150%)",
               opacity: dirty || justSaved ? 1 : 0,
@@ -151,7 +234,7 @@ export function SettingsView() {
               </span>
             ) : (
               <>
-                <span className={cn("hidden text-sm sm:block", saveError ? "text-negative" : "text-muted-foreground")}>{saveError || "你有未保存的更改"}</span>
+                {saveError ? <span role="alert" className="min-w-0 basis-full break-words text-sm text-negative">{saveError}</span> : <span className="hidden text-sm text-muted-foreground sm:block">你有未保存的更改</span>}
                 <button
                   type="button"
                   onClick={handleReset}

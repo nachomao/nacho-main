@@ -1,83 +1,40 @@
 "use client"
 
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import Link from "next/link"
 import {
-  AlertTriangle, ArrowRight, ArrowUpCircle, CheckCircle2, CircleSlash, Download,
-  HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
+  AlertTriangle, ArrowRight, ArrowUpCircle, Download, HardDriveDownload, Info, Loader2, Monitor, RefreshCw, Server, XCircle,
 } from "lucide-react"
 import { useServerData } from "@/components/server-data-context"
 import { PanelInstallProgress, TransferProgress } from "@/components/settings/install-progress"
 import { ReleaseNotesCapsule } from "@/components/settings/release-notes-capsule"
 import { useOnboarding } from "@/components/onboarding/onboarding-context"
 import { useConfirm } from "@/components/ui/confirm-dialog"
-import { updateLocalControl } from "@/lib/local-control-server-client"
 import type { LocalControlServerStatus } from "@/lib/local-control-server-types"
 import { PANEL_VERSION_LABEL, formatReleaseVersion } from "@/lib/panel-version"
-import { serverUpdateIssue, updateSourceServerText, updateSourceState } from "@/lib/product-update-status"
-import { DEFAULT_UPDATE_ORIGIN, normalizeUpdateOriginInput, saveUpdateOrigin } from "@/lib/update-origin"
 import {
-  newerPanelInstallState, panelInstallActive, PANEL_INSTALL_LABELS, type PanelInstallState,
-} from "@/lib/panel-install-progress"
+  canOfferInstall, installationSourceNotice, versionOrder, type DesktopRelease, type GithubCheck,
+  type ReleaseChannel, type ReleasePart, type UpdateSettings,
+} from "@/lib/github-update-ui"
+import { newerPanelInstallState, panelInstallActive, PANEL_INSTALL_LABELS, type PanelInstallState } from "@/lib/panel-install-progress"
 import { cn } from "@/lib/utils"
 
-type Entry = {
-  version: string
-  releaseType?: string
-  publishedAt: string
-  sizeBytes: number
-  minPanelVersion?: string
-  minServerVersion?: string
-  minAgentVersion?: string
-  title?: string
-  notes?: string
-}
-type Index = { schemaVersion: number; sequence: number; releases: { panel: Entry; server: Entry; agent: Entry }; publishedAt: string }
-type Check = { index: Index; stale: boolean; currentVersion: string | null }
+type Entry = { version: string; releaseType: string; publishedAt: string | null; sizeBytes: number; title?: string; notes?: string }
 type Runtime = {
-  version: string
-  apiVersion: number
-  minPanelVersion: string
-  agentArtifactVersion: string | null
-  updateExecutor: boolean
-  updateStatus: { phase: string; version: string; error?: string } | null
-  updateMode?: string
-  updateSourceConfigured?: boolean
-  updateSource?: string | null
-  updateSourceOrigin?: "panel" | "env" | "none"
-  capabilities?: { updateSourceManagement?: boolean }
+  version: string; minPanelVersion: string; agentArtifactVersion: string | null; updateExecutor: boolean
+  updateStatus: { phase: string; version?: string | null; error?: string } | null
+  capabilities?: { productUpdatesV5?: boolean }
   updateExecutorProtocol?: number | null
 }
-type UpdateBridge = {
-  version?: string
-  check(force?: boolean): Promise<Check>
-  installPanel(sequence: number, version: string): Promise<{ phase: string; version: string }>
-  transferRelease?(kind: "server" | "agent", serverUrl: string, apiKey: string, sequence: number, version: string): Promise<unknown>
-  onAvailable?(callback: (check: Check) => void): (() => void) | undefined
-  getPanelInstallState?(): Promise<PanelInstallState>
-  onPanelInstallProgress?(callback: (state: PanelInstallState) => void): (() => void) | undefined
-  onTransferProgress?(callback: (percent: number) => void): (() => void) | undefined
-  getOrigin?(): Promise<string>
-  setOrigin?(origin: string): Promise<string>
-  resetOrigin?(): Promise<string>
-}
-
-declare global { interface Window { nachoUpdates?: UpdateBridge } }
-
 type Tone = "primary" | "positive" | "warning" | "danger" | "muted"
 type Status = { label: string; tone: Tone }
-
-const size = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+const channels: ReleaseChannel[] = ["stable", "beta", "alpha"]
+const size = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1) + " MiB"
 const formatTime = (value: string | Date) =>
   new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-const releaseLabel = (entry?: Entry) => entry ? formatReleaseVersion(entry.version, entry.releaseType || "stable") : undefined
-
-function compare(a: string | null, b: string) {
-  if (!a || !/^\d+\.\d+\.\d+$/.test(a) || !/^\d+\.\d+\.\d+$/.test(b)) return null
-  const x = a.split(".").map(Number), y = b.split(".").map(Number)
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1
-  return 0
-}
+const label = (entry?: Entry) => entry && formatReleaseVersion(entry.version, entry.releaseType)
+const inlineButton = "rounded-xl border border-border bg-surface/60 px-3 py-2 text-xs font-medium hover:bg-surface disabled:opacity-50"
+const field = "mt-1 w-full min-w-0 rounded-xl border border-border bg-surface px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-primary"
 
 const TONE_TEXT: Record<Tone, string> = {
   primary: "text-primary",
@@ -94,470 +51,273 @@ const TONE_BADGE: Record<Tone, string> = {
   muted: "bg-surface text-muted-foreground ring-border",
 }
 
+
+function releaseEntry(part: ReleasePart | undefined, asset: "installer" | "source" | "agent"): Entry | undefined {
+  const release = part?.release
+  const sizeBytes = release?.sizeBytesByAsset[asset]
+  if (!release || part?.status === "locked" || sizeBytes === undefined) return undefined
+  return { version: release.target.version, releaseType: release.target.channel, publishedAt: release.publishedAt, sizeBytes, title: release.title, notes: release.notes }
+}
+
+function releaseStatus(part: ReleasePart | undefined, available: boolean, disconnected = false): Status {
+  if (disconnected) return { label: "未连接", tone: "muted" }
+  if (!part || part.status === "not-found") return { label: "暂无发布", tone: "muted" }
+  if (part.status === "locked") return { label: "未放行", tone: "warning" }
+  if (part.status === "stale") return { label: "缓存", tone: "warning" }
+  if (part.status === "error") return { label: "未通过验证", tone: "danger" }
+  return available ? { label: "可更新", tone: "primary" } : { label: "无更高版本", tone: "positive" }
+}
+
 export function UpdatesPanel() {
   const { apiRequest, transferProductUpdate, developerPreview } = useServerData()
   const { serverSource } = useOnboarding()
   const { confirm } = useConfirm()
-  const [check, setCheck] = useState<Check | null>(null)
+  const [bridge, setBridge] = useState<typeof window.nachoUpdates>()
+  const [settings, setSettings] = useState<UpdateSettings | null>(null)
+  const [check, setCheck] = useState<GithubCheck | null>(null)
   const [runtime, setRuntime] = useState<Runtime | null>(null)
-  const [sourceError, setSourceError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [showServerModal, setShowServerModal] = useState(false)
-  const [localOrigin, setLocalOrigin] = useState(DEFAULT_UPDATE_ORIGIN)
-  const [lastSavedOrigin, setLastSavedOrigin] = useState(DEFAULT_UPDATE_ORIGIN)
-  const [originNotice, setOriginNotice] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    const accept = (value: string) => {
-      if (!active) return
-      const normalized = normalizeUpdateOriginInput(value)
-      setLocalOrigin(normalized)
-      setLastSavedOrigin(normalized)
-    }
-    if (typeof window !== "undefined" && window.nachoUpdates?.getOrigin) {
-      window.nachoUpdates.getOrigin().then(accept).catch(() => {})
-    } else {
-      try {
-        const stored = localStorage.getItem("nacho_update_origin")
-        if (stored) accept(stored)
-      } catch {}
-    }
-    return () => { active = false }
-  }, [])
-
-  async function handleSaveOrigin(newOrigin: string) {
-    const result = await saveUpdateOrigin({
-      origin: newOrigin,
-      previousLocalOrigin: lastSavedOrigin,
-      runtime,
-      setLocal: async (origin) => {
-        if (typeof window !== "undefined" && window.nachoUpdates?.setOrigin) {
-          await window.nachoUpdates.setOrigin(origin)
-        }
-        try {
-          localStorage.setItem("nacho_update_origin", origin)
-        } catch {}
-        setLocalOrigin(origin)
-      },
-      saveServer: async (origin) => {
-        await apiRequest("/settings", { method: "PUT", body: JSON.stringify({ updates: { origin } }) })
-      },
-      verify: async () => {
-        await apiRequest("/product-updates")
-      },
-    })
-    setLocalOrigin(result.origin)
-    setLastSavedOrigin(result.origin)
-    if (result.warning) {
-      setOriginNotice(result.warning)
-      void refresh(true)
-      // 服务端已写入但索引验证失败：保留弹窗和错误提示，便于恢复上一个更新源。
-      if (result.serverSynced) throw new Error(result.warning)
-      setShowServerModal(false)
-      return
-    }
-    setOriginNotice(null)
-    setShowServerModal(false)
-    void manualRefresh()
-  }
+  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [changing, setChanging] = useState(false)
+  const [busy, setBusy] = useState<"panel" | "server" | "agent" | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
   const [panelInstall, setPanelInstall] = useState<PanelInstallState | null>(null)
-  const [checking, setChecking] = useState(false)
-  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
-  const panelBusy = busy === "panel" || panelInstallActive(panelInstall)
-  const anyBusy = Boolean(busy) || panelInstallActive(panelInstall)
-  const refresh = useCallback(async (force = false) => {
-    if (developerPreview) {
-      // 预览模式不访问更新服务器，只展示服务端版本卡片。
-      setCheck(null)
-      setSourceError("开发者预览模式不检查更新")
-    } else {
-      try {
-        const result = window.nachoUpdates
-          ? await window.nachoUpdates.check(force)
-          : await fetch("/api/product-updates", { cache: "no-store" }).then(async (response) => {
-            const body = await response.json() as { ok: boolean; data?: Check; message?: string }
-            if (!body.ok || !body.data) throw new Error(body.message || "检查更新失败")
-            return body.data
-          })
-        setCheck(result)
-        setSourceError(result.stale ? "网络暂不可用，显示上次验证的发布信息；缓存不能用于安装。" : null)
-      } catch (error) {
-        setCheck(null)
-        setSourceError(error instanceof Error ? error.message : "检查更新失败")
-      }
-    }
-    setCheckedAt(new Date())
+  const [profileText, setProfileText] = useState("")
+  const [fingerprintText, setFingerprintText] = useState("")
+  const [formOpen, setFormOpen] = useState(false)
+  const mounted = useRef(false)
+
+  useEffect(() => {
+    mounted.current = true
+    setBridge(window.nachoUpdates)
+    return () => { mounted.current = false }
+  }, [])
+
+  const localMode = serverSource?.mode === "local"
+  const refreshRuntime = useCallback(async () => {
     try {
-      const nextRuntime = await apiRequest<Runtime>("/runtime-info")
-      setRuntime(nextRuntime)
-      setServerError(null)
+      const value = await apiRequest<Runtime>("/runtime-info")
+      if (mounted.current) { setRuntime(value); setServerError(null) }
     } catch (error) {
-      setRuntime(null)
-      if (serverSource?.mode === "local") {
+      if (localMode && !developerPreview) {
         try {
           const response = await fetch("/api/local-control-server", { cache: "no-store" })
           const body = await response.json() as { ok: boolean; data?: LocalControlServerStatus }
           if (body.ok && body.data?.installed && body.data.version) {
-            setRuntime({
-              version: body.data.version, apiVersion: 0, minPanelVersion: "0.1.2",
-              agentArtifactVersion: null, updateExecutor: false, updateStatus: null,
-            })
-            setServerError("本机服务尚未提供版本能力接口，升级后可读取 Agent 制品状态。")
+            if (mounted.current) setRuntime({ version: body.data.version, minPanelVersion: "0.0.0", agentArtifactVersion: null, updateExecutor: false, updateStatus: null })
             return
           }
-        } catch { /* 沿用原始连接错误 */ }
+        } catch { /* 保留原连接错误。 */ }
       }
-      setServerError(error instanceof Error ? error.message : "服务端尚未连接")
+      if (mounted.current) {
+        setRuntime(null)
+        setServerError(error instanceof Error ? error.message : "控制服务端尚未连接")
+      }
     }
-  }, [apiRequest, developerPreview, serverSource?.mode])
+  }, [apiRequest, developerPreview, localMode])
 
-  useEffect(() => {
-    void refresh()
-    const timer = developerPreview ? null : window.setInterval(() => void refresh(), 60_000)
-    const unsubscribe = window.nachoUpdates?.onAvailable?.(() => void refresh(true))
-    const stopProgress = window.nachoUpdates?.onTransferProgress?.(setProgress)
-    return () => {
-      if (timer) window.clearInterval(timer)
-      unsubscribe?.()
-      stopProgress?.()
+  const refresh = useCallback(async (force = false) => {
+    if (developerPreview || !bridge) return
+    try {
+      const result = await bridge.check(force)
+      if (mounted.current) setCheck(result)
+    } catch (error) {
+      if (mounted.current) {
+        setCheck(null)
+        setNotice({ text: error instanceof Error ? error.message : "GitHub 更新检查失败", error: true })
+      }
     }
-  }, [developerPreview, refresh])
+  }, [bridge, developerPreview])
 
+  useEffect(() => { void refreshRuntime() }, [refreshRuntime])
   useEffect(() => {
+    if (!bridge || developerPreview) return
     let active = true
-    const bridge = window.nachoUpdates
-    const accept = (state: PanelInstallState) => {
-      if (active) setPanelInstall((current) => newerPanelInstallState(current, state))
-    }
-    const stop = bridge?.onPanelInstallProgress?.(accept)
-    void bridge?.getPanelInstallState?.().then(accept).catch(() => {})
-    return () => { active = false; stop?.() }
-  }, [])
+    const update = (state: PanelInstallState) => { if (active) setPanelInstall((previous) => newerPanelInstallState(previous, state)) }
+    void bridge.readSettings().then(value => { if (active) setSettings(value) }).catch(error => {
+      if (active) setNotice({ text: String(error), error: true })
+    })
+    void refresh()
+    void bridge.getPanelInstallState?.().then(update).catch(() => {})
+    const stopA = bridge.onAvailable?.(result => { if (active) setCheck(result) })
+    const stopB = bridge.onPanelInstallProgress?.(update)
+    const stopC = bridge.onTransferProgress?.(setProgress)
+    return () => { active = false; stopA?.(); stopB?.(); stopC?.() }
+  }, [bridge, developerPreview, refresh])
 
-  async function manualRefresh() {
-    if (checking) return
+  async function checkNow() {
     setChecking(true)
-    try { await refresh(true) } finally { setChecking(false) }
+    setNotice(null)
+    try { await Promise.all([refresh(true), refreshRuntime()]) } finally { setChecking(false) }
+  }
+  async function change(action: () => Promise<UpdateSettings>) {
+    setChanging(true)
+    setNotice(null)
+    try {
+      setSettings(await action())
+      setCheck(null)
+      await refresh()
+      return true
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "更新设置变更失败", error: true })
+      return false
+    } finally { setChanging(false) }
   }
 
-  async function installPanel() {
-    if (!check || anyBusy || !window.nachoUpdates) return
-    if (!await confirm({
-      title: "安装新版面板？", description: "面板将退出、安装并重新启动。当前本地设置会保留。",
-      body: `${PANEL_VERSION_LABEL} → ${formatReleaseVersion(check.index.releases.panel.version, check.index.releases.panel.releaseType || "stable")}`,
-      confirmLabel: "下载并安装", tone: "warning",
-    })) return
-    setSourceError(null)
-    setPanelInstall((current) => ({
-      revision: current?.revision ?? 0, phase: "preparing", version: check.index.releases.panel.version,
-      downloadedBytes: 0, totalBytes: check.index.releases.panel.sizeBytes, error: null,
-    }))
-    setBusy("panel")
-    try {
-      await window.nachoUpdates.installPanel(check.index.sequence, check.index.releases.panel.version)
-      // 旧桌面桥没有进度事件时也保留退出前的安装状态。
-      setPanelInstall((current) => current ? { ...current, phase: "installing" } : current)
-    } catch (error) {
-      setPanelInstall((current) => current ? {
-        ...current, phase: "failed", error: error instanceof Error ? error.message : "面板安装失败",
-      } : current)
-      setBusy(null)
+  async function waitForServer(version: string) {
+    for (let attempt = 0; attempt < 240 && mounted.current; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+      const next = await apiRequest<Runtime>("/runtime-info").catch(() => null)
+      if (!next || !mounted.current) continue
+      setRuntime(next)
+      if (next.updateStatus?.version !== version) continue
+      if (next.updateStatus.phase === "failed" || next.updateStatus.phase === "rolled-back") {
+        throw new Error("升级失败或已回滚：" + (next.updateStatus.error || next.updateStatus.phase))
+      }
+      if (next.version === version && next.updateStatus.phase === "healthy") return
     }
+    if (mounted.current) throw new Error("服务端健康确认超时，请检查升级状态")
   }
 
-  async function installServer() {
-    if (!check || !runtime || anyBusy) return
+  const panelPart = check?.components.panel
+  const serverPart = check?.components.server
+  const panelEntry = releaseEntry(panelPart, "installer")
+  const serverEntry = releaseEntry(serverPart, "source")
+  const agentEntry = releaseEntry(serverPart, "agent")
+  const panelBusy = busy === "panel" || panelInstallActive(panelInstall)
+  const anyBusy = Boolean(busy || changing || checking || panelInstallActive(panelInstall))
+  const panelNew = canOfferInstall(panelPart, check?.currentVersion ?? bridge?.version ?? null)
+  const serverNew = canOfferInstall(serverPart, runtime?.version ?? null)
+  const agentNew = Boolean(runtime && canOfferInstall(serverPart, runtime.agentArtifactVersion, true))
+  const panelRequired = versionOrder(check?.currentVersion, serverPart?.release?.compatibility.minPanelVersion) === -1
+  const needsHost = !localMode && (!runtime?.updateExecutor || runtime.updateExecutorProtocol !== 5)
+  const needsTransport = runtime?.capabilities?.productUpdatesV5 !== true
+  const source = settings?.profiles.find(profile => profile.id === settings.profileId)
+  const selectedMatches = Boolean(check && settings && check.profileId === settings.profileId && check.channel === settings.channel)
+
+  async function apply(kind: "panel" | "server" | "agent", release?: DesktopRelease | null) {
+    if (!release || !bridge || anyBusy || developerPreview || !selectedMatches) return
+    const warning = installationSourceNotice(release)
+    const title = kind === "panel" ? "安装新版面板？" : kind === "server" ? "升级控制服务端？" : "准备新版 Agent 制品？"
     if (!await confirm({
-      title: "升级服务端？", description: "升级期间连接将暂时断开，验证失败时会恢复旧版本。",
-      body: `${runtime.version} → ${formatReleaseVersion(check.index.releases.server.version, check.index.releases.server.releaseType || "stable")}`,
-      confirmLabel: "开始升级", tone: "warning",
+      title,
+      description: kind === "panel" ? "验证完成后面板将退出、安装并重新启动。" :
+        kind === "server" ? "升级期间连接会中断，验证失败会回滚。" : "这里只准备制品，不下发安装命令。",
+      body: formatReleaseVersion(release.target.version, release.target.channel) + (warning ? "\n" + warning : ""),
+      confirmLabel: kind === "agent" ? "下载并准备" : "下载并升级", tone: "warning",
     })) return
-    setBusy("server")
+    setBusy(kind)
+    setNotice(null)
+    setProgress(null)
     try {
-      if (!check.currentVersion) throw new Error("需要 Windows 桌面面板才能发起服务端升级")
-      const minAgent = check.index.releases.server.minAgentVersion
-      if (minAgent) {
-        const devices = await apiRequest<Array<{ os: string; status: string; version: string }>>("/clients")
-        const incompatible = devices.filter((device) =>
-          device.os === "Windows" && device.status !== "unregistered" &&
-          (compare(device.version, minAgent) === null || compare(device.version, minAgent) === -1))
-        if (incompatible.length) throw new Error(`${incompatible.length} 台 Agent 低于 ${minAgent}，请先手动更新`)
+      if (kind === "panel") await bridge.installPanel(release.target)
+      else if (kind === "server" && localMode) await bridge.installLocalServer(release.target)
+      else {
+        await transferProductUpdate(kind, release.target)
+        if (kind === "server") await waitForServer(release.target.version)
       }
-      if (serverSource?.mode === "local") {
-        await updateLocalControl(check.index.releases.server.version, check.currentVersion, check.index.sequence)
-      } else if (check.index.schemaVersion === 4) {
-        setServerError("源码传输完成后服务端将短暂重启；正在准备并验证源码。")
-        await transferProductUpdate("server", { version: check.index.releases.server.version, sequence: check.index.sequence })
-      } else {
-        await apiRequest("/product-updates/server", {
-          method: "POST",
-          body: JSON.stringify({ version: check.index.releases.server.version, panelVersion: check.currentVersion }),
-        })
-      }
-      await new Promise((resolve) => setTimeout(resolve, 3000))
-      let completed = false
-      for (let attempt = 0; attempt < 240; attempt++) {
-        try {
-          const state = await apiRequest<Runtime>("/runtime-info")
-          setRuntime(state)
-          if (state.version === check.index.releases.server.version &&
-              (serverSource?.mode === "local" || state.updateStatus?.phase === "healthy")) {
-            completed = true
-            break
-          }
-          if (state.updateStatus?.phase === "failed" || state.updateStatus?.phase === "rolled-back") {
-            throw new Error(`升级失败或已回滚：${state.updateStatus.error || state.updateStatus.phase}`)
-          }
-        } catch (error) {
-          if (error instanceof Error && /失败或已回滚/.test(error.message)) throw error
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5000))
-      }
-      if (!completed) throw new Error("服务端重启和健康验证超时，请检查升级状态")
-      setServerError(null)
-      await refresh(true)
+      if (kind !== "panel" && mounted.current) await refreshRuntime()
     } catch (error) {
-      setServerError(error instanceof Error ? error.message : "升级请求失败")
-    } finally { setBusy(null) }
+      setNotice({ text: error instanceof Error ? error.message : "更新未完成", error: true })
+    } finally { if (mounted.current) { setBusy(null); setProgress(null) } }
   }
 
-  async function syncAgent() {
-    if (!runtime || anyBusy) return
-    setBusy("agent")
-    try {
-      if (check?.index.schemaVersion === 4) {
-        await transferProductUpdate("agent", { version: check.index.releases.agent.version, sequence: check.index.sequence })
-      } else {
-        await apiRequest("/product-updates/agent-artifact", {
-          method: "POST", signal: AbortSignal.timeout(20 * 60_000),
-        })
-      }
-      await refresh(true)
-    } catch (error) {
-      setServerError(error instanceof Error ? error.message : "Agent 制品准备失败")
-    } finally { setBusy(null) }
-  }
-
-  const releases = check?.index.releases
-  const localMode = serverSource?.mode === "local"
-  const serverIssue = runtime ? serverUpdateIssue(runtime, localMode) : null
-  const agentIssue = runtime ? serverUpdateIssue(runtime, localMode, "agent") : null
-  const panelCompare = releases ? compare(check.currentVersion, releases.panel.version) : null
-  const panelNew = panelCompare === -1
-  const serverNew = releases && runtime ? compare(runtime.version, releases.server.version) === -1 : false
-  const agentNew = Boolean(releases && runtime &&
-    (!runtime.agentArtifactVersion || compare(runtime.agentArtifactVersion, releases.agent.version) === -1))
-  const panelRequired = releases?.server.minPanelVersion && check
-    ? compare(check.currentVersion, releases.server.minPanelVersion) === -1 : false
-  const connectedPanelIncompatible = runtime && check
-    ? compare(check.currentVersion, runtime.minPanelVersion) === -1 : false
-  const desktop = typeof window !== "undefined" && Boolean(window.nachoUpdates)
-  const stale = Boolean(check?.stale)
-  const transferring = progress !== null && (busy === "server" || busy === "agent")
-
-  const panelStatus: Status = !releases ? { label: "未取得", tone: "muted" }
-    : panelNew ? { label: "可更新", tone: "primary" }
-    : panelCompare === 1 ? { label: "高于推荐", tone: "warning" }
-    : { label: "已是最新", tone: "positive" }
-  const serverStatus: Status = !runtime ? { label: "未连接", tone: "muted" }
-    : runtime.updateStatus?.phase === "failed" || runtime.updateStatus?.phase === "rolled-back" ? { label: "升级异常", tone: "danger" }
-    : !releases ? { label: "未取得", tone: "muted" }
-    : serverNew ? { label: "可更新", tone: "primary" }
-    : { label: "已是最新", tone: "positive" }
-  const agentStatus: Status = !runtime ? { label: "未连接", tone: "muted" }
-    : !releases ? { label: "未取得", tone: "muted" }
-    : agentNew ? { label: "待准备", tone: "primary" }
-    : { label: "已就绪", tone: "positive" }
-
-  const updateCount = [panelNew, serverNew, agentNew].filter(Boolean).length
-
   return (
-    <div className="flex flex-col gap-4 pb-4">
-      <OverviewCard
-        releasesAvailable={Boolean(releases)}
-        updateCount={updateCount}
-        sequence={check?.index.sequence}
-        publishedAt={check?.index.publishedAt}
-        checkedAt={checkedAt}
-        stale={stale}
-        developerPreview={developerPreview}
-        checking={checking}
-        onCheck={() => void manualRefresh()}
-        onConfigureServer={() => setShowServerModal(true)}
-        panelOrigin={localOrigin}
-        serverOriginText={runtime ? updateSourceServerText(runtime) : "未连接"}
-        sourceState={updateSourceState(runtime)}
-      />
-
-      <UpdateServerModal
-        open={showServerModal}
-        currentOrigin={localOrigin}
-        serverOriginText={runtime ? updateSourceServerText(runtime) : "未连接"}
-        sourceState={updateSourceState(runtime)}
-        fallbackOrigin={lastSavedOrigin}
-        onClose={() => setShowServerModal(false)}
-        onSave={handleSaveOrigin}
-      />
-
-      {(developerPreview || (sourceError && !developerPreview) || connectedPanelIncompatible || serverError || originNotice) && (
-        <div className="flex flex-col gap-2">
-          {developerPreview && (
-            <Notice tone="info">开发者预览模式：使用内置演示数据，不访问更新服务器，更新检查与安装已禁用。</Notice>
-          )}
-          {sourceError && !developerPreview && <Notice tone="warning">{sourceError}</Notice>}
-          {connectedPanelIncompatible && (
-            <Notice tone="warning" alert>
-              当前服务端要求面板至少 {runtime?.minPanelVersion}；请先升级面板。版本不兼容的操作需暂停，更新与连接设置仍可访问。
-            </Notice>
-          )}
-          {originNotice && <Notice tone="warning">{originNotice}</Notice>}
-          {serverError && <Notice tone="danger">{serverError}</Notice>}
-        </div>
-      )}
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <ComponentCard
-          icon={<Monitor className="size-5" />}
-          title="Windows 面板"
-          subtitle="桌面控制面板"
-          status={panelStatus}
-          current={PANEL_VERSION_LABEL}
-          latest={releaseLabel(releases?.panel)}
-          hasUpdate={panelNew}
-          release={releases?.panel}
-          note={!desktop ? "安装新版需使用 Windows 桌面面板。" : !releases ? "尚未取得发布信息。" :
-            panelNew ? "新版本已就绪，安装时面板会自动重启。" : panelCompare === 1 ? "已安装版本高于推荐版本。" : "当前已是推荐版本。"}
-          progress={panelInstall && panelInstall.phase !== "idle" ? <PanelInstallProgress state={panelInstall} /> : undefined}
-          action={panelBusy ? PANEL_INSTALL_LABELS[panelInstall?.phase || "preparing"] : panelInstall?.phase === "failed" ? "重试下载并安装" : "下载并安装"}
-          loading={panelBusy}
-          disabled={!panelNew || !desktop || stale || anyBusy}
-          onClick={() => void installPanel()}
-        />
-        <ComponentCard
-          icon={<Server className="size-5" />}
-          title="控制服务端"
-          subtitle={localMode ? "本机部署" : "云端部署"}
-          status={serverStatus}
-          current={runtime?.version || "未连接"}
-          latest={releaseLabel(releases?.server)}
-          hasUpdate={serverNew}
-          release={releases?.server}
-          note={serverIssue || (panelRequired ? "需先升级面板后才能升级服务端。" : runtime?.updateStatus
-            ? `执行状态：${runtime.updateStatus.phase}${runtime.updateStatus.error ? ` · ${runtime.updateStatus.error}` : ""}`
-            : "服务端独立升级，失败时自动回滚到旧版本。")}
-          noteTone={serverIssue || panelRequired ? "warning" : undefined}
-          progress={transferring && busy === "server" ? <TransferProgress percent={progress} label="服务端源码传输" /> : undefined}
-          action={busy === "server" ? "正在升级…" : localMode ? "升级本机服务" : "升级云端服务"}
-          loading={busy === "server"}
-          icon2={<ArrowUpCircle aria-hidden="true" className="size-4" />}
-          disabled={!serverNew || stale || panelRequired || Boolean(serverIssue) || !desktop ||
-            (!localMode && (!runtime?.updateExecutor || serverSource?.mode !== "cloud")) || anyBusy}
-          onClick={() => void installServer()}
-        />
-        <ComponentCard
-          icon={<HardDriveDownload className="size-5" />}
-          title="Agent 制品"
-          subtitle="与服务端同批发布"
-          status={agentStatus}
-          current={runtime?.agentArtifactVersion || "无"}
-          currentLabel="已准备"
-          latest={releaseLabel(releases?.agent)}
-          hasUpdate={agentNew}
-          release={releases?.agent}
-          note={agentIssue && agentIssue !== serverIssue ? agentIssue : "制品准备完成后，仍需逐台或批量手动下发到客户端。"}
-          noteTone={agentIssue && agentIssue !== serverIssue ? "warning" : undefined}
-          progress={transferring && busy === "agent" ? <TransferProgress percent={progress} label="Agent 制品传输" /> : undefined}
-          action={busy === "agent" ? "正在准备…" : "准备新版制品"}
-          loading={busy === "agent"}
-          icon2={<HardDriveDownload aria-hidden="true" className="size-4" />}
-          disabled={!agentNew || stale || Boolean(agentIssue) || !runtime || anyBusy}
-          onClick={() => void syncAgent()}
-          footer={
-            <Link href="/clients" className="group inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-              前往「客户端 → 客户端更新」下发
-              <ArrowRight aria-hidden="true" className="size-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none" />
-            </Link>
-          }
-        />
-      </div>
-    </div>
-  )
-}
-
-function OverviewCard({ releasesAvailable, updateCount, sequence, publishedAt, checkedAt, stale, developerPreview, checking, onCheck, onConfigureServer, panelOrigin, serverOriginText, sourceState }: {
-  releasesAvailable: boolean; updateCount: number; sequence?: number; publishedAt?: string; checkedAt: Date | null
-  stale: boolean; developerPreview: boolean; checking: boolean; onCheck: () => void
-  onConfigureServer?: () => void; panelOrigin: string; serverOriginText: string
-  sourceState: ReturnType<typeof updateSourceState>
-}) {
-  const state: { title: string; desc: string; tone: Tone; icon: ReactNode } = developerPreview
-    ? { title: "预览模式", desc: "更新检查已禁用，仅展示服务端版本信息。", tone: "muted", icon: <CircleSlash className="size-6" /> }
-    : !releasesAvailable
-      ? { title: "无法取得发布信息", desc: "请检查网络连接后重新检查更新。", tone: "warning", icon: <AlertTriangle className="size-6" /> }
-      : updateCount > 0
-        ? { title: `${updateCount} 项组件可更新`, desc: "建议先升级面板，再升级服务端并准备 Agent 制品。", tone: "primary", icon: <ArrowUpCircle className="size-6" /> }
-        : { title: "所有组件均为推荐版本", desc: "更新服务器每分钟自动检查一次新发布。", tone: "positive", icon: <CheckCircle2 className="size-6" /> }
-
-  return (
-    <section aria-labelledby="updates-overview-title" className="card-glow flex flex-col gap-5 rounded-3xl bg-card p-6 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-start gap-4">
-        <span className={cn("flex size-12 shrink-0 items-center justify-center rounded-2xl ring-1", TONE_BADGE[state.tone])} aria-hidden="true">
-          {state.icon}
-        </span>
-        <div className="min-w-0 leading-tight">
-          <p className="text-xs font-medium text-muted-foreground">产品更新</p>
-          <h2 id="updates-overview-title" className="mt-1 text-lg font-semibold text-balance">{state.title}</h2>
-          <p className="mt-1 text-sm text-muted-foreground text-pretty">{state.desc}</p>
-          <dl className="mt-3 flex flex-wrap gap-2 text-xs">
-            {sequence !== undefined && <Meta label="发布序列" value={`#${sequence}`} />}
-            {publishedAt && <Meta label="发布于" value={formatTime(publishedAt)} />}
-            {checkedAt && <Meta label="上次检查" value={formatTime(checkedAt)} />}
-            {stale && <Meta label="数据" value="缓存" tone="warning" />}
-            <Meta label="面板本地" value={panelOrigin} />
-            <Meta
-              label="服务端"
-              value={serverOriginText}
-              tone={sourceState === "server-panel" ? "positive"
-                : sourceState === "unsupported" || sourceState === "disconnected" ? "warning" : undefined}
-            />
-          </dl>
-        </div>
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 self-start sm:self-center">
-        {onConfigureServer && (
-          <button
-            type="button"
-            onClick={onConfigureServer}
-            title={`面板本地：${panelOrigin}；服务端：${serverOriginText}`}
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-surface/60 px-3.5 text-sm font-medium transition-colors hover:bg-surface"
-          >
-            <Server aria-hidden="true" className="size-4 text-muted-foreground" />
-            更新服务器
+    <div className="flex min-w-0 flex-col gap-4 pb-4">
+      <section className="space-y-4 rounded-2xl border border-border bg-card p-4">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">GitHub 更新</h2>
+            <p className="mt-1 text-xs text-muted-foreground">面板与服务端独立检查，安装由你确认。</p>
+            {check?.checkedAt && <p className="mt-1 text-xs text-muted-foreground">检查于 {formatTime(check.checkedAt)}</p>}
+          </div>
+          <button type="button" className={cn(inlineButton, "inline-flex items-center gap-2")} disabled={!bridge || developerPreview || anyBusy} onClick={() => void checkNow()}>
+            <RefreshCw className={cn("size-3.5", checking && "animate-spin motion-reduce:animate-none")} />{checking ? "正在检查" : "检查更新"}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={onCheck}
-          disabled={checking}
-          aria-busy={checking}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-surface/60 px-4 text-sm font-medium transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <RefreshCw aria-hidden="true" className={cn("size-4", checking && "animate-spin motion-reduce:animate-none")} />
-          {checking ? "检查中…" : "检查更新"}
-        </button>
-      </div>
-    </section>
-  )
-}
+        </header>
+        {developerPreview ? <Notice tone="info">开发者预览模式不检查更新。</Notice> : !bridge ?
+          <Notice tone="info">使用 Windows 桌面版检查和安装更新。</Notice> : settings ? (
+          <>
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              <label className="min-w-0 text-xs font-medium">更新来源
+                <select className={field} value={settings.profileId} disabled={anyBusy}
+                  onChange={e => { const id = e.target.value; void change(() => bridge.select(id, settings.channel)) }}>
+                  {settings.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.official ? "官方" : "非官方 · " + profile.label}</option>)}
+                </select>
+              </label>
+              <label className="min-w-0 text-xs font-medium">发布渠道
+                <select className={field} value={settings.channel} disabled={anyBusy}
+                  onChange={e => { const channel = e.target.value as ReleaseChannel; void change(() => bridge.select(settings.profileId, channel)) }}>
+                  {channels.map(channel => <option key={channel} value={channel}>{channel[0].toUpperCase() + channel.slice(1)}</option>)}
+                </select>
+              </label>
+            </div>
+            {source && !source.official && <Notice tone="warning" alert>
+              <div className="min-w-0 space-y-1 break-all"><p>非官方来源 · {source.label}</p>
+                <p>{source.repositories[settings.channel].panel} / {source.repositories[settings.channel].server}</p>
+                <p className="font-mono">{source.signerFingerprint}</p></div>
+            </Notice>}
+            <p className="text-xs text-muted-foreground">
+              设备身份与签名密钥已由系统在后台自动托管与跟随轮换，无需手动输入或导入任何密钥。
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={inlineButton} disabled={anyBusy} aria-expanded={formOpen} onClick={() => setFormOpen(!formOpen)}>添加非官方来源</button>
+              {source && !source.official && <button type="button" className={inlineButton} disabled={anyBusy}
+                onClick={async () => {
+                  if (await confirm({ title: "移除该非官方来源？", description: "移除后切回官方 Stable，不自动降级。", confirmLabel: "移除来源", tone: "warning" }))
+                    await change(() => bridge.removeProfile(source.id))
+                }}>移除当前来源</button>}
+            </div>
+            {formOpen && <form className="grid gap-3 rounded-xl border border-border p-3" onSubmit={async event => {
+              event.preventDefault()
+              if (!await confirm({ title: "信任非官方签名者？", description: "请从仓库之外核对完整公钥指纹。签名有效不代表该版本由 Nacho 发布。", confirmLabel: "信任该来源", tone: "warning" })) return
+              if (await change(() => bridge.trustProfile(profileText, fingerprintText.trim().toLowerCase()))) {
+                setFormOpen(false); setProfileText(""); setFingerprintText("")
+              }
+            }}>
+              <label className="text-xs">来源配置 JSON
+                <textarea className={cn(field, "font-mono")} rows={3} required maxLength={8192} value={profileText} onChange={e => setProfileText(e.target.value)} />
+              </label>
+              <label className="text-xs">从独立来源核对的 Ed25519 SHA-256 指纹
+                <input className={cn(field, "font-mono")} required maxLength={64} pattern="[0-9A-Fa-f]{64}" autoComplete="off"
+                  value={fingerprintText} onChange={e => setFingerprintText(e.target.value)} />
+              </label>
+              <button type="submit" className={cn(inlineButton, "justify-self-start")} disabled={anyBusy}>核对并保存</button>
+            </form>}
+          </>
+        ) : null}
+      </section>
+      {notice && <Notice tone={notice.error ? "danger" : "info"}>{notice.text}</Notice>}
+      {serverError && <Notice tone="warning">{serverError}</Notice>}
+      {([["面板", panelPart], ["服务端", serverPart]] as const).map(([component, part]) =>
+        part && ["locked", "stale", "error"].includes(part.status) && <Notice key={component} tone="warning">
+          {component}：{part.message ?? (part.status === "stale" ? "显示上次验证的结果；缓存不能用于安装。" : "当前未取得可用的已验证发行。")}
+        </Notice>)}
 
-function Meta({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
-  return (
-    <div className={cn("flex items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 ring-1 ring-border", tone && TONE_BADGE[tone])}>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-mono tabular-nums text-foreground">{value}</dd>
+      <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ComponentCard icon={<Monitor className="size-5" />} title="Windows 面板" subtitle="桌面控制面板"
+          status={releaseStatus(panelPart, panelNew)} current={PANEL_VERSION_LABEL} latest={label(panelEntry)} hasUpdate={panelNew} release={panelEntry}
+          note={panelEntry && panelPart?.release ? (installationSourceNotice(panelPart.release) ?? "安装时面板会退出并重启。") : "尚未取得可用的面板版本。"}
+          progress={panelInstall && panelInstall.phase !== "idle" ? <PanelInstallProgress state={panelInstall} /> : undefined}
+          action={panelBusy ? PANEL_INSTALL_LABELS[panelInstall?.phase || "preparing"] : "下载并安装"} loading={panelBusy}
+          disabled={!panelNew || !selectedMatches || developerPreview || anyBusy} onClick={() => void apply("panel", panelPart?.release)} />
+        <ComponentCard icon={<Server className="size-5" />} title="控制服务端" subtitle={localMode ? "本机部署" : "远程部署"}
+          status={releaseStatus(serverPart, serverNew, !runtime)} current={runtime?.version || "未连接"} latest={label(serverEntry)} hasUpdate={serverNew} release={serverEntry}
+          note={panelRequired ? "该版本需要更新的面板。" : runtime && (needsHost || (!localMode && needsTransport)) ?
+            "远程控制端需先手动迁移到支持 GitHub v5 的升级执行器。" : runtime?.updateStatus?.phase ?
+            "最近一次升级：" + runtime.updateStatus.phase : "安装由控制端验签并执行。"}
+          progress={busy === "server" && progress !== null ? <TransferProgress percent={progress} label="服务端源码传输" /> : undefined}
+          action={busy === "server" ? "正在升级…" : localMode ? "升级本机服务" : "升级远程服务"} loading={busy === "server"}
+          icon2={<ArrowUpCircle className="size-4" />} disabled={!serverNew || !selectedMatches || !runtime || !bridge || developerPreview || anyBusy || panelRequired || needsHost || (!localMode && needsTransport)}
+          onClick={() => void apply("server", serverPart?.release)} />
+        <ComponentCard icon={<HardDriveDownload className="size-5" />} title="Agent 制品" subtitle="与服务端同版本"
+          status={releaseStatus(serverPart, agentNew, !runtime)} current={runtime?.agentArtifactVersion || "无"} currentLabel="已准备" latest={label(agentEntry)}
+          hasUpdate={agentNew} release={agentEntry} note={needsTransport && runtime ? "控制服务端需支持 GitHub v5 制品暂存。" : "准备完成后，仍需在客户端更新页手动下发。"}
+          progress={busy === "agent" && progress !== null ? <TransferProgress percent={progress} label="Agent 制品传输" /> : undefined}
+          action={busy === "agent" ? "正在准备…" : "准备新版制品"} loading={busy === "agent"} disabled={!agentNew || !selectedMatches || !bridge || developerPreview || anyBusy || needsTransport || panelRequired}
+          onClick={() => void apply("agent", serverPart?.release)} footer={<Link href="/clients" className="text-xs text-primary hover:underline">前往客户端更新</Link>} />
+      </div>
     </div>
   )
 }
@@ -621,11 +381,11 @@ function ComponentCard({
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span className="tabular-nums">{size(release.sizeBytes)}</span>
           <span aria-hidden="true" className="size-1 rounded-full bg-muted-foreground/40" />
-          <span className="tabular-nums">发布于 {formatTime(release.publishedAt)}</span>
+          {release.publishedAt && <span className="tabular-nums">发布于 {formatTime(release.publishedAt)}</span>}
         </p>
       )}
 
-      <p className={cn("text-xs leading-relaxed text-pretty", noteTone ? TONE_TEXT[noteTone] : "text-muted-foreground")}>{note}</p>
+      <p className={cn("break-words text-xs leading-relaxed text-pretty", noteTone ? TONE_TEXT[noteTone] : "text-muted-foreground")}>{note}</p>
 
       {(release?.title || release?.notes) && <ReleaseNotesCapsule title={release.title} notes={release.notes} />}
 
@@ -652,177 +412,5 @@ function ComponentCard({
         {footer && <div className="flex justify-center">{footer}</div>}
       </div>
     </section>
-  )
-}
-
-
-function UpdateServerModal({
-  open,
-  currentOrigin,
-  serverOriginText,
-  sourceState,
-  fallbackOrigin,
-  onClose,
-  onSave,
-}: {
-  open: boolean
-  currentOrigin: string
-  serverOriginText: string
-  sourceState: ReturnType<typeof updateSourceState>
-  fallbackOrigin: string
-  onClose: () => void
-  onSave: (origin: string) => Promise<void>
-}) {
-  const [value, setValue] = useState(currentOrigin)
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (open) {
-      setValue(currentOrigin)
-      setError(null)
-      setSaving(false)
-    }
-  }, [open, currentOrigin])
-
-  if (!open) return null
-
-  const isDefault = normalizeUpdateOriginInput(value) === DEFAULT_UPDATE_ORIGIN
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setSaving(true)
-    try {
-      await onSave(value)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "保存更新服务器失败")
-      setSaving(false)
-    }
-  }
-
-  async function handleRestore() {
-    setError(null)
-    setSaving(true)
-    try {
-      await onSave(fallbackOrigin)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "恢复上一个更新源失败")
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="update-server-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in-0"
-    >
-      <div className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95">
-        <h3 id="update-server-modal-title" className="text-lg font-semibold text-foreground">
-          更新服务器设置
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
-          独立更新服务器用于获取双仓签名版本索引及实时发布通知。保存时同时更新面板本地与服务端（服务端 1.2.1 及以上）。
-        </p>
-
-        <dl className="mt-4 flex flex-col gap-1.5 rounded-xl border border-border bg-surface/40 px-3.5 py-3 text-xs">
-          <div className="flex items-start justify-between gap-3">
-            <dt className="shrink-0 text-muted-foreground">面板本地</dt>
-            <dd className="min-w-0 break-all text-right font-mono text-foreground">{currentOrigin}</dd>
-          </div>
-          <div className="flex items-start justify-between gap-3">
-            <dt className="shrink-0 text-muted-foreground">服务端</dt>
-            <dd className="min-w-0 break-all text-right font-mono text-foreground">{serverOriginText}</dd>
-          </div>
-        </dl>
-        {sourceState === "unsupported" && (
-          <p className="mt-2 text-xs text-warning">服务端 1.2.1 起支持面板管理更新源，请先升级服务端；1.1.24 需按部署文档一次性迁移。当前只会保存面板本地。</p>
-        )}
-        {sourceState === "disconnected" && (
-          <p className="mt-2 text-xs text-warning">尚未连接控制服务，保存只会写入面板本地。</p>
-        )}
-
-        <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-4">
-          <div>
-            <div className="flex items-center justify-between">
-              <label htmlFor="update-server-origin" className="text-xs font-medium text-foreground">
-                服务器地址 (HTTPS)
-              </label>
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
-                  isDefault
-                    ? "bg-positive/10 text-positive ring-positive/25"
-                    : "bg-primary/10 text-primary ring-primary/25",
-                )}
-              >
-                {isDefault ? "官方默认" : "自定义"}
-              </span>
-            </div>
-            <input
-              id="update-server-origin"
-              type="url"
-              required
-              value={value}
-              onChange={(e) => {
-                setValue(e.target.value)
-                setError(null)
-              }}
-              placeholder="https://maojiu.cc"
-              className="mt-1.5 w-full rounded-xl border border-border bg-surface px-3.5 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-            />
-          </div>
-
-          {error && <p className="text-xs text-destructive">{error}</p>}
-
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <div className="flex flex-col items-start gap-1">
-              <button
-                type="button"
-                disabled={isDefault || saving}
-                onClick={() => {
-                  setValue(DEFAULT_UPDATE_ORIGIN)
-                  setError(null)
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground"
-              >
-                恢复官方默认
-              </button>
-              {fallbackOrigin && fallbackOrigin !== value.trim() && (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void handleRestore()}
-                  className="text-xs text-primary hover:underline disabled:opacity-40"
-                >
-                  恢复上一个更新源
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={saving}
-                className="h-9 rounded-xl border border-border bg-surface/60 px-4 text-xs font-medium transition-colors hover:bg-surface"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:opacity-60"
-              >
-                {saving && <Loader2 className="size-3 animate-spin" />}
-                保存并检查
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
   )
 }

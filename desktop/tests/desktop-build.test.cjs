@@ -11,6 +11,7 @@ test("staged desktop runtime contains only the panel runtime", () => {
   assert.ok(fs.existsSync(path.join(appDir, "main.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "preload.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "connection-store.cjs")))
+  assert.ok(fs.existsSync(path.join(appDir, "window-resize.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "connection-context.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "credential-protector.cjs")))
   assert.ok(fs.existsSync(path.join(appDir, "ai-process.cjs")))
@@ -48,7 +49,7 @@ test("desktop packaging creates a per-user NSIS installer and keeps the external
   assert.equal(manifest.build.nsis.oneClick, false)
   assert.equal(manifest.build.nsis.perMachine, false)
   assert.equal(manifest.build.nsis.allowToChangeInstallationDirectory, true)
-  assert.deepEqual(manifest.build.extraResources.map((item) => item.to), ["panel", "panel-deps", "opencode"])
+  assert.deepEqual(manifest.build.extraResources.map((item) => item.to), ["panel", "panel-deps", "opencode", "age"])
   assert.equal(manifest.build.files.includes("!opencode/**"), true)
   assert.match(fs.readFileSync(path.join(desktopDir, "scripts", "stage-app.cjs"), "utf8"), /connection-store\.cjs/)
 

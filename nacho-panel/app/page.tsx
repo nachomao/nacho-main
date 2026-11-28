@@ -7,7 +7,7 @@ import { MarketCard } from "@/components/market-card"
 
 export default function Page() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-1 pr-1">
       <PageHeader />
 
       {/* Top row */}

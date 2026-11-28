@@ -17,6 +17,12 @@ interface NachoWindowBridge {
   isMaximized?: () => boolean | Promise<boolean>
   /** 可选：订阅最大化状态变化，返回取消订阅函数 */
   onMaximizedChange?: (cb: (maximized: boolean) => void) => (() => void) | void
+  /** 可选：开始边缘缩放（top/right/bottom/left 组合） */
+  beginResize?: (edges: string[]) => void
+  /** 可选：拖动过程中提交相对位移（DIP） */
+  resizeTo?: (dx: number, dy: number) => void
+  /** 可选：结束边缘缩放 */
+  endResize?: () => void
 }
 
 declare global {
@@ -99,13 +105,13 @@ export function WindowControls() {
 
   // 内部小圆钮：36px 圆形，悬浮浮现圆形高亮，与顶栏图标簇的圆形按钮语言一致
   const innerBtn =
-    "flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 ease-out"
+    "flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 ease-out md:size-9"
 
   return (
     <div
       role="group"
       aria-label="窗口控制"
-      className="ml-1 flex h-12 items-center gap-0.5 rounded-full bg-surface px-1.5"
+      className="flex h-10 shrink-0 items-center gap-0.5 rounded-full bg-surface px-0.5 max-md:[&>button:disabled]:hidden md:ml-1 md:h-12 md:px-1.5"
     >
       <button
         type="button"

@@ -41,14 +41,12 @@ export function ConnectionPanel() {
     } else {
       setServerSource({ mode: "cloud", api, key })
     }
-    window.setTimeout(() => void refresh(), 0)
   }
 
   const useDeployedCloud = (source: { mode: "cloud"; api: string; key: string }) => {
     setCloudApi(source.api)
     setCloudKey(source.key)
     setServerSource(source)
-    window.setTimeout(() => void refresh(), 0)
   }
 
   const showLocalOperations = !serverSource || serverSource.mode === "local"
@@ -164,7 +162,7 @@ export function ConnectionPanel() {
               </button>
               {serverSource?.mode === "cloud" && (
                 <span className="text-xs text-muted-foreground">
-                  状态：{previewSource ? "预览模式" : loading ? "连接中" : error ? "连接失败" : "已连接"}
+                  状态：{previewSource ? "预览模式" : error ? "连接失败" : loading ? "连接中" : "已连接"}
                 </span>
               )}
             </div>
@@ -212,9 +210,7 @@ export function ConnectionPanel() {
             ? "开发者预览模式不连接真实服务端。退出后会重新进入首次引导，用户名、头像与主题偏好保留。"
             : !serverSource
               ? "配置本机部署或云端连接后，面板才会读取真实业务数据。"
-              : loading || refreshing
-                ? "正在验证控制服务连接…"
-                : error || "控制服务连接正常。"}
+              : error || (loading || refreshing ? "正在验证控制服务连接…" : "控制服务连接正常。")}
         </p>
       </section>
     </div>

@@ -1,448 +1,252 @@
-const { verify } = require("node:crypto")
+"use strict"
+
+const { randomUUID } = require("node:crypto")
 const { execFile } = require("node:child_process")
-const fs = require("node:fs")
+const fs = require("node:fs/promises")
 const path = require("node:path")
-const { downloadFile } = require("./github-download.cjs")
-const { startHandoff, waitForHandoff } = require("./update-handoff.cjs")
 const { promisify } = require("node:util")
+const { assetUrl, compareVersions, fingerprint } = require("./release-manifest.cjs")
+const { decryptFileEnvelope } = require("./envelope-crypto.cjs")
+const { createReleaseHttp } = require("./release-http.cjs")
+const { createReleaseChecker } = require("./release-discovery.cjs")
+const { createUpdateSettings } = require("./update-settings.cjs")
+const { createStageClient } = require("./release-stage.cjs")
+const { startHandoff, waitForHandoff } = require("./update-handoff.cjs")
+
 const execFileAsync = promisify(execFile)
+const CHECK_INTERVAL_MS = 30 * 60 * 1000
+const TARGET_DIGEST = /^[a-f0-9]{64}$/
 
-const UPDATE_ORIGIN = process.env.NACHO_UPDATE_ORIGIN || "https://updates.example.invalid"
-const DEFAULT_ORIGIN = (process.env.NACHO_UPDATE_ORIGIN && process.env.NACHO_UPDATE_ORIGIN !== "https://updates.example.invalid")
-  ? process.env.NACHO_UPDATE_ORIGIN
-  : "https://maojiu.cc"
-const INDEX_URL = `${UPDATE_ORIGIN}/updates/index.json`
-const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEA2qjcjfU4N2/nMmD9XkemMqqq6P0K6OVfjAnwlBJDU1g=
------END PUBLIC KEY-----`
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-const FILES = {
-  panel: /^NachoPanel-Setup-\d+\.\d+\.\d+\.exe$/,
-  server: /^control-server-\d+\.\d+\.\d+-linux-x64\.tar\.gz$/,
-  agent: /^nacho-agent-\d+\.\d+\.\d+-win-x64\.exe$/,
-}
-function githubAsset(repo, version, name, asset) {
-  if (!asset || asset.fileName !== name ||
-      asset.url !== `https://github.com/nachomao/${repo}/releases/download/v${version}/${name}` ||
-      !/^[a-f0-9]{64}$/.test(asset.sha256) ||
-      !Number.isSafeInteger(asset.sizeBytes) || asset.sizeBytes < 1 || asset.sizeBytes > 2 * 1024 ** 3) {
-    throw new Error("GitHub 发布制品无效")
-  }
-  return asset
-}
-function normalizeV3(index) {
-  if (Object.keys(index.releases || {}).sort().join(",") !== "panel,server") throw new Error("双仓索引无效")
-  const panel = index.releases.panel, server = index.releases.server
-  for (const item of [panel, server]) {
-    if (!VERSION.test(item?.version) || !/^[a-f0-9]{40}$/.test(item.sourceCommit) ||
-        !item.title?.trim() || !item.notes?.trim() || !Number.isFinite(Date.parse(item.publishedAt))) {
-      throw new Error("双仓发布信息无效")
-    }
-    if (index.schemaVersion === 4 && (typeof item.releaseType !== "string" ||
-        !/^[a-z][a-z0-9-]{0,31}$/.test(item.releaseType))) throw new Error("发布类型无效")
-  }
-  const exe = githubAsset("nacho-main", panel.version, `NachoPanel-Setup-${panel.version}.exe`, panel.asset)
-  const source = githubAsset("nacho-server", server.version,
-    `nacho-server-source-${server.version}.tar.gz`, server.source)
-  const agent = githubAsset("nacho-server", server.version,
-    `nacho-agent-${server.version}-win-x64.exe`, server.agent)
-  for (const key of ["minPanelVersion", "minAgentVersion", "minServerVersion"]) {
-    if (!VERSION.test(server[key])) throw new Error("兼容版本无效")
-  }
-  if (panel.authenticodeThumbprint !== undefined &&
-      !/^[A-F0-9]{40}$/.test(panel.authenticodeThumbprint)) throw new Error("面板签名证书指纹无效")
-  return { ...index, releases: {
-    panel: { ...panel, ...exe },
-    server: { ...server, ...source, source, agent },
-    agent: { ...server, ...agent, minServerVersion: server.minServerVersion },
-  } }
+async function releaseHandoff(script, installer, appPath, parentPid, statusPath) {
+  await waitForHandoff(startHandoff(script, installer, appPath, parentPid, statusPath))
 }
 
-function compareVersions(a, b) {
-  if (!VERSION.test(a) || !VERSION.test(b)) throw new Error("版本格式无效")
-  const left = a.split(".").map(Number), right = b.split(".").map(Number)
-  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1
-  return 0
-}
-
-function verifyIndex(bytes, signature, key = PUBLIC_KEY, channel = "stable") {
-  if (!bytes.length || bytes.length > 32768 || signature.length !== 64 ||
-      !verify(null, bytes, key, signature)) throw new Error("发布索引签名无效")
-  const index = JSON.parse(bytes.toString("utf8"))
-  if (![2, 3, 4].includes(index.schemaVersion) ||
-      (index.schemaVersion === 4 ? index.channel !== undefined : index.channel !== channel) ||
-      !Number.isSafeInteger(index.sequence) || index.sequence < 1 ||
-      !Number.isFinite(Date.parse(index.publishedAt)) || !index.releases) throw new Error("发布索引结构无效")
-  if (index.schemaVersion === 3 || index.schemaVersion === 4) return normalizeV3(index)
-  for (const component of ["panel", "server", "agent"]) {
-    const item = index.releases[component]
-    const expectedName = component === "panel" ? `NachoPanel-Setup-${item?.version}.exe` :
-      component === "server" ? `control-server-${item?.version}-linux-x64.tar.gz` :
-        `nacho-agent-${item?.version}-win-x64.exe`
-    if (!item || !VERSION.test(item.version) || !FILES[component].test(item.fileName) ||
-        item.fileName !== expectedName || !/^[a-f0-9]{64}$/.test(item.sha256) ||
-        !Number.isSafeInteger(item.sizeBytes) || item.sizeBytes < 1 || item.sizeBytes > 2 * 1024 ** 3 ||
-        !Number.isFinite(Date.parse(item.publishedAt)) ||
-        item.url !== `${UPDATE_ORIGIN}/artifacts/${component}/${item.version}/${item.sha256}/${item.fileName}` ||
-        typeof item.title !== "string" || !item.title.trim() ||
-        typeof item.notes !== "string" || !item.notes.trim() ||
-        !/^[a-f0-9]{40}$/.test(item.sourceCommit)) {
-      throw new Error(`${component} 发布信息无效`)
-    }
-    if (item.minPanelVersion && !VERSION.test(item.minPanelVersion)) throw new Error("面板兼容版本无效")
-    if (item.minServerVersion && !VERSION.test(item.minServerVersion)) throw new Error("服务端兼容版本无效")
-    if (component === "server") {
-      const win = item.windows, filename = `control-server-${item.version}-win-x64.zip`
-      if (!win || win.fileName !== filename ||
-          win.url !== `${UPDATE_ORIGIN}/artifacts/server/${item.version}/${win.sha256}/${filename}` ||
-          !/^[a-f0-9]{64}$/.test(win.sha256) || !Number.isSafeInteger(win.sizeBytes) ||
-          win.sizeBytes < 1 || win.sizeBytes > 2 * 1024 ** 3) throw new Error("Windows 服务端发布信息无效")
-    }
-    if (component === "panel" && item.authenticodeThumbprint !== undefined &&
-        !/^[A-F0-9]{40}$/.test(item.authenticodeThumbprint)) {
-      throw new Error("面板签名证书指纹无效")
-    }
-  }
-  return index
-}
-
-async function readRemote(url, max) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(15000), cache: "no-store" })
-  if (response.status === 404) throw new Error("更新服务器尚未提供推荐索引，请先迁移更新服务")
-  if (!response.ok) throw new Error(`版本查询 HTTP ${response.status}`)
-  if (Number(response.headers.get("content-length")) > max || !response.body) throw new Error("发布索引大小无效")
-  const chunks = []
-  let size = 0
-  for await (const chunk of response.body) {
-    size += chunk.length
-    if (size > max) throw new Error("发布索引大小无效")
-    chunks.push(Buffer.from(chunk))
-  }
-  const bytes = Buffer.concat(chunks)
-  if (!bytes.length || bytes.length > max) throw new Error("发布索引大小无效")
-  return { bytes, url: response.url || url }
-}
-
-function createUpdater(app, { publicKey = PUBLIC_KEY, onPanelInstallProgress } = {}) {
-  const cachePath = () => path.join(app.getPath("userData"), "release-index-cache-recommended.json")
-  const originPath = () => path.join(app.getPath("userData"), "update-origin.txt")
-  let lastCheck = 0
+function createUpdater(app, {
+  dataDirectory, safeStorage, http = createReleaseHttp(),
+  platform = process.platform, approveThirdParty = async () => false,
+  applyLocal, onPanelInstallProgress, onCheck, handoff = releaseHandoff,
+  makeStageClient = createStageClient,
+  tufClientFactory = null,
+  settings = createUpdateSettings({ directory: dataDirectory, safeStorage }),
+  checker = createReleaseChecker({
+    directory: path.join(dataDirectory, "updates-v5"),
+    http,
+    getDeviceIdentity: () => settings.getOrCreateDeviceIdentity?.(),
+    tufClientFactory,
+  }),
+} = {}) {
+  const directory = path.join(dataDirectory, "updates-v5")
+  let revision = 0
   let checking = null
+  let lastCheck = null
   let installing = false
-  let notificationController = null
-  let panelInstallState = {
-    revision: 0, phase: "idle", version: null, downloadedBytes: 0, totalBytes: null, error: null,
-  }
-  let lastPanelProgressNotice = 0
-  let panelProgressTimer = null
-
-  function getOrigin() {
-    try {
-      const custom = fs.readFileSync(originPath(), "utf8").trim()
-      if (/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(custom)) return custom
-    } catch {}
-    return DEFAULT_ORIGIN
-  }
-  function setOrigin(origin) {
-    const trimmed = (origin || "").trim().replace(/\/+$/, "")
-    if (!trimmed || trimmed === DEFAULT_ORIGIN) {
-      return resetOrigin()
-    }
-    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(trimmed)) {
-      throw new Error("更新服务器必须为有效的 HTTPS 地址 (如 https://maojiu.cc)")
-    }
-    fs.mkdirSync(path.dirname(originPath()), { recursive: true })
-    fs.writeFileSync(originPath(), trimmed, "utf8")
-    unsubscribe()
-    lastCheck = 0
-    return trimmed
-  }
-  function resetOrigin() {
-    try { fs.unlinkSync(originPath()) } catch {}
-    unsubscribe()
-    lastCheck = 0
-    return DEFAULT_ORIGIN
-  }
+  let panelInstallState = { revision: 0, phase: "idle", version: null, downloadedBytes: 0, totalBytes: null, error: null }
+  let progressTimer = null
+  let lastProgress = 0
 
   function getPanelInstallState() { return { ...panelInstallState } }
-  function sendPanelInstallProgress() {
-    clearTimeout(panelProgressTimer)
-    panelProgressTimer = null
-    lastPanelProgressNotice = Date.now()
+  function sendProgress() {
+    clearTimeout(progressTimer)
+    progressTimer = null
+    lastProgress = Date.now()
     onPanelInstallProgress?.(getPanelInstallState())
   }
-  function reportPanelInstall(patch, immediate = true) {
+  function report(patch, immediate = true) {
     if (Object.entries(patch).every(([key, value]) => panelInstallState[key] === value)) return
     panelInstallState = { ...panelInstallState, ...patch, revision: panelInstallState.revision + 1 }
-    const now = Date.now()
-    if (immediate || now - lastPanelProgressNotice >= 200) {
-      sendPanelInstallProgress()
-    } else if (!panelProgressTimer) {
-      // 网络暂停前最后一块也必须显示；阶段变化会取消此定时发送并立即通知。
-      panelProgressTimer = setTimeout(sendPanelInstallProgress, 200 - (now - lastPanelProgressNotice))
-    }
+    const elapsed = Date.now() - lastProgress
+    if (immediate || elapsed >= 200) sendProgress()
+    else if (!progressTimer) progressTimer = setTimeout(sendProgress, 200 - elapsed)
   }
-
-  function cached() {
-    try {
-      const object = JSON.parse(fs.readFileSync(cachePath(), "utf8"))
-      const index = verifyIndex(Buffer.from(object.bytes, "base64"), Buffer.from(object.signature, "base64"), publicKey)
-      return index.schemaVersion === 4 ? index : null
-    } catch { return null }
-  }
-
-  async function check(force = false) {
-    const origin = getOrigin()
-    if (origin === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
-    if (checking) return checking
-    if (!force && Date.now() - lastCheck < 24 * 60 * 60 * 1000 && cached()) {
-      return { index: cached(), stale: false, currentVersion: app.getVersion() }
-    }
-    checking = (async () => {
-      const previous = cached()
-      try {
-        if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin)) throw new Error("更新服务器 HTTPS 地址无效")
-        const { index, bytes, signature } = await readRecommended(undefined, origin)
-        const componentChanged = previous && ["panel", "server", "agent"].some((key) => {
-          const next = index.releases[key], old = previous.releases[key]
-          return compareVersions(next.version, old.version) < 0 ||
-            (next.version === old.version && (next.sha256 !== old.sha256 || next.sizeBytes !== old.sizeBytes))
-        })
-        if (previous && (index.sequence < previous.sequence ||
-            (index.sequence === previous.sequence && !bytes.equals(Buffer.from(JSON.parse(fs.readFileSync(cachePath(), "utf8")).bytes, "base64"))) ||
-            componentChanged)) {
-          throw new Error("发布索引版本倒退")
-        }
-        fs.mkdirSync(path.dirname(cachePath()), { recursive: true })
-        fs.writeFileSync(`${cachePath()}.tmp`, JSON.stringify({ bytes: bytes.toString("base64"), signature: signature.toString("base64") }))
-        fs.renameSync(`${cachePath()}.tmp`, cachePath())
-        lastCheck = Date.now()
-        return { index, stale: false, currentVersion: app.getVersion() }
-      } catch (error) {
-        lastCheck = 0
-        if (previous && /HTTP|fetch|网络|超时|timed out|abort/i.test(String(error))) {
-          return { index: previous, stale: true, currentVersion: app.getVersion() }
-        }
-        throw error
-      }
-    })().finally(() => { checking = null })
-    return checking
-  }
-  async function readRecommended(sequence, originOverride) {
-    const origin = originOverride || getOrigin()
-    if (origin === "https://updates.example.invalid") throw new Error("请先配置独立更新服务器的 NACHO_UPDATE_ORIGIN")
-    if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(origin) ||
-        (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 1))) throw new Error("推荐索引请求无效")
-    const url = sequence === undefined ? `${origin}/updates/index.json` : `${origin}/updates/revisions/${sequence}/index.json`
-    const remote = await readRemote(url, 32768)
-    const match = /^\/updates\/revisions\/([1-9]\d*)\/index\.json$/.exec(new URL(remote.url).pathname)
-    if (new URL(remote.url).origin !== origin || !match ||
-        (sequence !== undefined && Number(match[1]) !== sequence)) throw new Error("推荐索引固定地址无效")
-    const { bytes: signature } = await readRemote(`${remote.url}.sig`, 128)
-    const index = verifyIndex(remote.bytes, signature, publicKey)
-    if (index.schemaVersion !== 4 || index.sequence !== Number(match[1])) throw new Error("推荐索引序号或协议无效")
-    return { index, bytes: remote.bytes, signature }
-  }
-  function subscribe(onRelease) {
-    const origin = getOrigin()
-    if (notificationController || origin === "https://updates.example.invalid") return
-    notificationController = new AbortController()
-    const signal = notificationController.signal
-    void (async () => {
-      while (!signal.aborted) {
-        try {
-          const response = await fetch(`${origin}/updates/events`, { signal })
-          if (!response.ok || !response.body) throw new Error("更新通知连接失败")
-          let buffer = ""
-          for await (const chunk of response.body) {
-            if (signal.aborted) break
-            buffer += Buffer.from(chunk).toString("utf8")
-            if (buffer.length > 4096) throw new Error("更新通知过长")
-            let end
-            while ((end = buffer.indexOf("\n\n")) !== -1) {
-              const event = buffer.slice(0, end)
-              buffer = buffer.slice(end + 2)
-              const data = event.split("\n").find((line) => line.startsWith("data: "))
-              if (data) {
-                try {
-                  const notice = JSON.parse(data.slice(6))
-                  if (Number.isSafeInteger(notice.sequence) && notice.sequence > 0) {
-                    // Notification is only a hint; check() re-fetches and verifies the signed index.
-                    const checked = await check(true)
-                    if (!checked.stale && checked.index.sequence >= notice.sequence) onRelease(checked)
-                  }
-                } catch { /* 无效通知不能触发升级 */ }
-              }
-            }
-          }
-        } catch { /* 断线后重连并重新核查索引 */ }
-        if (!signal.aborted) {
-          await check(true).then((checked) => { if (!checked.stale) onRelease(checked) }).catch(() => {})
-          await new Promise((resolve) => setTimeout(resolve, 5000))
-        }
-      }
-    })()
-  }
-  function unsubscribe() { notificationController?.abort(); notificationController = null }
-
-  async function installPanel(sequence, version) {
-    if (!Number.isSafeInteger(sequence) || sequence < 1 || !VERSION.test(version)) throw new Error("安装版本参数无效")
+  function assertIdle() {
     if (installing) throw new Error("升级已经在执行")
-    if (process.platform !== "win32" || !app.isPackaged) throw new Error("仅 Windows 已安装面板支持应用内升级")
-    installing = true
-    reportPanelInstall({ phase: "preparing", version, downloadedBytes: 0, totalBytes: null, error: null })
-    try {
-      const { index, stale } = await check(true)
-      if (stale) throw new Error("离线缓存不可用于安装")
-      const pinned = (await readRecommended(sequence)).index
-      const release = pinned.releases.panel
-      if (release.version !== version || index.releases.panel.version !== version ||
-          index.releases.panel.sha256 !== release.sha256) throw new Error("面板推荐版本已变化，请重新检查并确认")
-      if (compareVersions(release.version, app.getVersion()) <= 0) throw new Error("当前面板已经是最新版本")
-      const directory = path.join(app.getPath("userData"), "updates")
-      fs.mkdirSync(directory, { recursive: true })
-      const installer = path.join(directory, release.fileName)
-      reportPanelInstall({ totalBytes: release.sizeBytes })
-      await downloadFile(release.url, installer, { sizeBytes: release.sizeBytes,
-        sha256: release.sha256, timeoutMs: 20 * 60_000, onLog: console.info,
-        onPhase(phase) {
-          if (phase === "connecting") {
-            if (panelInstallState.phase !== "retrying") reportPanelInstall({ phase: "preparing" })
-          } else {
-            reportPanelInstall({ phase,
-              ...(phase === "downloading" || phase === "retrying" ? { downloadedBytes: 0 } : {}) })
-          }
-        },
-        onProgress(downloadedBytes) {
-          reportPanelInstall({ downloadedBytes },
-            downloadedBytes === 0 || downloadedBytes === release.sizeBytes)
-        },
+  }
+  function invalidate() {
+    revision++
+    lastCheck = null
+  }
+  async function check(force = false) {
+    const generation = revision
+    if (checking?.generation === generation) return checking.promise
+    if (!force && lastCheck && Date.now() - lastCheck.at < CHECK_INTERVAL_MS) return lastCheck.result
+    const { profile, channel } = settings.selection()
+    const promise = checker.check(profile, channel).then((checked) => {
+      if (revision !== generation) throw new Error("已切换更新来源或频道")
+      const result = { ...checked, profileId: profile.id, channel, currentVersion: app.getVersion() }
+      // 出错、未授权或缓存展示不阻止用户下次重新检查。
+      if (!Object.values(result.components).some((part) => ["stale", "error", "locked"].includes(part.status))) {
+        lastCheck = { at: Date.now(), result }
+      } else lastCheck = null
+      onCheck?.(result)
+      return result
+    }).finally(() => { if (checking?.promise === promise) checking = null })
+    checking = { generation, promise }
+    return promise
+  }
+
+  function selected(target, component) {
+    const { profile, channel } = settings.selection()
+    if (target?.profileId !== profile.id || target.channel !== channel || target.component !== component ||
+        typeof target.version !== "string" || !TARGET_DIGEST.test(target.digest)) {
+      throw new Error("更新选择已失效，请重新检查并确认")
+    }
+    compareVersions(target.version, target.version)
+    return { profile, channel }
+  }
+  async function confirm(target, component, kind = component) {
+    const { profile, channel } = selected(target, component)
+    if (profile.id !== "official") {
+      const approved = await approveThirdParty({
+        version: target.version, channel, kind, label: profile.label || profile.id,
+        repository: profile.repositories[channel][component], fingerprint: fingerprint(profile.publicKey),
       })
-      reportPanelInstall({ phase: "verifying", downloadedBytes: release.sizeBytes })
-      if (release.authenticodeThumbprint) {
-        const safePath = installer.replaceAll("'", "''")
-        const signatureCheck = `$s=Get-AuthenticodeSignature -LiteralPath '${safePath}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint.ToUpperInvariant() -ne '${release.authenticodeThumbprint}') { exit 5 }`
-        try {
-          await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", signatureCheck],
-            { timeout: 30_000, windowsHide: true })
-        } catch {
-          fs.rmSync(installer, { force: true })
-          throw new Error("安装包发布者签名不匹配")
-        }
+      if (!approved) throw new Error("已取消第三方更新")
+    }
+    return checker.confirm(profile, channel, component, target)
+  }
+  async function workspace(kind) {
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+    const id = randomUUID()
+    const folder = path.join(directory, `${kind}-${id}`)
+    await fs.mkdir(folder, { mode: 0o700 })
+    return { id, folder }
+  }
+  async function cleanup(folder, files) {
+    await Promise.all(files.map((name) => fs.rm(path.join(folder, name), { force: true }).catch(() => {})))
+    await fs.rmdir(folder).catch(() => {})
+  }
+  async function materialize(pinned, asset, folder, progress) {
+    const file = path.join(folder, asset.fileName)
+    const incoming = asset.encrypted ?? asset
+    try {
+      await http.download(assetUrl(pinned.manifest, asset), path.join(folder, incoming.fileName), incoming, progress)
+      if (asset.encrypted) {
+        if (!Buffer.isBuffer(pinned.dek)) throw new Error("本设备尚未获得该受控版本的自动解密密钥")
+        const context = `${pinned.manifest.channel}:${pinned.manifest.component}:${pinned.manifest.version}:${asset.fileName}`
+        await decryptFileEnvelope(path.join(folder, incoming.fileName), file, pinned.dek, context, asset)
       }
-      const script = path.join(directory, "finish-update.ps1")
-      fs.writeFileSync(script, [
+      return file
+    } finally {
+      if (Buffer.isBuffer(pinned.dek)) pinned.dek.fill(0)
+      if (asset.encrypted) await fs.rm(path.join(folder, incoming.fileName), { force: true })
+    }
+  }
+
+  async function installPanel(target) {
+    assertIdle()
+    selected(target, "panel")
+    if (platform !== "win32" || !app.isPackaged) throw new Error("仅 Windows 已安装面板支持应用内升级")
+    if (compareVersions(target.version, app.getVersion()) <= 0) throw new Error("目标版本必须高于已安装面板")
+    installing = true
+    report({ phase: "preparing", version: target.version, downloadedBytes: 0, totalBytes: null, error: null })
+    let folder, asset
+    try {
+      const pinned = await confirm(target, "panel")
+      asset = pinned.manifest.assets.installer
+      ;({ folder } = await workspace("panel"))
+      const downloadSize = (asset.encrypted ?? asset).sizeBytes
+      report({ totalBytes: downloadSize })
+      const installer = await materialize(pinned, asset, folder, {
+        onPhase(phase) {
+          if (phase === "connecting" && panelInstallState.phase === "retrying") return
+          report({ phase, ...(["downloading", "retrying"].includes(phase) ? { downloadedBytes: 0 } : {}) })
+        },
+        onProgress(downloadedBytes) { report({ downloadedBytes }, downloadedBytes === 0 || downloadedBytes === downloadSize) },
+      })
+      report({ phase: "verifying", downloadedBytes: downloadSize })
+      const thumb = pinned.manifest.authenticodeThumbprint
+      if (thumb) {
+        const safePath = installer.replaceAll("'", "''")
+        const verifySignature = `$s=Get-AuthenticodeSignature -LiteralPath '${safePath}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint.ToUpperInvariant() -ne '${thumb}') { exit 5 }`
+        try {
+          await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", verifySignature], { timeout: 30_000, windowsHide: true })
+        } catch { throw new Error("安装包发布者签名不匹配") }
+      }
+      const script = path.join(folder, "finish-update.ps1")
+      const statusPath = path.join(directory, "last-result.txt")
+      await fs.writeFile(script, [
         "param([string]$Installer, [string]$AppPath, [int]$ParentPid, [string]$StatusPath)",
         "$ErrorActionPreference = 'Stop'",
-        "try { Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction Stop } catch { Start-Sleep -Seconds 2 }",
-        "Set-Content -LiteralPath $StatusPath -Value 'started' -Encoding UTF8",
         "try {",
-        "  $process = Start-Process -FilePath $Installer -Verb RunAs -Wait -PassThru",
-        "  if ($process.ExitCode -ne 0) { throw \"安装程序退出码 $($process.ExitCode)\" }",
+        "  Wait-Process -Id $ParentPid -Timeout 60 -ErrorAction SilentlyContinue",
+        "  if (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) { throw 'Panel did not exit' }",
+        `  if ((Get-Item -LiteralPath $Installer).Length -ne ${asset.sizeBytes} -or (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash -ne '${asset.sha256}') { throw 'Installer SHA-256 verification failed' }`,
+        ...(thumb ? [`  $s = Get-AuthenticodeSignature -LiteralPath $Installer; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint -ne '${thumb}') { throw 'Installer signature invalid' }`] : []),
+        "  Set-Content -LiteralPath $StatusPath -Value 'started' -Encoding UTF8",
+        "  $p = Start-Process -FilePath $Installer -Verb RunAs -Wait -PassThru",
+        "  if ($p.ExitCode -ne 0) { throw \"Installer exit code $($p.ExitCode)\" }",
         "  Set-Content -LiteralPath $StatusPath -Value 'installed' -Encoding UTF8",
         "} catch { Set-Content -LiteralPath $StatusPath -Value $_.Exception.Message -Encoding UTF8 }",
+        "Remove-Item -LiteralPath $Installer -Force -ErrorAction SilentlyContinue",
         "Start-Process -FilePath $AppPath",
-      ].join("\r\n"), "utf8")
-      const statusPath = path.join(directory, "last-result.txt")
-      // 交接脚本必须脱离面板生命周期独立存活；Windows 上 detached 启动的 PowerShell
-      // 会立刻退出且不执行脚本，因此由 update-handoff 用 cmd /c start /b 承载。
-      const handoff = startHandoff(script, installer, app.getPath("exe"), process.pid, statusPath)
-      // 承载进程创建失败时仍留在面板展示错误并允许重试。
-      await waitForHandoff(handoff)
-      reportPanelInstall({ phase: "installing" })
-      setTimeout(() => app.quit(), 300)
-      return { phase: "installing", version: release.version }
+      ].join("\r\n"), { flag: "wx", mode: 0o600 })
+      await handoff(script, installer, app.getPath("exe"), process.pid, statusPath)
+      report({ phase: "installing" })
+      setTimeout(() => app.quit(), 300).unref()
+      return { phase: "installing", version: target.version }
     } catch (error) {
-      reportPanelInstall({ phase: "failed", error: error instanceof Error ? error.message : "面板安装失败" })
+      if (folder) await cleanup(folder, [asset.fileName, "finish-update.ps1"])
+      report({ phase: "failed", error: error instanceof Error ? error.message : "面板安装失败" })
       installing = false
       throw error
     }
   }
-  async function transferRelease(kind, serverUrl, apiKey, sequence, version, onProgress) {
-    if (!["server", "agent"].includes(kind) || typeof serverUrl !== "string" ||
-        !/^https?:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(serverUrl) ||
-        typeof apiKey !== "string" || !apiKey || installing ||
-        !Number.isSafeInteger(sequence) || sequence < 1 || !VERSION.test(version)) throw new Error("更新传输请求无效")
+
+  async function installLocalServer(target) {
+    assertIdle()
+    selected(target, "server")
+    if (platform !== "win32" || !applyLocal) throw new Error("本机升级需要 Windows 桌面面板")
     installing = true
+    let folder, asset
     try {
-      const { index } = await readRecommended(sequence)
-      const release = index.releases.server
-      if (release.version !== version) throw new Error("传输版本与已确认的发布不一致")
-      const asset = kind === "server" ? release.source : release.agent
-      const directory = path.join(app.getPath("userData"), "updates")
-      fs.mkdirSync(directory, { recursive: true })
-      const local = path.join(directory, asset.fileName)
-      await downloadFile(asset.url, local, { sizeBytes: asset.sizeBytes,
-        sha256: asset.sha256, timeoutMs: 20 * 60_000, onLog: console.info })
-      const headers = { Authorization: `Bearer ${apiKey}`,
-        "X-Nacho-Panel-Version": app.getVersion(), Accept: "application/json" }
-      async function api(relative, init = {}) {
-        const result = await fetch(`${serverUrl}/api/panel${relative}`, {
-          ...init, headers: { ...headers, ...init.headers }, signal: AbortSignal.timeout(60_000),
-        })
-        const body = await result.json()
-        if (!result.ok || !body.ok) throw new Error(body.message || `传输失败 HTTP ${result.status}`)
-        return body.data
-      }
-      const checkpoint = path.join(directory, `upload-${kind}-${release.version}.json`)
-      let stage = null
-      try {
-        const saved = JSON.parse(fs.readFileSync(checkpoint, "utf8"))
-        if (saved.serverUrl === serverUrl && saved.sha256 === asset.sha256) {
-          const candidate = await api(`/product-updates/stages/${saved.id}`)
-          if (candidate.phase === "uploading" && candidate.feed === "recommended" &&
-              candidate.sequence === index.sequence && candidate.version === release.version &&
-              candidate.sha256 === asset.sha256 && candidate.sizeBytes === asset.sizeBytes) stage = candidate
-        }
-      } catch { /* 中断前未创建会话 */ }
-      if (!stage) {
-        stage = await api("/product-updates/stages", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kind, version: release.version, sequence: index.sequence }) })
-        fs.writeFileSync(checkpoint, JSON.stringify({ id: stage.id, serverUrl, sha256: asset.sha256 }), {
-          mode: 0o600,
-        })
-      }
-      const handle = fs.openSync(local, "r")
-      try {
-        let offset = stage.offset
-        while (offset < asset.sizeBytes) {
-          const size = Math.min(4 * 1024 * 1024, asset.sizeBytes - offset)
-          const buffer = Buffer.allocUnsafe(size)
-          fs.readSync(handle, buffer, 0, size, offset)
-          try {
-            const next = await api(`/product-updates/stages/${stage.id}/chunks?offset=${offset}`, {
-              method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: buffer,
-            })
-            offset = next.offset
-          } catch (error) {
-            const latest = await api(`/product-updates/stages/${stage.id}`)
-            if (latest.offset === offset) throw error
-            offset = latest.offset
-          }
-          if (onProgress) onProgress(Math.round(offset * 100 / asset.sizeBytes))
-        }
-      } finally { fs.closeSync(handle) }
-      const result = await api(`/product-updates/stages/${stage.id}/commit`, { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ panelVersion: app.getVersion() }) })
-      fs.rmSync(checkpoint, { force: true })
-      return result
-    } finally { installing = false }
+      const pinned = await confirm(target, "server")
+      if (compareVersions(app.getVersion(), pinned.manifest.compatibility.minPanelVersion) < 0) throw new Error("请先升级面板")
+      asset = pinned.manifest.assets.source
+      const local = await workspace("local-server")
+      folder = local.folder
+      await materialize(pinned, asset, folder)
+      await fs.writeFile(path.join(folder, "receipt.json"), JSON.stringify({ target, proof: pinned.proof }), { flag: "wx", mode: 0o600 })
+      return await applyLocal(local.id)
+    } finally {
+      if (folder) await cleanup(folder, [asset.fileName, "receipt.json"])
+      installing = false
+    }
   }
 
+  async function transferRelease(kind, serverUrl, apiKey, target, onProgress) {
+    assertIdle()
+    if (!["server", "agent"].includes(kind)) throw new Error("更新传输组件无效")
+    selected(target, "server")
+    installing = true
+    let folder, asset
+    try {
+      const pinned = await confirm(target, "server", kind)
+      asset = pinned.manifest.assets[kind === "server" ? "source" : "agent"]
+      const client = makeStageClient({ serverUrl, apiKey, panelVersion: app.getVersion(), directory })
+      const data = { kind, ...pinned, asset, onProgress }
+      await client.checkCompatibility(data)
+      ;({ folder } = await workspace(kind))
+      const file = await materialize(pinned, asset, folder)
+      return await client.upload({ ...data, file })
+    } finally {
+      if (folder) await cleanup(folder, [asset.fileName])
+      installing = false
+    }
+  }
+
+  async function mutate(action, ...args) {
+    assertIdle()
+    const value = await settings[action](...args)
+    invalidate()
+    return value
+  }
   return {
-    check,
-    cached,
-    installPanel,
-    getPanelInstallState,
-    transferRelease,
-    subscribe,
-    unsubscribe,
-    getOrigin,
-    setOrigin,
-    resetOrigin,
+    check, installPanel, getPanelInstallState, installLocalServer, transferRelease,
+    readSettings: settings.read,
+    select: (...args) => mutate("select", ...args),
+    trustProfile: (...args) => mutate("trustProfile", ...args),
+    removeProfile: (...args) => mutate("removeProfile", ...args),
   }
 }
 
-module.exports = { createUpdater, verifyIndex, compareVersions, INDEX_URL }
+module.exports = { createUpdater, CHECK_INTERVAL_MS }

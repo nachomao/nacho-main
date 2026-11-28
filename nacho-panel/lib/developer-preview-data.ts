@@ -218,6 +218,7 @@ export type DeveloperPreviewStore = {
   installRevisions: PreviewInstallProfileRevision[]
   runtimeInfo: PreviewRuntimeInfo
   agentRelease: PreviewAgentRelease
+  agentUpdateRuns: Record<string, { startedAt: number }>
   counters: { client: number; task: number; plugin: number }
 }
 
@@ -732,6 +733,7 @@ export function createDeveloperPreviewStore(now = Date.now()): DeveloperPreviewS
     installRevisions: createInstallRevisions(now),
     runtimeInfo: createRuntimeInfo(),
     agentRelease: release,
+    agentUpdateRuns: {},
     counters: { client: clients.length, task: 3, plugin: 4 },
   }
 }
@@ -764,21 +766,75 @@ export function developerPreviewOverview(store: DeveloperPreviewStore, now = Dat
   }
 }
 
+/** 预览升级的时间线：下载 3s、校验 1.5s、替换 2s，之后健康。 */
+function previewUpdatePhase(startedAt: number, now: number) {
+  const elapsed = Math.max(0, now - startedAt)
+  if (elapsed < 3_000) return "downloading"
+  if (elapsed < 4_500) return "verified"
+  if (elapsed < 6_500) return "applying"
+  return "healthy"
+}
+
 /** 与 `AgentUpdates` 类型一致：客户端更新页使用当前预览客户端生成。 */
-export function developerPreviewAgentUpdates(store: DeveloperPreviewStore): PreviewAgentUpdates {
+export function developerPreviewAgentUpdates(store: DeveloperPreviewStore, now = Date.now()): PreviewAgentUpdates {
+  const release = store.agentRelease
   return {
-    release: store.agentRelease,
-    clients: store.clients.map((client) => ({
-      ...client,
-      currentVersion: client.version,
-      targetVersion: store.agentRelease.version,
-      command: null,
-      phase: null,
-      skipReason: client.os !== "Windows"
-        ? "not-windows"
-        : client.version === store.agentRelease.version
-          ? "already-current"
-          : null,
-    })),
+    release,
+    clients: store.clients.map((client) => {
+      const run = store.agentUpdateRuns[client.id]
+      const phase = run ? previewUpdatePhase(run.startedAt, now) : null
+      const currentVersion = phase === "healthy" ? release.version : client.version
+      return {
+        ...client,
+        currentVersion,
+        targetVersion: release.version,
+        command: null,
+        phase,
+        skipReason: client.os !== "Windows"
+          ? "not-windows"
+          : phase && phase !== "healthy"
+            ? "active-update"
+            : currentVersion === release.version
+              ? "already-current"
+              : null,
+      }
+    }),
   }
+}
+
+/** 预览模式的立即升级：写入内存时间线，后续读取按经过时间推进阶段。 */
+export function developerPreviewQueueAgentUpdates(
+  store: DeveloperPreviewStore,
+  scope: "all" | "clients",
+  clientIds: string[],
+  now = Date.now(),
+) {
+  const requested = scope === "clients"
+    ? clientIds
+        .map((id) => store.clients.find((client) => client.id === id))
+        .filter((client): client is PreviewClient => Boolean(client))
+    : store.clients
+  const queued: Array<{ id: string; status: "pending"; result: null }> = []
+  const skipped: Array<{ clientId: string; reason: string }> = []
+
+  for (const client of requested) {
+    if (client.os !== "Windows") {
+      skipped.push({ clientId: client.id, reason: "not-windows" })
+      continue
+    }
+    const run = store.agentUpdateRuns[client.id]
+    const phase = run ? previewUpdatePhase(run.startedAt, now) : null
+    if (client.version === store.agentRelease.version || phase === "healthy") {
+      skipped.push({ clientId: client.id, reason: "already-current" })
+      continue
+    }
+    if (phase) {
+      skipped.push({ clientId: client.id, reason: "active-update" })
+      continue
+    }
+    store.agentUpdateRuns[client.id] = { startedAt: now }
+    queued.push({ id: `preview-update-${client.id}-${now}`, status: "pending", result: null })
+  }
+
+  return { release: store.agentRelease, queued, skipped }
 }

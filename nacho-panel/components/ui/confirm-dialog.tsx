@@ -3,9 +3,11 @@
 import { isReducedMotion } from "@/lib/motion-preference"
 
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { AlertTriangle, Info, ShieldAlert, X } from "lucide-react"
+import { MorphPopover } from "@/components/ai-mode/morph-popover"
+import { centerInViewport } from "@/lib/morph-geometry"
 import { cn } from "@/lib/utils"
 
 /* ==================== 类型 ====================
@@ -14,7 +16,9 @@ import { cn } from "@/lib/utils"
  *
  * 传入 origin（触发按钮）时启用「卡片翻转」形态：
  * 触发按钮所在的卡片绕竖轴翻转，正面转出、弹层作为背面转入，
- * 关闭时原路翻回。未传 origin 时回退为屏幕居中弹层。
+ * 关闭时原路翻回。
+ * presentation="morph" 时改为从按钮原位形变到自然尺寸的对话框，
+ * 像 iOS App 打开一样展开，关闭时收回按钮。未传 origin 时回退为屏幕居中弹层。
  */
 
 export type ConfirmTone = "default" | "warning" | "danger"
@@ -34,6 +38,13 @@ export type ConfirmOptions = {
    * 卡片内就地展开；找不到卡片时自动回退为居中弹层。
    */
   origin?: HTMLElement | null
+  /**
+   * 展开形态：默认 flip（卡片翻转）；morph 从触发元素形变到弹窗自然尺寸，
+   * 用于按钮像 iOS App 一样展开成对话框。
+   */
+  presentation?: "flip" | "morph"
+  /** morph 起始时贴合触发按钮的外观，让按钮到窗口的形变保持连续。 */
+  morphFace?: ReactNode
 }
 
 export type PromptOptions = ConfirmOptions & {
@@ -203,11 +214,14 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
   const [pending, setPending] = useState<Pending | null>(null)
   const [geometry, setGeometry] = useState<Geometry | null>(null)
   const [centeredClosing, setCenteredClosing] = useState(false)
+  const [morphOpen, setMorphOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [value, setValue] = useState("")
 
   const surfaceRef = useRef<HTMLElement | null>(null)
   const originRef = useRef<HTMLElement | null>(null)
+  const morphOriginRef = useRef<HTMLElement | null>(null)
+  const morphOriginHidden = useRef<{ el: HTMLElement; visibility: string } | null>(null)
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -226,6 +240,14 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
     animations.current = []
   }, [])
 
+  /** morph 期间真实按钮由弹层内的 face 代替，收尾或中断时恢复。 */
+  const restoreMorphOrigin = useCallback(() => {
+    const hidden = morphOriginHidden.current
+    if (!hidden) return
+    hidden.el.style.visibility = hidden.visibility
+    morphOriginHidden.current = null
+  }, [])
+
   const play = useCallback(
     (el: HTMLElement, keyframes: Keyframe[], timing: KeyframeAnimationOptions) => {
       const animation = el.animate(keyframes, { fill: "both", ...timing })
@@ -241,23 +263,27 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       animations.current.forEach((animation) => animation.cancel())
       if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
       if (surfaceRef.current) releaseSurface(surfaceRef.current)
+      restoreMorphOrigin()
     }
-  }, [])
+  }, [restoreMorphOrigin])
 
   const finish = useCallback(() => {
     stopAnimations()
     if (surfaceRef.current) releaseSurface(surfaceRef.current)
+    restoreMorphOrigin()
     surfaceRef.current = null
     originRef.current = null
+    morphOriginRef.current = null
     openedFor.current = null
     closingRef.current = false
+    setMorphOpen(false)
     setPending(null)
     setGeometry(null)
     setCenteredClosing(false)
     setValue("")
     restoreFocus.current?.focus?.()
     restoreFocus.current = null
-  }, [stopAnimations])
+  }, [restoreMorphOrigin, stopAnimations])
 
   const settle = useCallback(
     (accepted: boolean) => {
@@ -267,6 +293,11 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
 
       if (current.kind === "confirm") current.resolve(accepted)
       else current.resolve(accepted ? inputRef.current?.value ?? "" : null)
+
+      if (current.options.presentation === "morph") {
+        setMorphOpen(false)
+        return
+      }
 
       const surface = surfaceRef.current
       const dialog = dialogRef.current
@@ -313,15 +344,28 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       stopAnimations()
       if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
       if (surfaceRef.current) releaseSurface(surfaceRef.current)
+      restoreMorphOrigin()
 
       closingRef.current = false
       openedFor.current = null
       restoreFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
       setValue(initialValue)
       setCenteredClosing(false)
+      setMorphOpen(false)
+      morphOriginRef.current = null
 
       const origin = next.options.origin ?? null
       const surface = origin?.closest<HTMLElement>("[data-confirm-surface]") ?? null
+
+      if (next.options.presentation === "morph" && origin) {
+        surfaceRef.current = null
+        originRef.current = origin
+        morphOriginRef.current = origin
+        setGeometry(null)
+        setMorphOpen(true)
+        setPending(next)
+        return
+      }
 
       if (!origin || !surface) {
         surfaceRef.current = null
@@ -344,7 +388,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       setGeometry(measure(surface, origin))
       setPending(next)
     },
-    [stopAnimations],
+    [restoreMorphOrigin, stopAnimations],
   )
 
   /* 展开：等弹层节点就位后一次性排好三段重叠动画 */
@@ -420,7 +464,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
   }, [pending, geometry])
 
   useEffect(() => {
-    if (!pending) return
+    if (!pending || pending.options.presentation === "morph") return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return
       event.preventDefault()
@@ -429,6 +473,26 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [pending, settle])
+
+  /* morph 由弹出层自己处理 Esc；展开落位后再把焦点交给确认按钮 */
+  useEffect(() => {
+    if (!morphOpen || !pending) return
+    const timer = window.setTimeout(() => {
+      const target = pending.kind === "prompt" ? inputRef.current : confirmRef.current
+      target?.focus({ preventScroll: true })
+    }, 480)
+    return () => window.clearTimeout(timer)
+  }, [morphOpen, pending])
+
+  /* 真实按钮由弹层里的 face 接手，避免按钮留在原地与形变卡片同时可见 */
+  useEffect(() => {
+    if (!morphOpen || !morphOriginRef.current) return
+    const origin = morphOriginRef.current
+    if (morphOriginHidden.current?.el === origin) return
+    restoreMorphOrigin()
+    morphOriginHidden.current = { el: origin, visibility: origin.style.visibility }
+    origin.style.visibility = "hidden"
+  }, [morphOpen, restoreMorphOrigin])
 
   const api = useMemo<ConfirmApi>(
     () => ({
@@ -497,6 +561,71 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
       >
         {options.confirmLabel ?? "确认"}
       </button>
+    </>
+  )
+
+  /** 居中弹层与 morph 弹窗共用的完整内容，保证两种形态视觉一致。 */
+  const dialogSurface = (
+    <>
+      <header className="flex items-start gap-3 px-5 pt-5 sm:px-6 sm:pt-6">
+        <span
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
+            tone.ring,
+            tone.text,
+          )}
+        >
+          <ToneIcon size={20} aria-hidden />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h2
+            id="confirm-dialog-title"
+            className="text-pretty text-base font-semibold leading-6 text-card-foreground"
+          >
+            {options.title}
+          </h2>
+          {options.description ? (
+            <p className="text-pretty text-sm leading-relaxed text-muted-foreground">{options.description}</p>
+          ) : null}
+        </div>
+        <button
+          onClick={() => settle(false)}
+          aria-label="关闭"
+          className="-mr-1 -mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground"
+        >
+          <X size={16} aria-hidden />
+        </button>
+      </header>
+
+      {rows.length > 0 || notes.length > 0 || promptField ? (
+        <div className="flex flex-col gap-3 px-5 pt-4 sm:px-6">
+          {rows.length > 0 ? (
+            <dl className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl bg-surface/60">
+              {rows.map((row) => (
+                <div
+                  key={`${row.label}-${row.value}`}
+                  className="flex items-baseline justify-between gap-4 px-3.5 py-2.5"
+                >
+                  <dt className="shrink-0 text-xs font-medium text-muted-foreground">{row.label}</dt>
+                  <dd className="min-w-0 break-all text-right font-mono text-xs leading-5 text-card-foreground">
+                    {row.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          {notes.map((note) => (
+            <p key={note} className="text-pretty text-xs leading-5 text-muted-foreground">
+              {note}
+            </p>
+          ))}
+          {promptField}
+        </div>
+      ) : null}
+
+      <footer className="mt-5 flex items-center justify-end gap-2 border-t border-border px-5 py-4 sm:px-6">
+        {actions(false)}
+      </footer>
     </>
   )
 
@@ -610,6 +739,35 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
     )
   }
 
+  /* ---------- iOS 式形变形态：按钮展开成自然尺寸的对话框 ---------- */
+  if (pending.options.presentation === "morph") {
+    return (
+      <ConfirmContext.Provider value={api}>
+        {children}
+        <MorphPopover
+          open={morphOpen}
+          getAnchor={() => morphOriginRef.current}
+          onRequestClose={() => settle(false)}
+          onClosed={finish}
+          width={512}
+          place={(size, _anchor, viewport) => centerInViewport(size, viewport)}
+          fromRadius={999}
+          toRadius={24}
+          face={options.morphFace}
+          backdrop="blur"
+          modal
+          closeLabel={options.cancelLabel ?? "取消"}
+          labelledBy="confirm-dialog-title"
+          className="text-foreground"
+          fromSkinClassName="bg-primary"
+          toSkinClassName="bg-card ring-1 ring-border"
+        >
+          <div className="flex w-full flex-col">{dialogSurface}</div>
+        </MorphPopover>
+      </ConfirmContext.Provider>
+    )
+  }
+
   /* ---------- 回退形态：屏幕居中弹层 ---------- */
   return (
     <ConfirmContext.Provider value={api}>
@@ -635,65 +793,7 @@ export function ConfirmDialogProvider({ children }: { children: React.ReactNode 
               centeredClosing ? "animate-dropdown-out" : "animate-dropdown-in",
             )}
           >
-            <header className="flex items-start gap-3 px-5 pt-5 sm:px-6 sm:pt-6">
-              <span
-                className={cn(
-                  "flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
-                  tone.ring,
-                  tone.text,
-                )}
-              >
-                <ToneIcon size={20} aria-hidden />
-              </span>
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <h2
-                  id="confirm-dialog-title"
-                  className="text-pretty text-base font-semibold leading-6 text-card-foreground"
-                >
-                  {options.title}
-                </h2>
-                {options.description ? (
-                  <p className="text-pretty text-sm leading-relaxed text-muted-foreground">{options.description}</p>
-                ) : null}
-              </div>
-              <button
-                onClick={() => settle(false)}
-                aria-label="关闭"
-                className="-mr-1 -mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/60 hover:text-card-foreground"
-              >
-                <X size={16} aria-hidden />
-              </button>
-            </header>
-
-            {rows.length > 0 || notes.length > 0 || promptField ? (
-              <div className="flex flex-col gap-3 px-5 pt-4 sm:px-6">
-                {rows.length > 0 ? (
-                  <dl className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl bg-surface/60">
-                    {rows.map((row) => (
-                      <div
-                        key={`${row.label}-${row.value}`}
-                        className="flex items-baseline justify-between gap-4 px-3.5 py-2.5"
-                      >
-                        <dt className="shrink-0 text-xs font-medium text-muted-foreground">{row.label}</dt>
-                        <dd className="min-w-0 break-all text-right font-mono text-xs leading-5 text-card-foreground">
-                          {row.value}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : null}
-                {notes.map((note) => (
-                  <p key={note} className="text-pretty text-xs leading-5 text-muted-foreground">
-                    {note}
-                  </p>
-                ))}
-                {promptField}
-              </div>
-            ) : null}
-
-            <footer className="mt-5 flex items-center justify-end gap-2 border-t border-border px-5 py-4 sm:px-6">
-              {actions(false)}
-            </footer>
+            {dialogSurface}
           </div>
         </div>,
         document.body,

@@ -5,7 +5,7 @@ import { constants } from "node:fs"
 import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { fetchSignedProductIndex } from "./signed-product-index"
+import { copyVerifiedLocalAsset, readLocalRelease } from "./local-release-proof"
 import { cloneGitHub, downloadFile, fetchGitHubJson } from "../../desktop/src/github-download.cjs"
 import { promisify } from "node:util"
 import {
@@ -485,9 +485,11 @@ export async function runExecutable(
   completion: "close" | "exit" = "close",
 ) {
   try {
+    const { NACHO_LOCAL_UPDATE_TOKEN: _internalUpdateToken, ...env } = process.env
     if (!onProgress && completion === "close") {
       return await execFileAsync(file, args, {
         cwd,
+        env,
         timeout,
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
@@ -496,7 +498,7 @@ export async function runExecutable(
 
     reportProgress(onProgress, "command", `$ ${formatExecutableCommand(file, args)}\n`)
     return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(file, args, { cwd, windowsHide: true })
+      const child = spawn(file, args, { cwd, env, windowsHide: true })
       let stdout = ""
       let stderr = ""
       let outputBytes = 0
@@ -1005,27 +1007,13 @@ export function repairLocalControlServer() {
 }
 
 /** Windows 本机服务安装已确认的签名发布；源码在暂存目录构建并验证。 */
-export function updateLocalControlServer(version: string, panelVersion: string, sequence: number) {
+export function updateLocalControlServer(leaseId: string) {
   return withMutationLock(async () => {
+    const release = await readLocalRelease(leaseId)
+    const { version, minAgentVersion, compareVersions } = release
     const status = await getLocalControlServerStatus()
     requireWindows(status)
     if (!status.installed) throw new LocalControlServerError("本机服务尚未安装", 409)
-    const latest = await fetchSignedProductIndex()
-    const index = await fetchSignedProductIndex(sequence)
-    const target = index.releases.server
-    if (latest.releases.server.version !== version || latest.releases.server.sha256 !== target.sha256) {
-      throw new LocalControlServerError("服务端推荐版本已变化，请重新检查并确认", 409)
-    }
-    const strict = /^\d+\.\d+\.\d+$/
-    if (!strict.test(version) || version !== target.version) throw new LocalControlServerError("目标不是已签名的服务端发布", 409)
-    const compare = (a: string, b: string) => {
-      const left = a.split(".").map(Number), right = b.split(".").map(Number)
-      for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1
-      return 0
-    }
-    if (!strict.test(panelVersion) || compare(panelVersion, target.minPanelVersion) < 0) {
-      throw new LocalControlServerError("请先升级面板", 409)
-    }
     if (!status.connection) throw new LocalControlServerError("无法验证本机服务连接", 409)
     const clientsResponse = await fetch(`${status.connection.api}/api/panel/clients`, {
       headers: { Authorization: `Bearer ${status.connection.key}` },
@@ -1039,16 +1027,18 @@ export function updateLocalControlServer(version: string, panelVersion: string, 
     if (!clientsEnvelope.ok || !Array.isArray(clientsEnvelope.data)) {
       throw new LocalControlServerError("无法验证现有 Agent 兼容性", 409)
     }
-    const incompatible = clientsEnvelope.data.filter((client) => client.os === "Windows" && client.status !== "unregistered" &&
-      (!strict.test(client.version) || compare(client.version, target.minAgentVersion) < 0))
+    const incompatible = clientsEnvelope.data.filter((client) => {
+      if (client.os !== "Windows" || client.status === "unregistered") return false
+      try { return compareVersions(client.version, minAgentVersion) < 0 } catch { return true }
+    })
     if (incompatible.length) throw new LocalControlServerError(`有 ${incompatible.length} 台 Agent 不兼容目标服务端，请先手动升级`, 409)
     const serverDir = status.serverDir
     const current = JSON.parse(await readFile(path.join(serverDir, "package.json"), "utf8")) as { version: string }
-    if (!strict.test(current.version) || compare(current.version, version) >= 0) {
+    if (compareVersions(current.version, version) >= 0) {
       throw new LocalControlServerError("目标版本必须高于当前本机服务", 409)
     }
     const temporary = `${serverDir}.release-${randomUUID()}`
-    const archive = `${temporary}.zip`
+    const archive = `${temporary}.tar.gz`
     const backup = path.join(serverDir, `.nacho-update-backup-${randomUUID()}`)
     const items = ["dist", "node_modules", "package.json", "package-lock.json", "deploy"]
     const values = await readEnvironment(serverDir)
@@ -1057,35 +1047,27 @@ export function updateLocalControlServer(version: string, panelVersion: string, 
     const databaseFiles = [database, `${database}-wal`, `${database}-shm`]
     let stopped = false
     let backedUp = false
-    let switched = false
+    const movedPrevious = new Set<string>()
+    const installedItems = new Set<string>()
     try {
       await mkdir(temporary, { recursive: true })
-      const sourceAsset = index.schemaVersion >= 3 ? target.source : target.windows
-      if (!sourceAsset) throw new LocalControlServerError("服务端发布缺少源码制品", 502)
-      await downloadFile(sourceAsset.url, archive, {
-        sizeBytes: sourceAsset.sizeBytes, sha256: sourceAsset.sha256, timeoutMs: 15 * 60_000,
-        onLog: (line) => console.info(line),
-      })
+      await copyVerifiedLocalAsset(release, archive)
       const entries = (await runExecutable("tar", ["-tf", archive], path.dirname(serverDir), 60_000)).stdout
       if (entries.split(/\r?\n/).filter(Boolean).some((entry) => {
         const name = entry.replaceAll("\\", "/")
-        return name.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(name) ||
-          !(index.schemaVersion >= 3
-            ? /^(src|deploy|client|package\.json|package-lock\.json|tsconfig\.json)(\/|$)/.test(name)
-            : /^(dist|node_modules|package\.json|package-lock\.json|deploy)(\/|$)/.test(name))
+        return name.startsWith("/") || name.includes(":") || /(^|\/)\.\.(\/|$)/.test(name) ||
+          !/^(src|deploy|client|package\.json|package-lock\.json|tsconfig\.json)(\/|$)/.test(name)
       })) throw new LocalControlServerError("Windows 发布包包含无效路径", 502)
       const types = (await runExecutable("tar", ["-tvf", archive], path.dirname(serverDir), 60_000)).stdout
       if (types.split(/\r?\n/).filter(Boolean).some((line) => !["-", "d"].includes(line[0]))) {
         throw new LocalControlServerError("发布包包含链接或特殊文件", 502)
       }
       await runExecutable("tar", ["-xf", archive, "-C", temporary], path.dirname(serverDir), 5 * 60_000)
-      if (index.schemaVersion >= 3) {
-        await runNpm(["ci", "--no-audit", "--no-fund"], temporary, 10 * 60_000)
-        await runNpm(["run", "build"], temporary, 10 * 60_000)
-        await rm(path.join(temporary, "node_modules"), { recursive: true, force: true })
-        await runNpm(["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
-          temporary, 10 * 60_000)
-      }
+      await runNpm(["ci", "--ignore-scripts", "--no-audit", "--no-fund"], temporary, 10 * 60_000)
+      await runNpm(["run", "build"], temporary, 10 * 60_000)
+      await rm(path.join(temporary, "node_modules"), { recursive: true, force: true })
+      await runNpm(["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+        temporary, 10 * 60_000)
       const manifest = JSON.parse(await readFile(path.join(temporary, "package.json"), "utf8")) as { name: string; version: string }
       if (manifest.name !== "nacho-server" || manifest.version !== version ||
           !(await exists(path.join(temporary, "dist", "index.js"))) ||
@@ -1105,9 +1087,12 @@ export function updateLocalControlServer(version: string, panelVersion: string, 
       backedUp = true
       for (const item of items) {
         const oldFile = path.join(serverDir, item)
-        if (await exists(oldFile)) await rename(oldFile, path.join(backup, item))
-        switched = true
+        if (await exists(oldFile)) {
+          await rename(oldFile, path.join(backup, item))
+          movedPrevious.add(item)
+        }
         await rename(path.join(temporary, item), oldFile)
+        installedItems.add(item)
       }
       if (wasRunning) await startUnlocked(serverDir, values)
       const installed = JSON.parse(await readFile(path.join(serverDir, "package.json"), "utf8")) as { version: string }
@@ -1115,12 +1100,12 @@ export function updateLocalControlServer(version: string, panelVersion: string, 
       await rm(backup, { recursive: true, force: true })
       return getLocalControlServerStatus()
     } catch (error) {
-      if (switched) {
+      if (movedPrevious.size || installedItems.size) {
         if (wasRunning) await stopUnlocked(serverDir, values).catch(() => undefined)
         for (const item of items) {
           const oldFile = path.join(backup, item)
-          if (await exists(oldFile)) {
-            await rm(path.join(serverDir, item), { recursive: true, force: true })
+          if (installedItems.has(item)) await rm(path.join(serverDir, item), { recursive: true, force: true })
+          if (movedPrevious.has(item)) {
             await rename(oldFile, path.join(serverDir, item))
           }
         }

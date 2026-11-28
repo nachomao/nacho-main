@@ -15,6 +15,7 @@ export type GeneralSettings = {
 
 export type EmailSettings = {
   enabled: boolean
+  mode: "smtp" | "gmail" | "outlook"
   host: string
   port: number
   encryption: "none" | "ssl" | "tls"
@@ -76,14 +77,15 @@ export const defaultSettings: SettingsState = {
     autoCleanTasks: true,
   },
   email: {
-    enabled: true,
-    host: "smtp.example.com",
+    enabled: false,
+    mode: "smtp",
+    host: "",
     port: 587,
     encryption: "tls",
-    username: "notify@example.com",
+    username: "",
     password: "",
-    from: "notify@example.com",
-    to: "admin@example.com",
+    from: "",
+    to: "",
   },
   conditions: {
     clientOffline: true,

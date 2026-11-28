@@ -56,6 +56,103 @@
   right: 0;
 }
 
+/* ---------- 桌面壳窗口外形：iOS 风格大圆角 ----------
+   桌面壳（Electron）窗口本身透明，四角由 .window-surface 的圆角裁切后透出桌面。
+   圆角与外壳内岛同心：内岛 rounded-[2rem] + 外层留白（p-3 0.75rem / sm:p-5 1.25rem）。 */
+.window-surface {
+  height: 100%;
+  width: 100%;
+}
+
+html[data-desktop-shell],
+html[data-desktop-shell] body {
+  background: transparent;
+}
+
+html[data-desktop-shell] .window-surface {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--window-corner-radius);
+  /* 一并裁切 fixed 定位的启动动画、引导层与 AI 工作台 */
+  clip-path: inset(0 round var(--window-corner-radius));
+  background: oklch(0.14 0.02 150);
+}
+
+/* 窗口圆角与内岛同心：内岛 2rem + 外层留白（p-3 0.75rem / sm:p-5 1.25rem） */
+html[data-desktop-shell] {
+  --window-corner-radius: calc(2rem + 0.75rem);
+}
+
+@media (min-width: 40rem) {
+  html[data-desktop-shell] {
+    --window-corner-radius: calc(2rem + 1.25rem);
+  }
+}
+
+/* 最大化时改回直角铺满，避免四角露出桌面 */
+html[data-desktop-shell][data-window-maximized] .window-surface {
+  border-radius: 0;
+  clip-path: none;
+}
+
+/* ---------- 透明窗口的边缘缩放手柄 ----------
+   透明窗口会失去 Windows 原生 WS_THICKFRAME 缩放边框，
+   因此由面板侧手柄把拖动位移交给主进程换算窗口边界。 */
+.window-resize-handle {
+  position: fixed;
+  z-index: 300;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}
+
+.window-resize-top,
+.window-resize-bottom {
+  right: 0.75rem;
+  left: 0.75rem;
+  height: 8px;
+}
+
+.window-resize-top {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.window-resize-bottom {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.window-resize-left,
+.window-resize-right {
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 8px;
+}
+
+.window-resize-left {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.window-resize-right {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.window-resize-top-left,
+.window-resize-top-right,
+.window-resize-bottom-left,
+.window-resize-bottom-right {
+  width: 16px;
+  height: 16px;
+}
+
+.window-resize-top-left { top: 0; left: 0; cursor: nwse-resize; }
+.window-resize-top-right { top: 0; right: 0; cursor: nesw-resize; }
+.window-resize-bottom-left { bottom: 0; left: 0; cursor: nesw-resize; }
+.window-resize-bottom-right { bottom: 0; right: 0; cursor: nwse-resize; }
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

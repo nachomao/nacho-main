@@ -13,6 +13,15 @@ contextBridge.exposeInMainWorld("nachoWindow", {
   isMaximized() {
     return ipcRenderer.invoke("window:is-maximized")
   },
+  beginResize(edges) {
+    ipcRenderer.send("window:resize-begin", Array.isArray(edges) ? edges : [])
+  },
+  resizeTo(dx, dy) {
+    ipcRenderer.send("window:resize-apply", Number(dx) || 0, Number(dy) || 0)
+  },
+  endResize() {
+    ipcRenderer.send("window:resize-end")
+  },
   onMaximizedChange(callback) {
     if (typeof callback !== "function") return undefined
     const listener = (_event, maximized) => callback(Boolean(maximized))
@@ -23,7 +32,8 @@ contextBridge.exposeInMainWorld("nachoWindow", {
 
 contextBridge.exposeInMainWorld("nachoUpdates", {
   check(force = false) { return ipcRenderer.invoke("updates:check", Boolean(force)) },
-  installPanel(sequence, version) { return ipcRenderer.invoke("updates:install-panel", sequence, version) },
+  installPanel(target) { return ipcRenderer.invoke("updates:install-panel", target) },
+  installLocalServer(target) { return ipcRenderer.invoke("updates:install-local", target) },
   getPanelInstallState() { return ipcRenderer.invoke("updates:panel-install-state") },
   onPanelInstallProgress(callback) {
     if (typeof callback !== "function") return undefined
@@ -31,8 +41,8 @@ contextBridge.exposeInMainWorld("nachoUpdates", {
     ipcRenderer.on("updates:panel-install-progress", listener)
     return () => ipcRenderer.removeListener("updates:panel-install-progress", listener)
   },
-  transferRelease(kind, serverUrl, apiKey, sequence, version) {
-    return ipcRenderer.invoke("updates:transfer", kind, serverUrl, apiKey, sequence, version)
+  transferRelease(kind, target) {
+    return ipcRenderer.invoke("updates:transfer", kind, target)
   },
   onTransferProgress(callback) {
     if (typeof callback !== "function") return undefined
@@ -46,9 +56,10 @@ contextBridge.exposeInMainWorld("nachoUpdates", {
     ipcRenderer.on("updates:available", listener)
     return () => ipcRenderer.removeListener("updates:available", listener)
   },
-  getOrigin() { return ipcRenderer.invoke("updates:get-origin") },
-  setOrigin(origin) { return ipcRenderer.invoke("updates:set-origin", origin) },
-  resetOrigin() { return ipcRenderer.invoke("updates:reset-origin") },
+  readSettings() { return ipcRenderer.invoke("updates:settings") },
+  select(profileId, channel) { return ipcRenderer.invoke("updates:select", profileId, channel) },
+  trustProfile(profileJson, fingerprint) { return ipcRenderer.invoke("updates:trust", profileJson, fingerprint) },
+  removeProfile(id) { return ipcRenderer.invoke("updates:remove-profile", id) },
 })
 
 contextBridge.exposeInMainWorld("nachoConnection", {
@@ -57,4 +68,8 @@ contextBridge.exposeInMainWorld("nachoConnection", {
   clear() { return ipcRenderer.invoke("connection:clear") },
   retry() { return ipcRenderer.invoke("connection:retry") },
   reinitialize(confirmation) { return ipcRenderer.invoke("connection:reinitialize", confirmation) },
+})
+
+contextBridge.exposeInMainWorld("nachoEmailOAuth", {
+  openBrowser(provider, authorizationUrl) { return ipcRenderer.invoke("email-oauth:open-browser", provider, authorizationUrl) },
 })

@@ -29,8 +29,5 @@ test("通知入口使用完整的单一铃铛图标", () => {
 })
 
 test("通知入口不再渲染会被裁切的数字角标", () => {
-  assert.match(notificationIslandSource, /h-13 flex-row-reverse/)
-  assert.match(notificationIslandSource, /min\(27rem, calc\(100vw - 8\.5rem\)\)/)
-  assert.match(notificationIslandSource, /"3\.25rem"/)
   assert.doesNotMatch(notificationIslandSource, /bg-negative.*rounded-full|absolute -right|9\+|badge/)
 })

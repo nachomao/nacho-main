@@ -155,8 +155,8 @@ export function LogsView() {
   const logsCtx = useLogs()
   // 实时跟随状态由顶栏功能区共享控制（暂停/继续按钮已移入顶栏）
   const live = logsCtx?.live ?? true
-  // 初始为空，挂载后（仅客户端）再生成基于 Date.now() 的演示数据，
-  // 避免服务端/客户端时间戳不一致导致的水合失败（hydration mismatch）
+  // 初始为空，数据全部来自服务端：load() 经 apiRequest 拉取 /logs 与 /logs/sources 后写入 state，
+  // 不在客户端生成演示数据，首屏渲染与挂载后一致，避免水合不一致（hydration mismatch）
   const { apiRequest } = useServerData()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [sources, setSources] = useState<string[]>([])

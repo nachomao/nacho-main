@@ -35,7 +35,9 @@ copyRequired(path.join(panelDir, "public"), path.join(stagedPanelDir, "public"))
 
 copyRequired(path.join(desktopDir, "src", "main.cjs"), path.join(appDir, "main.cjs"))
 copyRequired(path.join(desktopDir, "src", "preload.cjs"), path.join(appDir, "preload.cjs"))
+copyRequired(path.join(desktopDir, "src", "email-oauth-browser.cjs"), path.join(appDir, "email-oauth-browser.cjs"))
 copyRequired(path.join(desktopDir, "src", "connection-store.cjs"), path.join(appDir, "connection-store.cjs"))
+copyRequired(path.join(desktopDir, "src", "window-resize.cjs"), path.join(appDir, "window-resize.cjs"))
 copyRequired(path.join(desktopDir, "src", "connection-context.cjs"), path.join(appDir, "connection-context.cjs"))
 copyRequired(path.join(desktopDir, "src", "credential-protector.cjs"), path.join(appDir, "credential-protector.cjs"))
 copyRequired(path.join(desktopDir, "src", "ai-process.cjs"), path.join(appDir, "ai-process.cjs"))
@@ -43,6 +45,14 @@ copyRequired(path.join(desktopDir, "build", "credential-protector", "nacho-crede
   path.join(appDir, "nacho-credential-protector.exe"))
 copyRequired(path.join(desktopDir, "src", "updates.cjs"), path.join(appDir, "updates.cjs"))
 copyRequired(path.join(desktopDir, "src", "update-handoff.cjs"), path.join(appDir, "update-handoff.cjs"))
+for (const filename of ["release-manifest.cjs", "envelope-crypto.cjs", "tuf-client.cjs", "release-http.cjs", "release-discovery.cjs", "release-age.cjs", "release-stage.cjs", "update-settings.cjs"]) {
+  copyRequired(path.join(desktopDir, "src", filename), path.join(appDir, filename))
+}
+const localVerifierDir = path.join(stagedPanelDir, "update-verifier")
+fs.mkdirSync(localVerifierDir, { recursive: true })
+for (const filename of ["release-manifest.cjs", "envelope-crypto.cjs", "update-settings.cjs"]) {
+  copyRequired(path.join(desktopDir, "src", filename), path.join(localVerifierDir, filename))
+}
 copyRequired(path.join(desktopDir, "src", "github-download.cjs"), path.join(appDir, "github-download.cjs"))
 copyRequired(path.join(desktopDir, "src", "panel-runner.cjs"), path.join(stagedPanelDir, "panel-runner.cjs"))
 
@@ -66,10 +76,14 @@ if (fs.existsSync(path.join(desktopDir, "installer.nsh"))) {
   fs.copyFileSync(path.join(desktopDir, "installer.nsh"), path.join(desktopDir, "build", "installer.nsh"))
 }
 
-const updateOrigin = process.env.NACHO_UPDATE_ORIGIN
-if (updateOrigin) {
-  if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(updateOrigin)) throw new Error("更新服务器必须为无尾斜杠的 HTTPS 根地址")
-  fs.writeFileSync(path.join(appDir, "update-source.json"), `${JSON.stringify({ origin: updateOrigin })}\n`, "utf8")
+const ageLock = require("../age.lock.json")
+const { cache: ageCache, verified: verifyAgeFile } = require("./fetch-age.cjs")
+const stagedAge = path.join(appDir, "age")
+fs.mkdirSync(stagedAge, { recursive: true })
+for (const [file, metadata] of Object.entries(ageLock.files)) {
+  const cached = path.join(ageCache, "age", file)
+  if (!verifyAgeFile(cached, metadata)) throw new Error(`缺少已校验的 age 构建依赖：${file}`)
+  fs.copyFileSync(cached, path.join(stagedAge, file))
 }
 
 fs.writeFileSync(
